@@ -222,7 +222,7 @@ public class AdminService
         return new DeptManagersDto(deptName, gfhName, deptToolTotal, deptSubmitted, managerSummaries, availableClients);
     }
 
-    public async Task<AddToolResponse> AddToolAsync(string clientId, string toolName, string actorId)
+    public async Task<AddToolResponse> AddToolAsync(string clientId, string toolName, int departmentId, string actorId)
     {
         var client = await _db.Clients.AsNoTracking().FirstOrDefaultAsync(c => c.ClientID == clientId);
         if (client is null)
@@ -232,7 +232,7 @@ public class AdminService
         {
             ClientID = clientId,
             ToolName = toolName,
-            DepartmentID = client.DepartmentID
+            DepartmentID = departmentId,
         };
         _db.ClientTools.Add(tool);
         await _db.SaveChangesAsync();

@@ -36,7 +36,8 @@ public record DeptManagersDto(
 
 public record AddToolRequest(
     [Required][MaxLength(50)] string ClientId,
-    [Required][MaxLength(100)] string ToolName
+    [Required][MaxLength(100)] string ToolName,
+    int DepartmentId
 );
 
 public record AddToolResponse(

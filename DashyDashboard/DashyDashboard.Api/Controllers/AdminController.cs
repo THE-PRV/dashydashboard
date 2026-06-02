@@ -47,13 +47,16 @@ public class AdminController : ControllerBase
         var su = CurrentSuperUser;
         if (su is null) return Forbid();
 
-        if (su.RoleName != "Admin")
+        var allowedRoles = new[] { "Admin", "GFH", "GFHDelegate" };
+        if (!allowedRoles.Contains(su.RoleName)) return Forbid();
+
+        if (su.RoleName != "Admin" && su.DepartmentID != req.DepartmentId)
             return Forbid();
 
         var user = CurrentUser;
         if (user is null) return Unauthorized();
 
-        var result = await _admin.AddToolAsync(req.ClientId, req.ToolName, user.AssociateId);
+        var result = await _admin.AddToolAsync(req.ClientId, req.ToolName, req.DepartmentId, user.AssociateId);
         return CreatedAtAction(nameof(AddTool), result);
     }
 }

@@ -118,6 +118,7 @@ export default function AdminView({
   const [showAddTool, setShowAddTool] = useState(false);
   const [clients, setClients] = useState([]);
   const [addToolClientId, setAddToolClientId] = useState('');
+  const [addToolDeptId, setAddToolDeptId] = useState(0);
   const [addToolName, setAddToolName] = useState('');
   const [addToolError, setAddToolError] = useState(null);
   const [addToolSaving, setAddToolSaving] = useState(false);
@@ -182,17 +183,18 @@ export default function AdminView({
   // ── Add Tool helpers ────────────────────────────────────────────────────────
   function openAddTool() {
     setAddToolName('');
+    setAddToolDeptId(depts.length > 0 ? depts[0].departmentID : 0);
     setAddToolError(null);
     setAddToolSaving(false);
     setShowAddTool(true);
   }
 
   async function submitAddTool() {
-    if (!addToolClientId || !addToolName.trim()) return;
+    if (!addToolClientId || !addToolDeptId || !addToolName.trim()) return;
     setAddToolSaving(true);
     setAddToolError(null);
     try {
-      const result = await addTool(addToolClientId, addToolName.trim());
+      const result = await addTool(addToolClientId, addToolName.trim(), addToolDeptId);
       setShowAddTool(false);
       setAddToolName('');
       setToast(`Tool "${result.toolName}" (${result.toolId}) added to ${addToolClientId}`);
@@ -506,6 +508,31 @@ export default function AdminView({
               </select>
             </label>
 
+            {/* Department select */}
+            <label style={{ display: 'block', marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
+                Department
+              </div>
+              <select
+                value={addToolDeptId}
+                onChange={(e) => setAddToolDeptId(Number(e.target.value))}
+                disabled={addToolSaving}
+                style={{
+                  width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
+                  borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
+                  fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
+                  cursor: addToolSaving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {depts.length === 0 && <option value={0}>Loading departments…</option>}
+                {depts.map((d) => (
+                  <option key={d.departmentID} value={d.departmentID}>
+                    {d.departmentName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             {/* Tool name input */}
             <label style={{ display: 'block', marginBottom: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
@@ -556,14 +583,14 @@ export default function AdminView({
               </button>
               <button
                 onClick={submitAddTool}
-                disabled={addToolSaving || !addToolClientId || !addToolName.trim()}
+                disabled={addToolSaving || !addToolClientId || !addToolDeptId || !addToolName.trim()}
                 style={{
-                  background: !addToolSaving && addToolClientId && addToolName.trim() ? 'var(--accent)' : 'var(--surface-2)',
-                  color: !addToolSaving && addToolClientId && addToolName.trim() ? 'var(--accent-fg)' : 'var(--text-muted)',
+                  background: !addToolSaving && addToolClientId && addToolDeptId && addToolName.trim() ? 'var(--accent)' : 'var(--surface-2)',
+                  color: !addToolSaving && addToolClientId && addToolDeptId && addToolName.trim() ? 'var(--accent-fg)' : 'var(--text-muted)',
                   border: '1px solid transparent', borderRadius: 8,
                   padding: '9px 16px', fontSize: 13, fontWeight: 600,
                   fontFamily: 'var(--font-sans)',
-                  cursor: addToolSaving || !addToolClientId || !addToolName.trim() ? 'not-allowed' : 'pointer',
+                  cursor: addToolSaving || !addToolClientId || !addToolDeptId || !addToolName.trim() ? 'not-allowed' : 'pointer',
                   transition: 'background .15s ease, color .15s ease',
                 }}
               >

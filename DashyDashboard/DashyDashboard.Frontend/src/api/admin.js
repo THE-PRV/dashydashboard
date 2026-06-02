@@ -6,5 +6,5 @@ export const getAdminDepartments = (cycleId) =>
 export const getDeptManagers = (deptName, cycleId, clientId) =>
   get(`/api/admin/departments/${encodeURIComponent(deptName)}/managers?cycleId=${cycleId}${clientId ? `&clientId=${encodeURIComponent(clientId)}` : ''}`);
 
-export const addTool = (clientId, toolName) =>
-  post('/api/admin/tools', { clientId, toolName });
+export const addTool = (clientId, toolName, departmentId) =>
+  post('/api/admin/tools', { clientId, toolName, departmentId });
