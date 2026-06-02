@@ -484,7 +484,7 @@ export default function AdminView({
             {/* Client select */}
             <label style={{ display: 'block', marginBottom: 14 }}>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
-                Client
+                Client Department
               </div>
               <select
                 value={addToolClientId}

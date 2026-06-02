@@ -224,14 +224,15 @@ public class AdminService
 
     public async Task<AddToolResponse> AddToolAsync(string clientId, string toolName, string actorId)
     {
-        var clientExists = await _db.Clients.AnyAsync(c => c.ClientID == clientId);
-        if (!clientExists)
+        var client = await _db.Clients.AsNoTracking().FirstOrDefaultAsync(c => c.ClientID == clientId);
+        if (client is null)
             throw new KeyNotFoundException($"Client '{clientId}' not found.");
 
         var tool = new ClientTool
         {
             ClientID = clientId,
-            ToolName = toolName
+            ToolName = toolName,
+            DepartmentID = client.DepartmentID
         };
         _db.ClientTools.Add(tool);
         await _db.SaveChangesAsync();
