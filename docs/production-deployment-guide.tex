@@ -1,0 +1,927 @@
+\documentclass[a4paper,11pt]{article}
+
+% Layout
+\usepackage[a4paper, top=2.2cm, bottom=2.2cm, left=2.5cm, right=2.5cm]{geometry}
+
+% Encoding / font
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% Colour
+\usepackage{xcolor}
+\definecolor{headblue}{HTML}{1B3A6B}
+\definecolor{codebg}{HTML}{F4F4F4}
+\definecolor{warnbg}{HTML}{FFF3E0}
+\definecolor{infobg}{HTML}{E8F4FD}
+
+% Coloured callout boxes
+\usepackage{tcolorbox}
+\newtcolorbox{warnbox}{
+  colback=warnbg,
+  colframe=orange!70!red,
+  boxrule=1pt,
+  left=8pt, right=8pt, top=5pt, bottom=5pt,
+  arc=2pt,
+}
+\newtcolorbox{infobox}{
+  colback=infobg,
+  colframe=blue!55!black,
+  boxrule=1pt,
+  left=8pt, right=8pt, top=5pt, bottom=5pt,
+  arc=2pt,
+}
+
+% Code listings
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  breaklines=true,
+  breakatwhitespace=false,
+  postbreak=\mbox{\textcolor{gray}{$\hookrightarrow$}\ },
+  frame=single,
+  framerule=0.4pt,
+  rulecolor=\color{gray!50},
+  xleftmargin=4pt,
+  xrightmargin=4pt,
+  aboveskip=4pt,
+  belowskip=4pt,
+  columns=flexible,
+  keepspaces=true,
+  showstringspaces=false,
+}
+
+% Section headings
+\usepackage{titlesec}
+\titleformat{\section}
+  {\large\bfseries\color{headblue}}{}{0em}{}
+  [\vspace{1pt}\color{headblue!60}\hrule\vspace{2pt}]
+\titleformat{\subsection}
+  {\normalsize\bfseries\color{headblue!80}}{}{0em}{}
+\titlespacing{\section}{0pt}{14pt}{5pt}
+\titlespacing{\subsection}{0pt}{9pt}{3pt}
+
+% Paragraph spacing
+\usepackage{parskip}
+\setlength{\parskip}{5pt}
+
+% Lists
+\usepackage{enumitem}
+\setlist[enumerate]{topsep=2pt, itemsep=2pt, parsep=0pt, leftmargin=*}
+\setlist[itemize]{topsep=2pt, itemsep=2pt, parsep=0pt, leftmargin=*}
+
+% Tables
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{array}
+
+% Header / footer
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small\color{gray!70} DashyDashboard --- Production Deployment Guide}
+\rhead{\small\color{gray!70} Broadridge Internal}
+\cfoot{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% Links
+\usepackage[hidelinks]{hyperref}
+
+% ================================================================
+\begin{document}
+% ================================================================
+
+\thispagestyle{empty}
+
+\begin{center}
+  {\LARGE\bfseries\color{headblue} DashyDashboard}\\[5pt]
+  {\large\bfseries Production Deployment Guide}\\[5pt]
+  {\small ASP.NET 7 \textbf{(net7.0)} \quad|\quad
+         IIS \quad|\quad
+         Windows Authentication \quad|\quad
+         SQL Server}\\[3pt]
+  {\small Target SQL Server: \texttt{clipvwbpod02} \quad|\quad
+         Database: \texttt{ClientsAppAttestation}}\\[3pt]
+  {\small\color{gray} June 2026}
+\end{center}
+
+\vspace{4pt}
+\noindent{\color{headblue}\rule{\linewidth}{1.2pt}}
+\vspace{6pt}
+
+\tableofcontents
+\newpage
+
+% ================================================================
+\section{Do This First}
+% ================================================================
+
+Work through these steps in order. Each step has a section below that tells you exactly what to do.
+
+\begin{enumerate}
+  \item \textbf{Read Section~\ref{sec:blockers} right now.}
+        There are known database problems that will corrupt data if you go live too early.
+  \item Install the right software on the build machine and on the IIS server
+        (Section~\ref{sec:prereqs}).
+  \item Edit the connection string file in the source repository,
+        \emph{before} you publish (Sections~\ref{sec:whichfile} and~\ref{sec:whatpaste}).
+  \item Run the one-line publish command on the build machine
+        (Section~\ref{sec:publish}, Step~3).
+  \item Copy the published output folder to the IIS server
+        (Section~\ref{sec:publish}, Step~4).
+  \item Run database migrations from a machine that can reach \texttt{clipvwbpod02}
+        (Section~\ref{sec:publish}, Step~5).
+  \item Create the IIS application pool and website, enable Windows Authentication,
+        disable Anonymous Authentication (Section~\ref{sec:winauth}).
+  \item Confirm all three \texttt{DeveloperMode} flags are \texttt{false}
+        (Section~\ref{sec:demodata}).
+\end{enumerate}
+
+\begin{warnbox}
+\textbf{STOP before you point this at the live database.}
+Read Section~\ref{sec:blockers} first.
+Known schema mismatches in the current code will cause data corruption and leave
+Admin/GFH/IFH role enforcement completely bypassed.
+\end{warnbox}
+
+% ================================================================
+\section{What to Install and Where}
+\label{sec:prereqs}
+% ================================================================
+
+Two machines are involved.
+The \textbf{build machine} is where you compile and publish the code.
+The \textbf{IIS server} is the Windows Server that users browse to.
+They need different software.
+
+\bigskip
+\renewcommand{\arraystretch}{1.6}
+\begin{tabularx}{\linewidth}{|>{\bfseries}p{4.5cm}|X|X|}
+\hline
+Software & Build machine & IIS server \\
+\hline
+.NET SDK 7.0.x or later &
+  \textbf{Required.}
+  The app targets \texttt{net7.0}. SDK 7.0.x is the minimum.
+  SDK 8.0.x also builds net7.0 projects and is acceptable. &
+  Not needed. \\
+\hline
+.NET 7 Hosting Bundle &
+  Not needed. &
+  \textbf{Required.}
+  Installs the ASP.NET Core 7 runtime and the IIS module that runs the app. \\
+\hline
+Node.js 18 or later &
+  \textbf{Required.}
+  The publish command runs \texttt{npm ci} and \texttt{npm run build} automatically. &
+  \textbf{Not needed at all.}
+  React is compiled into static files during publish. \\
+\hline
+IIS &
+  Not needed. &
+  \textbf{Required.} \\
+\hline
+\end{tabularx}
+\renewcommand{\arraystretch}{1}
+
+\bigskip
+\begin{infobox}
+\textbf{SDK vs Runtime.}
+The project file targets \texttt{net7.0}.
+The \textbf{server} only ever needs the .NET~7 runtime (the Hosting Bundle).
+The \textbf{build machine} needs the .NET~7 SDK (minimum);
+SDK~8.x also builds net7.0 projects so either works.
+\textbf{Important:} .NET~7 is out of Microsoft mainstream support.
+Plan an upgrade to .NET~8 or .NET~9 in a future sprint.
+\end{infobox}
+
+\subsection*{Install .NET SDK 7.0.x on the build machine}
+
+\begin{enumerate}
+  \item Open a browser. Go to \texttt{https://dotnet.microsoft.com/en-us/download/dotnet/7.0}
+  \item Under \textbf{SDK}, click the \textbf{Windows x64 Installer} link. Download the file.
+  \item Double-click the downloaded \texttt{.exe} file.
+        A Windows security prompt appears. Click \textbf{Yes}.
+  \item Click \textbf{Install}. Wait for the progress bar to finish. Click \textbf{Close}.
+  \item Open a \textbf{new} Command Prompt window. (Press \textbf{Win + R},
+        type \texttt{cmd}, press \textbf{Enter}.) Run:
+\begin{lstlisting}
+dotnet --version
+\end{lstlisting}
+        The output must begin with \texttt{7.} (or \texttt{8.} if you have SDK 8 installed --- both work).
+\end{enumerate}
+
+\subsection*{Install Node.js 18 LTS on the build machine}
+
+\begin{enumerate}
+  \item Open a browser. Go to \texttt{https://nodejs.org/en/download}
+  \item Click the \textbf{Windows Installer (.msi)} link for version \textbf{18.x LTS}.
+        Download the file.
+  \item Double-click the \texttt{.msi} file. Click \textbf{Next} through every screen.
+        Accept the licence. Leave all options at their defaults.
+        Click \textbf{Install}. Accept the UAC prompt. Click \textbf{Finish}.
+  \item Open a \textbf{new} Command Prompt window. Run:
+\begin{lstlisting}
+node --version
+\end{lstlisting}
+        The output must begin with \texttt{v18.}
+\end{enumerate}
+
+\subsection*{Install the .NET 7 Hosting Bundle on the IIS server}
+
+Do this on the \textbf{IIS server}, not on the build machine.
+Log in to the IIS server directly or via Remote Desktop.
+
+\begin{enumerate}
+  \item Open a browser on the IIS server.
+        Go to \texttt{https://dotnet.microsoft.com/en-us/download/dotnet/7.0}
+  \item Under \textbf{ASP.NET Core Runtime 7.0.x}, click the \textbf{Hosting Bundle} link.
+        Download the file.
+  \item Double-click the installer. Click \textbf{Install}. Accept the UAC prompt.
+        Wait for it to finish. Click \textbf{Close}.
+  \item Open a Command Prompt \textbf{as Administrator}:
+        click \textbf{Start}, type \texttt{cmd},
+        right-click \textbf{Command Prompt}, click \textbf{Run as administrator}. Run:
+\begin{lstlisting}
+dotnet --list-runtimes
+\end{lstlisting}
+        You should see a line containing \texttt{Microsoft.AspNetCore.App 7.0.}
+  \item Still as Administrator, run:
+\begin{lstlisting}
+iisreset
+\end{lstlisting}
+        IIS must be restarted so it loads the new ASP.NET Core module.
+\end{enumerate}
+
+% ================================================================
+\section{Exactly Which File Do I Edit?}
+\label{sec:whichfile}
+% ================================================================
+
+\subsection*{Before publishing (working inside the source repository)}
+
+Open this file in any text editor --- Notepad, Notepad++, or VS Code.
+The path below is relative to the root of the repository:
+
+\begin{lstlisting}
+DashyDashboard/DashyDashboard.Api/appsettings.Production.json
+\end{lstlisting}
+
+Edit this file \emph{before} you run the publish command.
+The publish step copies this file into the output folder automatically.
+
+\subsection*{After publishing (on the IIS server)}
+
+If you have already published and just need to update the connection string
+without republishing, edit the file at the physical path of the IIS site:
+
+\begin{lstlisting}
+<IIS site physical path>\appsettings.Production.json
+\end{lstlisting}
+
+For example, if your IIS site's physical path is
+\texttt{C:\textbackslash inetpub\textbackslash DashyDashboard}, the file you edit is:
+
+\begin{lstlisting}
+C:\inetpub\DashyDashboard\appsettings.Production.json
+\end{lstlisting}
+
+To open it:
+open File Explorer, navigate to \texttt{C:\textbackslash inetpub\textbackslash DashyDashboard},
+right-click \texttt{appsettings.Production.json}, click \textbf{Open with}, click
+\textbf{Notepad}.
+
+\subsection*{How the app decides which settings file to load}
+
+The app loads files in this order.
+Values in later entries override earlier ones.
+
+\begin{enumerate}
+  \item \texttt{appsettings.json} --- base file, always loaded, contains no connection string
+  \item \texttt{appsettings.Production.json} --- loaded only when
+        \texttt{ASPNETCORE\_ENVIRONMENT=Production}; contains the connection string
+  \item Environment variables --- override both files;
+        can be set in IIS Manager or in \texttt{web.config}
+\end{enumerate}
+
+If \texttt{appsettings.Production.json} is missing or the connection string is blank,
+the app throws this error at startup and refuses to start:
+\emph{``Connection string `Default' is not configured. Set it in
+appsettings.Production.json or via environment variables.''}
+
+\subsection*{Tell the app it is running in Production}
+
+The app must know it is in the Production environment or it will not load the
+\texttt{appsettings.Production.json} file.
+Set the \texttt{ASPNETCORE\_ENVIRONMENT} variable in the published \texttt{web.config}.
+
+\begin{enumerate}
+  \item On the IIS server, open File Explorer.
+        Navigate to the site folder, e.g.\ \texttt{C:\textbackslash inetpub\textbackslash DashyDashboard}.
+  \item Right-click \texttt{web.config}. Click \textbf{Open with}. Click \textbf{Notepad}.
+  \item Find the line that starts with \texttt{<aspNetCore}.
+        Look for an \texttt{<environmentVariables>} block inside it.
+        If that block does not exist, add it.
+        The result should look exactly like this:
+\begin{lstlisting}[language={}]
+<aspNetCore processPath=".\DashyDashboard.Api.exe"
+            stdoutLogEnabled="false"
+            stdoutLogFile=".\logs\stdout"
+            hostingModel="inprocess">
+  <environmentVariables>
+    <environmentVariable
+        name="ASPNETCORE_ENVIRONMENT"
+        value="Production" />
+  </environmentVariables>
+</aspNetCore>
+\end{lstlisting}
+  \item Press \textbf{Ctrl + S} to save. Close Notepad.
+        IIS picks up \texttt{web.config} changes immediately --- no restart needed.
+\end{enumerate}
+
+% ================================================================
+\section{What Do I Paste Into It?}
+\label{sec:whatpaste}
+% ================================================================
+
+Open \texttt{appsettings.Production.json} in Notepad.
+Press \textbf{Ctrl + A} to select everything.
+Press \textbf{Delete} to clear the file.
+Now paste this block exactly as it appears below:
+
+\begin{lstlisting}[language={}]
+{
+  "ConnectionStrings": {
+    "Default": "Server=clipvwbpod02;Database=ClientsAppAttestation;Integrated Security=True;Encrypt=True;TrustServerCertificate=False;"
+  },
+  "DeveloperMode": {
+    "EnableFormLogin": false,
+    "EnableUserHeaderAuth": false,
+    "EnableDemoSeedData": false
+  },
+  "AllowedHosts": "*"
+}
+\end{lstlisting}
+
+Press \textbf{Ctrl + S} to save the file. That is the entire file.
+
+\bigskip
+\textbf{What each part means:}
+
+\begin{itemize}
+  \item \texttt{Server=clipvwbpod02} ---
+        The hostname of the production SQL Server.
+        Do not change this unless a DBA tells you to.
+  \item \texttt{Database=ClientsAppAttestation} ---
+        The database name.
+        Do not change this.
+  \item \texttt{Integrated Security=True} ---
+        Connect to SQL Server using the Windows identity of the IIS application pool.
+        No username or password is stored in this file.
+  \item \texttt{Encrypt=True} ---
+        All traffic between the app and the database is encrypted.
+        Required in production.
+  \item \texttt{TrustServerCertificate=False} ---
+        The SQL Server's certificate must be valid.
+        Do not change this to \texttt{True} in production.
+  \item \texttt{EnableFormLogin: false} ---
+        Disables the developer-only form login endpoint.
+        Must be \texttt{false}.
+  \item \texttt{EnableUserHeaderAuth: false} ---
+        Disables the \texttt{X-User-Id} header shortcut that bypasses Windows auth.
+        Must be \texttt{false}.
+  \item \texttt{EnableDemoSeedData: false} ---
+        Prevents fictional test users from being inserted into the database.
+        Must be \texttt{false}.
+\end{itemize}
+
+\begin{warnbox}
+\textbf{Never change any DeveloperMode value to \texttt{true} in production.}
+\texttt{EnableFormLogin} and \texttt{EnableUserHeaderAuth} bypass Windows Authentication
+and allow any caller to impersonate any user without a password.
+\texttt{EnableDemoSeedData} will insert Bruce Banner, Diana Prince, Selina Kyle, and
+$\approx$625 fictional test records into the live database.
+\end{warnbox}
+
+% ================================================================
+\section{If I Want to Set the Connection String in IIS Instead}
+\label{sec:iisonly}
+% ================================================================
+
+If your deployment pipeline overwrites \texttt{appsettings.Production.json}
+on every deploy, set the connection string as an environment variable in IIS.
+Environment variables always override the settings file.
+
+\subsection*{Method A --- IIS Manager (no file editing needed)}
+
+\begin{enumerate}
+  \item Press \textbf{Win + R}, type \texttt{inetmgr}, press \textbf{Enter}.
+        IIS Manager opens.
+  \item In the left panel, expand the server name, expand \textbf{Sites},
+        and click on \textbf{DashyDashboard}.
+  \item In the centre panel, double-click \textbf{Configuration Editor}.
+  \item At the top of the Configuration Editor, find the \textbf{Section} dropdown.
+        Click it and navigate to \texttt{system.webServer} $\rightarrow$ \texttt{aspNetCore}.
+  \item In the table that appears in the centre, find the row labelled
+        \textbf{environmentVariables}.
+        Click the grey \textbf{[\ldots]} button at the right end of that row.
+        A Collection Editor window opens.
+  \item In the top-right of the Collection Editor, click \textbf{Add Item}.
+        A new blank row appears in the list.
+  \item Click the \textbf{name} cell of that new row and type:
+\begin{lstlisting}
+ConnectionStrings__Default
+\end{lstlisting}
+        (Two underscores between \texttt{ConnectionStrings} and \texttt{Default}.)
+  \item Click the \textbf{value} cell and type:
+\begin{lstlisting}
+Server=clipvwbpod02;Database=ClientsAppAttestation;Integrated Security=True;Encrypt=True;TrustServerCertificate=False;
+\end{lstlisting}
+  \item Click \textbf{Apply} in the top-right Actions panel. Close the Collection Editor.
+  \item Click \textbf{Apply} again in the main Configuration Editor panel.
+  \item In the left panel, click \textbf{Application Pools}.
+        Right-click \textbf{DashyDashboard}. Click \textbf{Recycle}.
+\end{enumerate}
+
+\subsection*{Method B --- Edit web.config directly}
+
+Open \texttt{C:\textbackslash inetpub\textbackslash DashyDashboard\textbackslash web.config}
+in Notepad.
+Find the \texttt{<aspNetCore>} element.
+Add both variables inside an \texttt{<environmentVariables>} block:
+
+\begin{lstlisting}[language={}]
+<aspNetCore processPath=".\DashyDashboard.Api.exe"
+            stdoutLogEnabled="false"
+            stdoutLogFile=".\logs\stdout"
+            hostingModel="inprocess">
+  <environmentVariables>
+    <environmentVariable
+        name="ASPNETCORE_ENVIRONMENT"
+        value="Production" />
+    <environmentVariable
+        name="ConnectionStrings__Default"
+        value="Server=clipvwbpod02;Database=ClientsAppAttestation;Integrated Security=True;Encrypt=True;TrustServerCertificate=False;" />
+  </environmentVariables>
+</aspNetCore>
+\end{lstlisting}
+
+Press \textbf{Ctrl + S}. No IIS restart needed.
+IIS applies \texttt{web.config} changes immediately.
+
+\begin{infobox}
+\textbf{Why two underscores?}
+ASP.NET Core converts environment variable names to configuration keys by replacing
+\texttt{\_\_} (double underscore) with \texttt{:} (colon).
+So the variable \texttt{ConnectionStrings\_\_Default} maps to the key
+\texttt{ConnectionStrings:Default}, which is exactly the key the app reads.
+\end{infobox}
+
+% ================================================================
+\section{Windows Authentication Setup}
+\label{sec:winauth}
+% ================================================================
+
+The app uses Windows/Negotiate authentication.
+IIS identifies the user from their Windows login and passes that identity to the app.
+You must enable Windows Authentication and disable Anonymous Authentication.
+
+\subsection*{Step 1 --- Enable the Windows Authentication feature in Windows Server}
+
+Do this once. If Windows Authentication is already listed in IIS, skip to Step~2.
+
+\begin{enumerate}
+  \item Click \textbf{Start}. Type \texttt{Server Manager}. Press \textbf{Enter}.
+  \item Click \textbf{Manage} in the top-right corner.
+        Click \textbf{Add Roles and Features}.
+  \item Click \textbf{Next} through the first three pages
+        (Before You Begin, Installation Type, Server Selection).
+  \item On \textbf{Server Roles}, find and expand:
+        \textbf{Web Server (IIS)} $\rightarrow$ \textbf{Web Server} $\rightarrow$ \textbf{Security}.
+  \item Tick the checkbox next to \textbf{Windows Authentication}.
+        If a dialog says ``Add features that are required?'', click \textbf{Add Features}.
+  \item Click \textbf{Next} twice more, then click \textbf{Install}.
+  \item Wait for the installation bar to finish. Click \textbf{Close}.
+\end{enumerate}
+
+\subsection*{Step 2 --- Create the application pool}
+
+\begin{enumerate}
+  \item Press \textbf{Win + R}. Type \texttt{inetmgr}. Press \textbf{Enter}.
+  \item In the left panel, click \textbf{Application Pools}.
+  \item In the right-side Actions panel, click \textbf{Add Application Pool\ldots}
+  \item In the dialog that appears, fill in:
+    \begin{itemize}
+      \item \textbf{Name:} \quad \texttt{DashyDashboard}
+      \item \textbf{.NET CLR version:} \quad \texttt{No Managed Code}
+            (this is correct --- the app is self-contained)
+      \item \textbf{Managed pipeline mode:} \quad \texttt{Integrated}
+    \end{itemize}
+  \item Click \textbf{OK}.
+\end{enumerate}
+
+\subsection*{Step 3 --- Create the website}
+
+\begin{enumerate}
+  \item In the left panel, right-click \textbf{Sites} and click \textbf{Add Website\ldots}
+  \item Fill in every field:
+    \begin{itemize}
+      \item \textbf{Site name:} \quad \texttt{DashyDashboard}
+      \item \textbf{Application pool:} \quad click \textbf{Select\ldots} and pick
+            \texttt{DashyDashboard}
+      \item \textbf{Physical path:} \quad the folder on this server where you copied
+            the published output, for example \texttt{C:\textbackslash inetpub\textbackslash DashyDashboard}
+      \item \textbf{Binding type:} \quad \texttt{https}
+      \item \textbf{IP address:} \quad \texttt{All Unassigned}
+      \item \textbf{Port:} \quad \texttt{443}
+      \item \textbf{Host name:} \quad the DNS name users will type in their browser,
+            for example \texttt{dashy.broadridge.internal}
+      \item \textbf{SSL certificate:} \quad pick the certificate that matches
+            your host name from the dropdown
+    \end{itemize}
+  \item Click \textbf{OK}.
+\end{enumerate}
+
+\begin{infobox}
+The application server hostname (what users type in the browser) is not stored anywhere
+in the repository. It is whatever DNS name you enter in the Host name field above.
+Tell users to browse to that name.
+\end{infobox}
+
+\subsection*{Step 4 --- Configure authentication}
+
+\begin{enumerate}
+  \item In the left panel, click on your \textbf{DashyDashboard} site.
+  \item In the centre panel, double-click \textbf{Authentication}.
+  \item Click \textbf{Anonymous Authentication} once (just to select it).
+        In the right Actions panel, click \textbf{Disable}.
+  \item Click \textbf{Windows Authentication} once to select it.
+        In the right Actions panel, click \textbf{Enable}.
+  \item With \textbf{Windows Authentication} still selected, click
+        \textbf{Providers\ldots} in the right Actions panel.
+        A small dialog opens showing a list.
+  \item The list must show \textbf{Negotiate} above \textbf{NTLM}.
+        If it does not, click \textbf{Add}, select \texttt{Negotiate}, click \textbf{OK},
+        then use the \textbf{Move Up} button to put Negotiate above NTLM.
+  \item Click \textbf{OK} to close the Providers dialog.
+\end{enumerate}
+
+The authentication panel should now show:
+
+\bigskip
+\begin{tabular}{@{}ll@{}}
+\toprule
+Authentication type & Status \\
+\midrule
+Anonymous Authentication & Disabled \\
+Windows Authentication   & Enabled \\
+\bottomrule
+\end{tabular}
+
+\subsection*{Step 5 --- Grant the app pool identity access to SQL Server}
+
+The app connects to SQL Server using the Windows account of the IIS application pool.
+Ask the DBA to run this SQL on \texttt{clipvwbpod02}:
+
+\begin{lstlisting}[language=SQL]
+USE ClientsAppAttestation;
+
+CREATE LOGIN [IIS APPPOOL\DashyDashboard]
+    FROM WINDOWS
+    WITH DEFAULT_DATABASE = ClientsAppAttestation;
+
+CREATE USER [IIS APPPOOL\DashyDashboard]
+    FOR LOGIN [IIS APPPOOL\DashyDashboard];
+
+ALTER ROLE db_datareader
+    ADD MEMBER [IIS APPPOOL\DashyDashboard];
+
+ALTER ROLE db_datawriter
+    ADD MEMBER [IIS APPPOOL\DashyDashboard];
+\end{lstlisting}
+
+If a domain service account is used instead of the default pool identity,
+replace every occurrence of
+\texttt{IIS APPPOOL\textbackslash DashyDashboard}
+with that account name.
+
+% ================================================================
+\section{Build and Publish}
+\label{sec:publish}
+% ================================================================
+
+All commands in this section are run on the \textbf{build machine}, not the IIS server.
+
+\subsection*{Step 1 --- Open a Command Prompt at the repo root}
+
+\begin{enumerate}
+  \item Press \textbf{Win + R}. Type \texttt{cmd}. Press \textbf{Enter}.
+  \item Type \texttt{cd} followed by a space, then the full path to the repository root.
+        Press \textbf{Enter}. For example:
+\begin{lstlisting}
+cd C:\projects\dashythedashdashboard
+\end{lstlisting}
+        Replace \texttt{C:\textbackslash projects\textbackslash dashythedashdashboard}
+        with wherever the repository actually lives on your machine.
+\end{enumerate}
+
+\subsection*{Step 2 --- Confirm prerequisites}
+
+\begin{lstlisting}
+dotnet --version
+\end{lstlisting}
+Output must begin with \texttt{7.} or higher (e.g.\ \texttt{7.0.407} or \texttt{8.0.421}).
+
+\begin{lstlisting}
+node --version
+\end{lstlisting}
+Output must begin with \texttt{v18.} or higher.
+
+If either is wrong or missing, go back to Section~\ref{sec:prereqs} and install.
+
+\subsection*{Step 3 --- Edit the connection string (if you have not already)}
+
+Follow Sections~\ref{sec:whichfile} and~\ref{sec:whatpaste}.
+Save the file before continuing.
+
+\subsection*{Step 4 --- Run the publish command}
+
+Type this command exactly and press \textbf{Enter}:
+
+\begin{lstlisting}
+dotnet publish DashyDashboard/DashyDashboard.Api/DashyDashboard.Api.csproj -c Release -o publish/DashyDashboard.Api
+\end{lstlisting}
+
+You do not need to run any npm or frontend commands manually.
+The publish step does all of the following automatically:
+
+\begin{enumerate}
+  \item Runs \texttt{npm ci} inside \texttt{DashyDashboard/DashyDashboard.Frontend}
+        to install all Node packages.
+  \item Runs \texttt{npm run build} to compile the React app into static files.
+  \item Copies those static files into the API's \texttt{wwwroot} folder.
+  \item Compiles the .NET API in Release mode.
+  \item Copies every file needed to run the application into
+        \texttt{publish\textbackslash DashyDashboard.Api}.
+\end{enumerate}
+
+When it finishes successfully, the last line of output will be:
+\begin{lstlisting}
+Build succeeded.
+\end{lstlisting}
+
+If you see an error about \texttt{npm} not being found, install Node.js 18
+(Section~\ref{sec:prereqs}) and try again.
+
+\subsection*{Step 5 --- Copy the output to the IIS server}
+
+The published output is now in the folder
+\texttt{publish\textbackslash DashyDashboard.Api} on the build machine.
+Copy everything inside that folder to the site physical path on the IIS server.
+
+Run this command from the repository root (replace \texttt{your-iis-server} with
+the actual server name or IP address):
+
+\begin{lstlisting}
+robocopy publish\DashyDashboard.Api \\your-iis-server\c$\inetpub\DashyDashboard /MIR /Z
+\end{lstlisting}
+
+Alternatively, copy the folder manually using Windows File Explorer over a network share.
+
+\subsection*{Step 6 --- Run database migrations}
+
+\begin{warnbox}
+\textbf{Do not skip this.}
+In production, the app does not apply migrations automatically at startup.
+If you skip this step, the tables will not exist and every API call will fail.
+\end{warnbox}
+
+Run this from a machine that:
+(a) has the .NET 7 SDK (or later) installed, and
+(b) can reach \texttt{clipvwbpod02} on the network
+(this can be the build machine if it has network access to the database server).
+
+In the same Command Prompt, navigate to the API project:
+
+\begin{lstlisting}
+cd DashyDashboard/DashyDashboard.Api
+\end{lstlisting}
+
+Check that the EF Core CLI is installed:
+
+\begin{lstlisting}
+dotnet ef --version
+\end{lstlisting}
+
+If that command prints ``command not found'' or fails, install it:
+
+\begin{lstlisting}
+dotnet tool install --global dotnet-ef
+\end{lstlisting}
+
+Then run the migrations:
+
+\begin{lstlisting}
+dotnet ef database update --connection "Server=clipvwbpod02;Database=ClientsAppAttestation;Integrated Security=True;Encrypt=True;TrustServerCertificate=False;"
+\end{lstlisting}
+
+You will see each migration name printed one by one.
+The last line will be:
+\begin{lstlisting}
+Done.
+\end{lstlisting}
+
+If you get an SSL certificate error, ask the DBA to confirm that the SQL Server
+certificate on \texttt{clipvwbpod02} is valid and trusted by the machine you are
+running from. If the DBA confirms the cert is internal-only,
+change \texttt{TrustServerCertificate=False} to \texttt{True}
+\textbf{only for this migration command}, not in the deployed settings file.
+
+% ================================================================
+\section{How to Keep Demo Data Out of Production}
+\label{sec:demodata}
+% ================================================================
+
+The application includes seed data with fictional users:
+\textbf{Bruce Banner, Diana Prince, Selina Kyle}, and approximately 625 additional
+test records.
+
+The seed code runs \textbf{only when both} of these conditions are true simultaneously:
+
+\begin{itemize}
+  \item \texttt{ASPNETCORE\_ENVIRONMENT} equals \texttt{Development}, \textbf{and}
+  \item \texttt{DeveloperMode:EnableDemoSeedData} equals \texttt{true}
+\end{itemize}
+
+In production, neither condition is true if you follow this guide.
+The \texttt{appsettings.Production.json} from Section~\ref{sec:whatpaste} already
+sets \texttt{EnableDemoSeedData} to \texttt{false},
+and \texttt{ASPNETCORE\_ENVIRONMENT} is \texttt{Production}.
+
+\medskip
+\textbf{Verification checklist --- check each of these before go-live:}
+
+\begin{enumerate}
+  \item Open \texttt{C:\textbackslash inetpub\textbackslash DashyDashboard\textbackslash appsettings.Production.json}
+        in Notepad.
+        Confirm the \texttt{DeveloperMode} block reads exactly:
+\begin{lstlisting}
+"DeveloperMode": {
+  "EnableFormLogin": false,
+  "EnableUserHeaderAuth": false,
+  "EnableDemoSeedData": false
+}
+\end{lstlisting}
+        All three values must be \texttt{false} (no quotes around it,
+        not \texttt{"false"}, not missing).
+  \item Open IIS Manager. Click on the site.
+        Double-click \textbf{Configuration Editor}.
+        Navigate to \texttt{system.webServer/aspNetCore}.
+        Click \textbf{[\ldots]} next to \textbf{environmentVariables}.
+        Confirm there is no variable named
+        \texttt{DeveloperMode\_\_EnableDemoSeedData} with value \texttt{true}.
+        Environment variables override the file.
+  \item Confirm the variable \texttt{ASPNETCORE\_ENVIRONMENT} is set to
+        \texttt{Production} (not \texttt{Development}) in either \texttt{web.config}
+        or the IIS Configuration Editor.
+\end{enumerate}
+
+% ================================================================
+\section{What Remains Before First Production Run}
+\label{sec:blockers}
+% ================================================================
+
+\begin{infobox}
+\textbf{Schema alignment is complete.}
+All blockers from the original pre-development audit have been resolved in the
+current codebase:
+\texttt{AssociateID} is \texttt{varchar(50)} throughout;
+\texttt{ToolID} is \texttt{int} throughout;
+all ten spec tables exist (\texttt{SuperUsers}, \texttt{IFHGFHMapping},
+\texttt{AttestationLogs}, \texttt{LoginLogs}, and the rest);
+login attempts are written to \texttt{LoginLogs} on every request.
+The build is clean (0 errors).
+\end{infobox}
+
+What remains is operational, not code.
+
+\subsection*{Mandatory --- Run EF Core migrations}
+
+Covered in Section~\ref{sec:publish}, Step~6.
+The migrations create all ten tables.
+The database starts empty after migration --- no application data is inserted.
+
+\subsection*{Mandatory --- Import production data from Excel}
+
+The application tables are populated from the authoritative Excel files maintained
+by the operations team.
+The source files referenced in the schema documentation are:
+
+\begin{itemize}
+  \item \texttt{C:\textbackslash Prakash Files\textbackslash Dash\textbackslash Users.xlsx}
+        $\rightarrow$ \texttt{dbo.Users}
+  \item \texttt{C:\textbackslash Prakash Files\textbackslash Dash\textbackslash Clients.xlsx}
+        $\rightarrow$ \texttt{dbo.Clients}
+  \item \texttt{C:\textbackslash Prakash Files\textbackslash Dash\textbackslash ClientTools.xlsx}
+        $\rightarrow$ \texttt{dbo.ClientTools}
+  \item \texttt{C:\textbackslash Prakash Files\textbackslash Dash\textbackslash UsersToolAccess.xlsx}
+        $\rightarrow$ \texttt{dbo.UsersToolAccess}
+  \item \texttt{C:\textbackslash Prakash Files\textbackslash Dash\textbackslash Department IFH GFH Mapping.xlsx}
+        $\rightarrow$ \texttt{dbo.IFHGFHMapping}
+\end{itemize}
+
+Use the \texttt{OPENROWSET} / ACE OLEDB import pattern from Appendix~A of the
+schema PDF (\texttt{ClientsAppAttestation\_Table\_Structure\_Documentation.pdf}).
+Enable Ad Hoc Distributed Queries on the SQL Server first:
+
+\begin{lstlisting}[language=SQL]
+EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
+EXEC sp_configure 'Ad Hoc Distributed Queries', 1; RECONFIGURE;
+\end{lstlisting}
+
+The SQL Server service account on \texttt{clipvwbpod02} must be able to read the
+file path above (either a local path on the SQL Server machine, or a UNC path
+accessible from it).
+
+\subsection*{Mandatory --- Populate SuperUsers for the go-live team}
+
+Once Users are imported, insert a row in \texttt{dbo.SuperUsers}
+for each person who needs Admin, VP, GFH, or IFH access.
+Ask the DBA to run:
+
+\begin{lstlisting}[language=SQL]
+USE ClientsAppAttestation;
+
+INSERT INTO dbo.SuperUsers
+    (AssociateID, RoleName, Department, AccessLevel, IsActive, CreatedBy)
+VALUES
+    ('173926', 'Admin', 'DTC Settlements', 'Full', 'TRUE', 'System'),
+    ('179335', 'VP',    'International',   'Approver', 'TRUE', 'System');
+-- Add one row per admin/VP/GFH/IFH user.
+\end{lstlisting}
+
+Use the real \texttt{AssociateID} values (VARCHAR, e.g.\ \texttt{'173926'}) and
+the real \texttt{RoleName} values: \texttt{Admin}, \texttt{VP}, \texttt{GFH},
+or \texttt{IFH}.
+
+\subsection*{Critical --- Set the UserName column for Windows Authentication}
+
+This step is the most common reason users reach the app but see nothing.
+
+When a user opens the app in their browser, IIS identifies them via Windows
+Authentication (Kerberos/NTLM) and passes their identity to the application as
+\texttt{HttpContext.User.Identity.Name}.
+The app then queries:
+
+\begin{lstlisting}[language=SQL]
+SELECT * FROM dbo.Users WHERE UserName = '<value IIS sent>';
+\end{lstlisting}
+
+If no row matches, the user is unresolved and the app behaves as if nobody is
+logged in.
+
+\textbf{What value does IIS send?}
+On most corporate Windows setups, \texttt{User.Identity.Name} is
+\texttt{DOMAIN\textbackslash loginname}, for example \texttt{BROADRIDGE\textbackslash KalapurayilP}.
+The \texttt{UserName} column in \texttt{dbo.Users} must contain exactly
+that string for each user.
+
+Verify what IIS sends on your network by enabling stdout logging temporarily
+(see the Troubleshooting Guide, Section~2) and looking for the identity in the
+application logs, or ask the infrastructure team what domain prefix IIS uses.
+
+Once confirmed, update the column in bulk:
+
+\begin{lstlisting}[language=SQL]
+-- Example: if IIS sends BROADRIDGE\<loginname>
+UPDATE dbo.Users
+SET UserName = 'BROADRIDGE\' + UserName
+WHERE UserName NOT LIKE 'BROADRIDGE\%';
+\end{lstlisting}
+
+If IIS sends the bare login name without a domain prefix, the UserName values
+already imported from Excel (e.g.\ \texttt{KalapurayilP}) will match directly
+and no update is needed.
+
+\subsection*{Remaining non-blocking limitations}
+
+\begin{itemize}
+  \item \textbf{No mobile layout.}
+        The frontend targets desktop viewports (1280\,px and wider).
+  \item \textbf{Dev form login accepts any password.}
+        The \texttt{POST /api/auth/login} endpoint is disabled in Production
+        (\texttt{EnableFormLogin: false}) but in Development it accepts any
+        non-empty password without verification.
+        This is intentional --- Production never uses form login.
+  \item \textbf{ClientTools and UsersToolAccess use the import-table structure.}
+        \texttt{dbo.ClientTools} uses \texttt{UserID int identity} as its PK
+        and \texttt{[Application Name] varchar(255)} for the tool name, matching
+        the flat Excel import design.
+        The normalised design (composite key on ClientID+ToolName) is enforced
+        as a unique constraint but not the primary key.
+        This is intentional and matches the production database.
+\end{itemize}
+
+\end{document}
