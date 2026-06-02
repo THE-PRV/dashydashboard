@@ -207,20 +207,27 @@ The .NET 7 Hosting Bundle installs the ASP.NET Core runtime and the IIS integrat
 
 \section{Register with IIS}
 \begin{warnbox}
-If IIS was installed \emph{before} the Hosting Bundle, you must restart IIS to register the ASP.NET Core Module. Skip this step if you installed the Hosting Bundle before IIS.
+If IIS was installed \emph{before} the Hosting Bundle, you must restart IIS to register the
+ASP.NET Core Module. Skip this step if you installed the Hosting Bundle before IIS.
 \end{warnbox}
 
 \begin{enumerate}
-  \item Click Start, type \textbf{IIS Manager}, and open \emph{Internet Information Services (IIS) Manager}.
+  \item Click Start, type \textbf{IIS Manager}, and open \emph{Internet Information Services
+        (IIS) Manager}.
   \item In the left pane, click on the server node (the topmost item with a computer icon).
   \item In the centre pane, double-click \textbf{Modules}.
   \item Scroll through the list and confirm an entry named \textbf{AspNetCoreModuleV2} exists.
-  \item If it is \emph{not} listed:
+  \item If it is \emph{not} listed, the ASP.NET Core Module must be registered. Choose
+        whichever of the following options is available on your server:\nopagebreak
   \begin{enumerate}[label=\alph*.]
-    \item Click Start, type \textbf{Command Prompt}, right-click it and choose \textbf{Run as administrator}.
-    \item Type \texttt{iisreset} and press Enter.
-    \item Wait for the confirmation message (\emph{Internet services successfully restarted}).
-    \item Return to IIS Manager, refresh the Modules list, and confirm \textbf{AspNetCoreModuleV2} now appears.
+    \item \textbf{Recycle the application pool (recommended on production servers)} ---
+          in IIS Manager, expand \textbf{Application Pools}, right-click
+          \texttt{DashyDashboardPool} and select \textbf{Recycle}. Then refresh the
+          Modules list.
+    \item \textbf{Full IIS reset} (only if you have the necessary permissions) ---
+          open a Command Prompt as Administrator, type \texttt{iisreset} and press Enter.
+          Wait for \emph{Internet services successfully restarted}, then return to IIS
+          Manager, refresh the Modules list, and confirm \textbf{AspNetCoreModuleV2} appears.
   \end{enumerate}
 \end{enumerate}
 
