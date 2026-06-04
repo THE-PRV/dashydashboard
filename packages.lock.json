@@ -2,17 +2,6 @@
   "version": 1,
   "dependencies": {
     "net7.0": {
-      "Microsoft.AspNetCore.Authentication.Negotiate": {
-        "type": "Direct",
-        "requested": "[7.0.20, )",
-        "resolved": "7.0.20",
-        "contentHash": "xwmnhKonOZLu/H56IebccchprcMV8jgQYJZ2POFWFuv6d7w4+CmHbRwdGaes9xiLKh4DzOAEGIy0jqlsoC3P7w==",
-        "dependencies": {
-          "Microsoft.AspNetCore.Connections.Abstractions": "7.0.20",
-          "Microsoft.Extensions.Caching.Memory": "7.0.0",
-          "System.DirectoryServices.Protocols": "7.0.1"
-        }
-      },
       "Microsoft.EntityFrameworkCore.SqlServer": {
         "type": "Direct",
         "requested": "[7.0.20, )",
@@ -76,15 +65,6 @@
         "type": "Transitive",
         "resolved": "2.14.1",
         "contentHash": "lQKvtaTDOXnoVJ20ibTuSIOf2i0uO0MPbDhd1jm238I+U/2ZnRENj0cktKZhtchBMtCUSRQ5v4xBCUbKNmyVMw=="
-      },
-      "Microsoft.AspNetCore.Connections.Abstractions": {
-        "type": "Transitive",
-        "resolved": "7.0.20",
-        "contentHash": "8RJYdKJshG4RTo+REZVx216dNP+XgkolyWWm8/Z9uDOwl6u+VTZ4/1bnMaZoBK7O9NZ3kZaSm3FQfPqU0quEFg==",
-        "dependencies": {
-          "Microsoft.Extensions.Features": "7.0.20",
-          "System.IO.Pipelines": "7.0.0"
-        }
       },
       "Microsoft.Bcl.AsyncInterfaces": {
         "type": "Transitive",
@@ -217,11 +197,6 @@
           "System.Text.Encodings.Web": "7.0.0",
           "System.Text.Json": "7.0.0"
         }
-      },
-      "Microsoft.Extensions.Features": {
-        "type": "Transitive",
-        "resolved": "7.0.20",
-        "contentHash": "38c+uuOgm0K9j7fFb062uBp7X8MENa88R71L85Wr8lMI5BpxCiBB+hO9ky3YEXa8g9/Zg1ROPLmbuEaqWfNbUg=="
       },
       "Microsoft.Extensions.Logging": {
         "type": "Transitive",
@@ -399,11 +374,6 @@
           "System.Runtime.CompilerServices.Unsafe": "6.0.0"
         }
       },
-      "System.DirectoryServices.Protocols": {
-        "type": "Transitive",
-        "resolved": "7.0.1",
-        "contentHash": "t9hsL+UYRzNs30pnT2Tdx6ngX8McFUjru0a0ekNgu/YXfkXN+dx5OvSEv0/p7H2q3pdJLH7TJPWX7e55J8QB9A=="
-      },
       "System.Drawing.Common": {
         "type": "Transitive",
         "resolved": "6.0.0",
@@ -434,11 +404,6 @@
           "System.Security.AccessControl": "5.0.0",
           "System.Security.Principal.Windows": "5.0.0"
         }
-      },
-      "System.IO.Pipelines": {
-        "type": "Transitive",
-        "resolved": "7.0.0",
-        "contentHash": "jRn6JYnNPW6xgQazROBLSfpdoczRw694vO5kKvMcNnpXuolEixUyw6IBuBs2Y2mlSX/LdLvyyWmfXhaI3ND1Yg=="
       },
       "System.Memory": {
         "type": "Transitive",
