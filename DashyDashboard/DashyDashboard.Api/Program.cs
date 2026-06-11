@@ -24,6 +24,14 @@ builder.Services.AddScoped<AdminService>();
 // Stateless, config-only owner of screenshot disk I/O.
 builder.Services.AddSingleton<ScreenshotStorageService>();
 
+// Event-triggered email (Feature 2, §S5). EmailService composes + enqueues; the hosted service
+// is the sole queue consumer and performs the actual SMTP send. Fire-and-forget by design — see
+// Services/EmailService.cs.
+builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+builder.Services.AddSingleton<EmailQueue>();
+builder.Services.AddSingleton<EmailService>();
+builder.Services.AddHostedService<EmailSenderHostedService>();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();

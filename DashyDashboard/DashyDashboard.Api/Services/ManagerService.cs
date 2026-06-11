@@ -11,10 +11,12 @@ public class ManagerService
 {
     private readonly AppDbContext _db;
     private readonly ScreenshotStorageService _screenshots;
-    public ManagerService(AppDbContext db, ScreenshotStorageService screenshots)
+    private readonly EmailService _email;
+    public ManagerService(AppDbContext db, ScreenshotStorageService screenshots, EmailService email)
     {
         _db = db;
         _screenshots = screenshots;
+        _email = email;
     }
 
     public async Task<TeamDto> GetTeamAsync(string managerId, int cycleId, bool includeEmpty = false)
@@ -701,11 +703,18 @@ public class ManagerService
         if (!approve && string.IsNullOrWhiteSpace(reason))
             throw new InvalidOperationException("A reason is required when rejecting a screenshot.");
 
-        var att = await _db.ToolCycleAttestations
-            .FirstOrDefaultAsync(a => a.CycleID == cycleId && a.AssociateId == ownerId
-                                   && a.ClientID == clientId && a.ToolID == toolId);
+        // Load every attestation row for this member+cycle (tracked) so we can evaluate the
+        // AllApproved completeness transition once, before and after the change, in this request.
+        var rows = await _db.ToolCycleAttestations
+            .Where(a => a.CycleID == cycleId && a.AssociateId == ownerId)
+            .ToListAsync();
+
+        var att = rows.FirstOrDefault(a => a.ClientID == clientId && a.ToolID == toolId);
         if (att?.ScreenshotPath is null)
             throw new KeyNotFoundException("No screenshot found for this attestation.");
+
+        var wasComplete = ScreenshotCompletion.AllApproved(
+            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
 
         StampReview(att, callerId, approve, reason);
 
@@ -716,6 +725,15 @@ public class ManagerService
         LogReviewEvent(cycleId, callerId, 1, summary);
 
         await _db.SaveChangesAsync();
+
+        if (!approve)
+            await EnqueueScreenshotRejectedAsync(cycleId, ownerId, clientId, toolId, callerId, reason);
+
+        var isComplete = ScreenshotCompletion.AllApproved(
+            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+
+        if (!wasComplete && isComplete)
+            await EnqueueAllApprovedAsync(cycleId, ownerId);
     }
 
     /// <summary>
@@ -728,10 +746,17 @@ public class ManagerService
         if (!await CanAccessMemberScreenshotsAsync(callerId, callerSuperUsers, ownerId, includeSelf: false))
             throw new UnauthorizedAccessException("You are not authorized to review these screenshots.");
 
-        var pending = await _db.ToolCycleAttestations
-            .Where(a => a.CycleID == cycleId && a.AssociateId == ownerId
-                     && a.ScreenshotStatus == "Pending")
+        // Load every attestation row for this member+cycle (tracked) so we can evaluate the
+        // AllApproved completeness transition once, before and after the bulk change, in this
+        // request — this is what prevents a double-send when many rows flip to Approved at once.
+        var rows = await _db.ToolCycleAttestations
+            .Where(a => a.CycleID == cycleId && a.AssociateId == ownerId)
             .ToListAsync();
+
+        var wasComplete = ScreenshotCompletion.AllApproved(
+            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+
+        var pending = rows.Where(a => a.ScreenshotStatus == "Pending").ToList();
 
         foreach (var att in pending)
             StampReview(att, callerId, approve: true, reason: null);
@@ -741,12 +766,21 @@ public class ManagerService
                 $"Bulk approved {pending.Count} screenshot(s) for {ownerId}.");
 
         await _db.SaveChangesAsync();
+
+        var isComplete = ScreenshotCompletion.AllApproved(
+            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+
+        if (!wasComplete && isComplete)
+            await EnqueueAllApprovedAsync(cycleId, ownerId);
+
         return pending.Count;
     }
 
     /// <summary>
-    /// SINGLE CHOKE POINT for a screenshot state change after review. Stage S5 (email) should hook
-    /// notifications here (e.g. fire an approved/rejected event) so every review path is covered.
+    /// SINGLE CHOKE POINT for a screenshot state change after review. Both review paths
+    /// (<see cref="ReviewScreenshotAsync"/> and <see cref="ApproveAllScreenshotsAsync"/>) call this
+    /// for each row, then evaluate the email hooks ONCE per request after <c>SaveChangesAsync</c>
+    /// (see <see cref="EnqueueScreenshotRejectedAsync"/> / <see cref="EnqueueAllApprovedAsync"/>).
     /// </summary>
     private static void StampReview(ToolCycleAttestation att, string reviewerId, bool approve, string? reason)
     {
@@ -754,7 +788,58 @@ public class ManagerService
         att.ScreenshotReviewedBy = reviewerId;
         att.ScreenshotReviewedAt = DateTime.UtcNow;
         att.ScreenshotRejectReason = approve ? null : reason?.Trim();
-        // S5 email hook: notify the owner of the approve/reject decision here.
+    }
+
+    /// <summary>
+    /// Composes and queues the ScreenshotRejected mail (§04-email) for one rejected row. Looks up
+    /// the owner's email, the cycle/client/tool display names and the reviewer's display name.
+    /// All gating (Enabled, event toggle, missing EMailAddr) happens inside <see cref="EmailService"/>.
+    /// </summary>
+    private async Task EnqueueScreenshotRejectedAsync(
+        int cycleId, string ownerId, string clientId, int toolId, string reviewerId, string? reason)
+    {
+        var owner = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.AssociateId == ownerId);
+        if (string.IsNullOrWhiteSpace(owner?.EmailAddr))
+            return;
+
+        var cycle = await _db.Cycles.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CycleID == cycleId);
+
+        var client = await _db.Clients.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.ClientID == clientId);
+
+        var tool = await _db.ClientTools.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.ClientID == clientId && t.ToolID == toolId);
+
+        var reviewer = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.AssociateId == reviewerId);
+
+        _email.EnqueueScreenshotRejected(
+            owner.EmailAddr,
+            cycle?.CycleName ?? $"Cycle {cycleId}",
+            client?.ClientName ?? clientId,
+            tool?.ToolName ?? toolId.ToString(),
+            reviewer != null ? reviewer.FullName : reviewerId,
+            reason);
+    }
+
+    /// <summary>
+    /// Composes and queues the AllApproved "you're complete" mail (§04-email) for the owner.
+    /// Callers must have already established the not-complete -&gt; complete transition for this
+    /// request (see the <c>wasComplete</c>/<c>isComplete</c> checks in the two review paths).
+    /// </summary>
+    private async Task EnqueueAllApprovedAsync(int cycleId, string ownerId)
+    {
+        var owner = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.AssociateId == ownerId);
+        if (string.IsNullOrWhiteSpace(owner?.EmailAddr))
+            return;
+
+        var cycle = await _db.Cycles.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CycleID == cycleId);
+
+        _email.EnqueueAllApproved(owner.EmailAddr, cycle?.CycleName ?? $"Cycle {cycleId}");
     }
 
     private void LogReviewEvent(int cycleId, string reviewerId, int count, string summary)
