@@ -3,6 +3,7 @@ import { Icon, Avatar, Badge, Button, TopBar, SearchBar } from '../components/ui
 import {
   getTeam, getMemberAccess, grantAccess, revokeAccess,
   updateAccessEndDate, setOpenAccess, getGrantableClientsAndTools,
+  updateAccessUserId, exportAccesses,
 } from '../api/manager.js';
 import { asAssociateId, asToolId, asToolIdKey } from '../lib/contracts.js';
 
@@ -72,6 +73,23 @@ export default function AccessManagementView(props) {
 
   const selectedMember = members.find((member) => member.associateId === selectedId) ?? null;
 
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+
+  async function handleExport() {
+    if (!cycle?.cycleID) return;
+    setExporting(true);
+    setExportError('');
+    try {
+      // Pass the on-screen filter (the selected team member) so the file matches the view.
+      await exportAccesses(cycle.cycleID, { memberId: selectedId || null });
+    } catch (e) {
+      setExportError(e.message || 'Export failed.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
       <TopBar {...props} />
@@ -86,6 +104,19 @@ export default function AccessManagementView(props) {
         <span style={{ color: 'var(--text-muted)' }}>
           Grant, time-box, or revoke tool access for your direct reports
         </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          {exportError && <span style={{ color: 'var(--danger-fg)' }}>{exportError}</span>}
+          <Button
+            variant="outline"
+            size="sm"
+            icon="arrow_up_right"
+            onClick={handleExport}
+            disabled={exporting || !cycle}
+            style={{ opacity: exporting ? 0.7 : 1, cursor: exporting ? 'wait' : 'pointer' }}
+          >
+            {exporting ? 'Exporting…' : 'Export accesses'}
+          </Button>
+        </div>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
@@ -175,6 +206,8 @@ function MemberAccessPanel({ member }) {
     withBusy(`${clientId}/${asToolIdKey(toolId)}`, () => revokeAccess(memberId, clientId, toolId));
   const grantFull = (clientId, toolId) =>
     withBusy(`${clientId}/${asToolIdKey(toolId)}`, () => setOpenAccess(memberId, clientId, toolId, false));
+  const setUserId = (clientId, toolId, value) =>
+    withBusy(`${clientId}/${asToolIdKey(toolId)}`, () => updateAccessUserId(memberId, clientId, toolId, value || null));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 880 }}>
@@ -207,7 +240,7 @@ function MemberAccessPanel({ member }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: 'var(--surface-2)' }}>
-                  {['Client', 'Tool', 'From', 'To', 'Actions'].map((heading) => (
+                  {['Client', 'Tool', 'From', 'To', 'User ID', 'Actions'].map((heading) => (
                     <th key={heading} style={{
                       textAlign: 'left', padding: '9px 16px', fontSize: 11, fontWeight: 600,
                       letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-muted)',
@@ -247,6 +280,23 @@ function MemberAccessPanel({ member }) {
                             style={{ ...inputStyle, height: 28, width: 150 }}
                           />
                         )}
+                      </td>
+                      <td style={{ padding: '10px 16px' }}>
+                        <input
+                          type="text"
+                          defaultValue={tool.toolUserId ?? ''}
+                          placeholder="—"
+                          disabled={busy}
+                          title="Login the associate uses inside this tool"
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                          onBlur={(e) => {
+                            const next = e.target.value.trim();
+                            if (next !== (tool.toolUserId ?? '')) {
+                              setUserId(group.clientID, tool.toolID, next || null);
+                            }
+                          }}
+                          style={{ ...inputStyle, height: 28, width: 150 }}
+                        />
                       </td>
                       <td style={{ padding: '10px 16px', whiteSpace: 'nowrap' }}>
                         {tool.isOpen ? (
@@ -305,7 +355,7 @@ function MemberAccessPanel({ member }) {
 
 function GrantAccessForm({ memberId, onGranted }) {
   const [clients, setClients] = useState([]);
-  const [form, setForm] = useState({ clientId: '', toolId: '', accessFrom: TODAY, accessTo: '', open: false });
+  const [form, setForm] = useState({ clientId: '', toolId: '', accessFrom: TODAY, accessTo: '', open: false, toolUserId: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -332,8 +382,9 @@ function GrantAccessForm({ memberId, onGranted }) {
         accessFrom: form.accessFrom || null,
         accessTo: form.accessTo || null,
         open: form.open,
+        toolUserId: form.toolUserId.trim() || null,
       });
-      setForm({ clientId: '', toolId: '', accessFrom: TODAY, accessTo: '', open: false });
+      setForm({ clientId: '', toolId: '', accessFrom: TODAY, accessTo: '', open: false, toolUserId: '' });
       onGranted();
     } catch (err) {
       setError(err.message || 'Failed to grant access.');
@@ -380,6 +431,15 @@ function GrantAccessForm({ memberId, onGranted }) {
         </Field>
         <Field label="Access to (optional)">
           <input type="date" value={form.accessTo} min={form.accessFrom} onChange={setField('accessTo')} style={inputStyle} />
+        </Field>
+        <Field label="User ID (optional)">
+          <input
+            type="text"
+            value={form.toolUserId}
+            onChange={setField('toolUserId')}
+            placeholder="Login inside the tool"
+            style={inputStyle}
+          />
         </Field>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

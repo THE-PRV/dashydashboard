@@ -37,6 +37,18 @@ export const updateAccessEndDate = (memberId, clientId, toolId, accessTo) =>
 export const setOpenAccess = (memberId, clientId, toolId, open) =>
   put(`/api/manager/team/${routePart(memberId)}/access/${routePart(clientId)}/${routePart(toolId)}/open`, { open });
 
+// toolUserId: the login the associate uses inside the client's tool (or null to clear it).
+export const updateAccessUserId = (memberId, clientId, toolId, toolUserId) =>
+  put(`/api/manager/team/${routePart(memberId)}/access/${routePart(clientId)}/${routePart(toolId)}/user-id`, { toolUserId });
+
+// Export the visible accesses as .xlsx. Pass the on-screen filters so the file matches the view.
+export const exportAccesses = (cycleId, { memberId = null, clientId = null } = {}) => {
+  const params = new URLSearchParams({ cycleId: String(cycleId) });
+  if (memberId) params.set('memberId', memberId);
+  if (clientId) params.set('clientId', clientId);
+  return downloadFile(`/api/manager/access/export?${params.toString()}`, `accesses-cycle${cycleId}.xlsx`);
+};
+
 export const getClientsAndTools = () => get('/api/manager/clients-tools');
 
 export const getGrantableClientsAndTools = () => get('/api/manager/grantable-clients-tools');

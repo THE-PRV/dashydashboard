@@ -48,10 +48,13 @@ public record GrantAccessRequest(
     [Required] int ToolID,
     DateOnly? GivenDate = null,
     DateOnly? AccessTo = null,
-    bool Open = false
+    bool Open = false,
+    [MaxLength(100)] string? ToolUserId = null
 );
 
 public record UpdateAccessEndDateRequest(DateOnly? AccessTo);
+
+public record UpdateToolUserIdRequest([MaxLength(100)] string? ToolUserId);
 
 public record SetOpenAccessRequest(bool Open);
 
@@ -66,7 +69,21 @@ public record AccessRowDto(
     string ToolName,
     DateOnly GivenDate,
     DateOnly? AccessTo,
-    bool IsOpen
+    bool IsOpen,
+    string? ToolUserId
+);
+
+public record AccessExportRowDto(
+    string AssociateName,
+    string AssociateId,
+    string ClientName,
+    string ClientId,
+    int ToolID,
+    string ToolName,
+    string? Tier,
+    DateOnly GivenDate,
+    DateOnly? AccessTo,
+    string? ToolUserId
 );
 
 public record UserListItem(

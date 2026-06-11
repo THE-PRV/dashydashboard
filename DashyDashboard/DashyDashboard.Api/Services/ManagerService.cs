@@ -251,6 +251,8 @@ public class ManagerService
                                      && uta.ClientID == req.ClientID
                                      && uta.ToolID == req.ToolID);
 
+        var toolUserId = string.IsNullOrWhiteSpace(req.ToolUserId) ? null : req.ToolUserId.Trim();
+
         if (existing is null)
         {
             _db.UserToolAccess.Add(new UserToolAccess
@@ -262,6 +264,7 @@ public class ManagerService
                 GivenDate = givenDate,
                 ToDate = req.AccessTo,
                 DepartmentID = tool.DepartmentID,
+                ToolUserId = toolUserId,
             });
         }
         else
@@ -269,9 +272,101 @@ public class ManagerService
             existing.Access = !req.Open;
             existing.GivenDate = givenDate;
             existing.ToDate = req.AccessTo;
+            existing.ToolUserId = toolUserId;
         }
 
         await _db.SaveChangesAsync();
+    }
+
+    public async Task UpdateToolUserIdAsync(string managerId, string memberId, string clientId, int toolId, string? toolUserId)
+    {
+        await AssertReportsToAsync(managerId, memberId);
+
+        var row = await _db.UserToolAccess
+            .FirstOrDefaultAsync(uta => uta.AssociateId == memberId
+                                     && uta.ClientID == clientId
+                                     && uta.ToolID == toolId);
+
+        if (row is null)
+            throw new KeyNotFoundException("Access row not found.");
+
+        row.ToolUserId = string.IsNullOrWhiteSpace(toolUserId) ? null : toolUserId.Trim();
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Builds the rows for the "Export accesses" .xlsx. Scope mirrors the Access page:
+    /// when <paramref name="allMembers"/> is false (manager view) only the caller's direct
+    /// reports are included; when true (Admin) every associate is included. Optional
+    /// <paramref name="memberId"/> / <paramref name="clientId"/> match the on-screen filters.
+    /// </summary>
+    public async Task<List<AccessExportRowDto>> GetAccessExportAsync(
+        string callerId, bool allMembers, string? memberId = null, string? clientId = null)
+    {
+        // Determine the visible associate set.
+        List<User> users;
+        if (allMembers)
+        {
+            users = await _db.Users.AsNoTracking().ToListAsync();
+        }
+        else
+        {
+            users = await _db.Users.AsNoTracking()
+                .Where(u => u.ManagerId == callerId)
+                .ToListAsync();
+        }
+
+        // Apply the optional member filter (and enforce it stays within visible scope).
+        if (!string.IsNullOrWhiteSpace(memberId))
+        {
+            users = users.Where(u => u.AssociateId == memberId).ToList();
+            if (users.Count == 0) return new List<AccessExportRowDto>();
+        }
+
+        var userIds = users.Select(u => u.AssociateId).ToList();
+        var userMap = users.ToDictionary(u => u.AssociateId);
+
+        var accessQuery = _db.UserToolAccess.AsNoTracking()
+            .Where(uta => userIds.Contains(uta.AssociateId));
+
+        if (!string.IsNullOrWhiteSpace(clientId))
+            accessQuery = accessQuery.Where(uta => uta.ClientID == clientId);
+
+        var access = await accessQuery
+            .Include(uta => uta.ClientTool)
+            .ToListAsync();
+
+        if (access.Count == 0) return new List<AccessExportRowDto>();
+
+        var clientNames = await _db.Clients.AsNoTracking()
+            .Where(c => access.Select(a => a.ClientID).Distinct().Contains(c.ClientID))
+            .ToDictionaryAsync(c => c.ClientID, c => c.ClientName ?? c.ClientID);
+
+        return access
+            .Select(a =>
+            {
+                var u = userMap.GetValueOrDefault(a.AssociateId!);
+                var name = u != null ? $"{u.FirstName} {u.LastName}".Trim() : a.AssociateId ?? "";
+                var clientName = clientNames.GetValueOrDefault(a.ClientID!, a.ClientID ?? "");
+                // No per-access Tier column exists; the access flag distinguishes a fully
+                // granted access ("Full") from an in-process / open access ("Open").
+                var tier = a.Access ? "Full" : "Open";
+                return new AccessExportRowDto(
+                    name,
+                    a.AssociateId ?? "",
+                    clientName,
+                    a.ClientID ?? "",
+                    a.ToolID,
+                    a.ClientTool?.ToolName ?? a.ToolID.ToString(),
+                    tier,
+                    a.GivenDate,
+                    a.ToDate,
+                    a.ToolUserId);
+            })
+            .OrderBy(r => r.AssociateName)
+            .ThenBy(r => r.ClientName)
+            .ThenBy(r => r.ToolName)
+            .ToList();
     }
 
     public async Task UpdateAccessEndDateAsync(string managerId, string memberId, string clientId, int toolId, DateOnly? accessTo)
@@ -336,7 +431,7 @@ public class ManagerService
                 g.Key,
                 clientNames.GetValueOrDefault(g.Key, g.Key),
                 g.OrderBy(a => a.ClientTool?.ToolName)
-                 .Select(a => new AccessRowDto(a.ToolID, a.ClientTool?.ToolName ?? "", a.GivenDate, a.ToDate, !a.Access))
+                 .Select(a => new AccessRowDto(a.ToolID, a.ClientTool?.ToolName ?? "", a.GivenDate, a.ToDate, !a.Access, a.ToolUserId))
                  .ToList()))
             .OrderBy(c => c.ClientName)
             .ToList();
