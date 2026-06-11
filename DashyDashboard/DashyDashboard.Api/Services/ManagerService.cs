@@ -47,11 +47,25 @@ public class ManagerService
             .ToDictionary(g => g.Key, g => g.Count());
 
         // Per-member screenshot completeness (§7): a member is only "Submitted" (complete) when
-        // fully answered AND all required screenshots are Approved.
+        // fully answered AND all required screenshots are Approved. Also surface the raw
+        // pending/rejected counts (§B1) for the "Awaiting approval (n)" / "Rejected (n)" chips.
         var ssByMember = attestRows
             .GroupBy(r => r.AssociateId)
-            .ToDictionary(g => g.Key, g => ScreenshotCompletion.AllApproved(
+            .ToDictionary(g => g.Key, g => ScreenshotCompletion.Classify(
                 g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus))));
+
+        var pendingCounts = attestRows
+            .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
+                     && r.ScreenshotStatus != ScreenshotCompletion.StatusApproved
+                     && r.ScreenshotStatus != ScreenshotCompletion.StatusRejected)
+            .GroupBy(r => r.AssociateId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var rejectedCounts = attestRows
+            .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
+                     && r.ScreenshotStatus == ScreenshotCompletion.StatusRejected)
+            .GroupBy(r => r.AssociateId)
+            .ToDictionary(g => g.Key, g => g.Count());
 
         var allMembers = reports.Select(u =>
         {
@@ -59,11 +73,14 @@ public class ManagerService
             var attested = attestCounts.GetValueOrDefault(u.AssociateId, 0);
             var pct = total > 0 ? (double)attested / total : 0;
             var answeredAll = pct >= 1;
-            var screenshotsApproved = ssByMember.GetValueOrDefault(u.AssociateId, true);
+            var (anyAwaiting, anyRejected) = ssByMember.GetValueOrDefault(u.AssociateId, (false, false));
+            var screenshotsApproved = !anyAwaiting && !anyRejected;
             var status = answeredAll && screenshotsApproved ? "Submitted"
                        : attested == 0 ? "NotStarted"
                        : "InProgress";
-            return new TeamMemberDto(u.AssociateId, $"{u.FirstName} {u.LastName}", u.EmailAddr ?? "", status, total, attested, Math.Round(pct, 4));
+            var pendingScreenshots = pendingCounts.GetValueOrDefault(u.AssociateId, 0);
+            var rejectedScreenshots = rejectedCounts.GetValueOrDefault(u.AssociateId, 0);
+            return new TeamMemberDto(u.AssociateId, $"{u.FirstName} {u.LastName}", u.EmailAddr ?? "", status, total, attested, Math.Round(pct, 4), pendingScreenshots, rejectedScreenshots);
         }).ToList();
 
         var members = includeEmpty ? allMembers : allMembers.Where(m => m.TotalTools > 0).ToList();
@@ -99,7 +116,8 @@ public class ManagerService
                        && uta.Access
                        && uta.GivenDate <= today
                        && (uta.ToDate == null || uta.ToDate >= today))
-            .Select(uta => new { uta.ClientID, uta.ToolID })
+            .Include(uta => uta.ClientTool)
+            .Select(uta => new { uta.ClientID, uta.ToolID, ToolName = uta.ClientTool!.ToolName })
             .ToListAsync();
 
         var clientNames = await _db.Clients.AsNoTracking()
@@ -118,9 +136,23 @@ public class ManagerService
             .Select(a => (a.ClientID, a.ToolID))
             .ToHashSet();
 
+        var attestationsByKey = allAttestations
+            .ToDictionary(a => (a.ClientID, a.ToolID));
+
         // §7: complete only when fully answered AND all required screenshots are Approved.
-        var screenshotsApproved = ScreenshotCompletion.AllApproved(
+        // §B1: also surface raw pending/rejected counts for the member's status chip.
+        var (anyAwaiting, anyRejected) = ScreenshotCompletion.Classify(
             allAttestations.Select(a => (a.HadAccess, a.UsedThisCycle, a.ScreenshotStatus)));
+        var screenshotsApproved = !anyAwaiting && !anyRejected;
+
+        var pendingScreenshots = allAttestations.Count(a =>
+            ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
+            && a.ScreenshotStatus != ScreenshotCompletion.StatusApproved
+            && a.ScreenshotStatus != ScreenshotCompletion.StatusRejected);
+
+        var rejectedScreenshots = allAttestations.Count(a =>
+            ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
+            && a.ScreenshotStatus == ScreenshotCompletion.StatusRejected);
 
         var byClient = accessKeys
             .GroupBy(a => a.ClientID)
@@ -128,7 +160,25 @@ public class ManagerService
             {
                 var total = g.Count();
                 var attested = g.Count(ak => answeredKeys.Contains((ak.ClientID, ak.ToolID)));
-                return new ClientProgressDto(g.Key, clientNames.GetValueOrDefault(g.Key, g.Key), total, attested);
+
+                // §B2: per-tool rows for the reviewer gallery, in this client's group.
+                var tools = g.Select(ak =>
+                {
+                    var att = attestationsByKey.GetValueOrDefault((ak.ClientID, ak.ToolID));
+                    return new MemberToolDto(
+                        ak.ToolID,
+                        ak.ToolName ?? ak.ToolID.ToString(),
+                        att?.UsedThisCycle,
+                        att?.HadAccess ?? true,
+                        att?.ScreenshotStatus,
+                        att?.ScreenshotRejectReason,
+                        att?.ScreenshotUploadedAt
+                    );
+                })
+                .OrderBy(t => t.ToolName)
+                .ToList();
+
+                return new ClientProgressDto(g.Key, clientNames.GetValueOrDefault(g.Key, g.Key), total, attested, tools);
             })
             .OrderBy(c => c.ClientName)
             .ToList();
@@ -160,7 +210,8 @@ public class ManagerService
                    : "InProgress";
 
         return new MemberDetailDto(member.AssociateId, $"{member.FirstName} {member.LastName}",
-                                   status, totalTools, totalAttested, Math.Round(pct, 4), byClient, mismatchDtos);
+                                   status, totalTools, totalAttested, Math.Round(pct, 4), byClient, mismatchDtos,
+                                   pendingScreenshots, rejectedScreenshots);
     }
 
     public async Task<List<DisputeExportDto>> GetDisputesAsync(string managerId, int cycleId)

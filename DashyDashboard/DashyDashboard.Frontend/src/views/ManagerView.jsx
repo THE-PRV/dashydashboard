@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Avatar, Badge, Button, Icon, Progress, TopBar } from '../components/ui.jsx';
-import { getMemberDetail, getTeam, exportDisputes } from '../api/manager.js';
+import { getMemberDetail, getTeam, exportDisputes, downloadScreenshotsZip } from '../api/manager.js';
 import { reopenAttestation } from '../api/attestations.js';
 import { asAssociateId } from '../lib/contracts.js';
+import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
 
 const STATUS_META = {
   Submitted: { label: 'Submitted', variant: 'used' },
@@ -92,6 +93,7 @@ export default function ManagerView({
   const [detailError, setDetailError] = useState('');
   const [exportingDisputes, setExportingDisputes] = useState(false);
   const [reopening, setReopening] = useState(false);
+  const [downloadingZip, setDownloadingZip] = useState(false);
 
   const loadTeam = async () => {
     if (!cycle) {
@@ -141,6 +143,18 @@ export default function ManagerView({
     }
   }
 
+  async function handleDownloadZip() {
+    if (!cycle?.cycleID) return;
+    setDownloadingZip(true);
+    try {
+      await downloadScreenshotsZip(cycle.cycleID);
+    } catch (e) {
+      alert('Download failed: ' + e.message);
+    } finally {
+      setDownloadingZip(false);
+    }
+  }
+
   async function handleReopen() {
     if (!cycle?.cycleID || !selectedId) return;
     if (!window.confirm(`Reopen ${detail?.fullName ?? selectedId}'s submitted attestation for ${cycle.cycleName ?? 'this cycle'}?`)) return;
@@ -157,6 +171,16 @@ export default function ManagerView({
     } finally {
       setReopening(false);
     }
+  }
+
+  // Refresh the selected member's detail (and the team list's pending/rejected
+  // counts) after a screenshot approve/reject/approve-all.
+  function refreshDetail() {
+    if (!cycle?.cycleID || !selectedId) return;
+    getMemberDetail(selectedId, cycle.cycleID)
+      .then((response) => setDetail({ ...response, associateId: asAssociateId(response.associateId) }))
+      .catch(() => {});
+    loadTeam();
   }
 
   useEffect(() => {
@@ -261,6 +285,16 @@ export default function ManagerView({
         <span style={{ color: 'var(--text-muted)' }}>
           Review direct-report completion for {cycle?.cycleName ?? 'the selected cycle'}
         </span>
+        {cycle?.cycleID && (
+          <Button
+            variant="outline" size="sm" icon="download"
+            disabled={downloadingZip}
+            onClick={handleDownloadZip}
+            style={{ marginLeft: 'auto', opacity: downloadingZip ? 0.6 : 1, cursor: downloadingZip ? 'wait' : 'pointer' }}
+          >
+            {downloadingZip ? 'Preparing…' : `Download all screenshots (cycle ${cycle.cycleID})`}
+          </Button>
+        )}
       </div>
 
       {team?.mismatchCount > 0 && (
@@ -429,7 +463,15 @@ export default function ManagerView({
                             </div>
                           </td>
                           <td style={{ padding: '12px 14px' }}>
-                            <Badge variant={meta.variant}>{meta.label}</Badge>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <Badge variant={meta.variant}>{meta.label}</Badge>
+                              {member.pendingScreenshots > 0 && (
+                                <Badge variant="pending" size="sm">Awaiting approval ({member.pendingScreenshots})</Badge>
+                              )}
+                              {member.rejectedScreenshots > 0 && (
+                                <Badge variant="danger" size="sm">Rejected ({member.rejectedScreenshots})</Badge>
+                              )}
+                            </div>
                           </td>
                           <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                             <Icon name="chevright" size={14} style={{ color: 'var(--text-muted)' }} />
@@ -541,6 +583,20 @@ export default function ManagerView({
                         </div>
                       </div>
                     ))
+                  )}
+
+                  {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient.some((c) => c.tools?.length)) && (
+                    <div style={{ marginTop: 6 }}>
+                      <ScreenshotGallery
+                        cycleId={cycle.cycleID}
+                        associateId={detail.associateId}
+                        memberName={detail.fullName}
+                        byClient={detail.byClient}
+                        pendingScreenshots={detail.pendingScreenshots}
+                        rejectedScreenshots={detail.rejectedScreenshots}
+                        onReviewed={refreshDetail}
+                      />
+                    </div>
                   )}
 
                   {detail?.mismatches?.length > 0 && (

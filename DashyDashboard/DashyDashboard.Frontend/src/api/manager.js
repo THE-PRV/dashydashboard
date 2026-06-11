@@ -59,3 +59,21 @@ export const getDisputes = (cycleId) => get(`/api/manager/disputes?cycleId=${cyc
 
 export const exportDisputes = (cycleId) =>
   downloadFile(`/api/manager/disputes/export?cycleId=${cycleId}`, `access-disputes-cycle${cycleId}.xlsx`);
+
+// ── Screenshot review (Feature 2 §6) ───────────────────────────────────────
+
+// Approve or reject a single member's screenshot for one tool. `reason` is required
+// (and shown to the associate) when rejecting; ignored when approving.
+export const reviewScreenshot = (cycleId, associateId, clientId, toolId, approve, reason = null) =>
+  put(`/api/manager/screenshots/${routePart(cycleId)}/${routePart(associateId)}/${routePart(clientId)}/${routePart(toolId)}/review`, {
+    approve, reason,
+  });
+
+// Approve every Pending screenshot for a member in one go. Returns { approved: <count> }.
+export const approveAllScreenshots = (cycleId, associateId) =>
+  put(`/api/manager/screenshots/${routePart(cycleId)}/${routePart(associateId)}/approve-all`);
+
+// Download a .zip of every screenshot uploaded for the cycle (Feature 2 §B5). The server
+// authorizes via SuperUserRoles, so this is shared by the manager and admin/GFH dashboards.
+export const downloadScreenshotsZip = (cycleId) =>
+  downloadFile(`/api/manager/cycles/${routePart(cycleId)}/screenshots.zip`, `screenshots-cycle${cycleId}.zip`);
