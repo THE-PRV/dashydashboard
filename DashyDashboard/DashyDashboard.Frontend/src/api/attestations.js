@@ -1,4 +1,4 @@
-import { get, put, post } from './client.js';
+import { get, put, post, postForm, getBlobUrl } from './client.js';
 import { routePart } from '../lib/contracts.js';
 
 export const getMyAttestations = (cycleId) =>
@@ -20,3 +20,31 @@ export const addRemark = (cycleId, clientId, toolId, text) =>
 // Admin-only: reopen a submitted attestation so the associate can edit it again.
 export const reopenAttestation = (cycleId, associateId) =>
   post(`/api/attestations/${routePart(cycleId)}/${routePart(associateId)}/reopen`);
+
+// ── Screenshots (Feature 2 §A) ─────────────────────────────────────────────
+
+// Upload (or re-upload) the screenshot for a single attestation row. `file` should already
+// be compressed (see src/utils/imageCompress.js). Returns { status: 'Pending' }.
+export const uploadScreenshot = (cycleId, clientId, toolId, file) => {
+  const form = new FormData();
+  form.append('file', file, file.name || 'screenshot.webp');
+  return postForm(`/api/attestations/${routePart(cycleId)}/${routePart(clientId)}/${routePart(toolId)}/screenshot`, form);
+};
+
+// Batch-upload many screenshots at once. `files` is an array of File objects named
+// {clientId}_{toolId}.ext. Returns { results: [{ fileName, status, detail }] }.
+export const uploadScreenshotsBatch = (cycleId, files) => {
+  const form = new FormData();
+  files.forEach((file) => form.append('files', file, file.name));
+  return postForm(`/api/attestations/${routePart(cycleId)}/screenshots/batch`, form);
+};
+
+// Fetch the full-size screenshot for one row as an object URL (caller must
+// URL.revokeObjectURL when done). Returns null if none exists (404).
+export const getScreenshotUrl = (cycleId, associateId, clientId, toolId) =>
+  getBlobUrl(`/api/attestations/${routePart(cycleId)}/${routePart(associateId)}/${routePart(clientId)}/${routePart(toolId)}/screenshot`);
+
+// Fetch the thumbnail for one row as an object URL (caller must URL.revokeObjectURL when
+// done). Returns null if none exists (404).
+export const getScreenshotThumbUrl = (cycleId, associateId, clientId, toolId) =>
+  getBlobUrl(`/api/attestations/${routePart(cycleId)}/${routePart(associateId)}/${routePart(clientId)}/${routePart(toolId)}/thumb`);

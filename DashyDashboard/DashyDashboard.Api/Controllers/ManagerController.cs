@@ -3,6 +3,7 @@ using DashyDashboard.Api.Data;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Models.DTOs;
 using DashyDashboard.Api.Services;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,6 +19,9 @@ public class ManagerController : ControllerBase
 
     private User? CurrentUser => HttpContext.Items["CurrentUser"] as User;
     private SuperUser? CurrentSuperUser => HttpContext.Items["SuperUser"] as SuperUser;
+    private IReadOnlyList<SuperUser> CurrentSuperUsers =>
+        (HttpContext.Items["SuperUsers"] as IList<SuperUser>)?.ToList()
+        ?? (CurrentSuperUser is null ? new List<SuperUser>() : new List<SuperUser> { CurrentSuperUser });
 
     [NonAction]
     private async Task<bool> IsManagerAsync()
@@ -219,5 +223,60 @@ public class ManagerController : ControllerBase
         if (!IsAdminSuperUser()) return Forbid();
         var cycle = await _svc.GenerateNextCycleAsync(CurrentUser.AssociateId);
         return Created("", cycle);
+    }
+
+    // ── Screenshot review (§6) ────────────────────────────────────────────────
+    // Authorization (manager-of-associate / GFH-of-dept / GFHDelegate / Admin) is enforced inside
+    // the service via the caller's SuperUser rows; an UnauthorizedAccessException maps to 403.
+
+    [HttpPut("screenshots/{cycleId}/{associateId}/{clientId}/{toolId}/review")]
+    public async Task<IActionResult> ReviewScreenshot(int cycleId, string associateId, string clientId, int toolId,
+        [FromBody] ReviewScreenshotRequest req)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        try
+        {
+            await _svc.ReviewScreenshotAsync(CurrentUser.AssociateId, CurrentSuperUsers,
+                cycleId, associateId, clientId, toolId, req.Approve, req.Reason);
+            return Ok(new { status = req.Approve ? "Approved" : "Rejected" });
+        }
+        catch (UnauthorizedAccessException) { return Forbid(); }
+        catch (KeyNotFoundException ex) { return NotFound(new { status = 404, title = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
+    }
+
+    [HttpPut("screenshots/{cycleId}/{associateId}/approve-all")]
+    public async Task<IActionResult> ApproveAllScreenshots(int cycleId, string associateId)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        try
+        {
+            var count = await _svc.ApproveAllScreenshotsAsync(CurrentUser.AssociateId, CurrentSuperUsers, cycleId, associateId);
+            return Ok(new { approved = count });
+        }
+        catch (UnauthorizedAccessException) { return Forbid(); }
+    }
+
+    [HttpGet("cycles/{cycleId}/screenshots.zip")]
+    public async Task<IActionResult> DownloadScreenshotsZip(int cycleId)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        // Only managers, GFH/GFHDelegate or Admin may export. Anyone with no review scope gets nothing.
+        if (!await IsManagerAsync()
+            && !CurrentSuperUsers.Any(s => SuperUserRoles.IsAny(s.RoleName,
+                    SuperUserRoles.Admin, SuperUserRoles.GFH, SuperUserRoles.GFHDelegate)))
+            return Forbid();
+
+        Response.ContentType = "application/zip";
+        Response.Headers.ContentDisposition = $"attachment; filename=\"screenshots-cycle{cycleId}.zip\"";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+
+        // ZipArchive writes synchronously to the response stream. Kestrel disallows synchronous IO
+        // by default, so enable it just for this streamed response (avoids buffering many images).
+        var syncIo = HttpContext.Features.Get<IHttpBodyControlFeature>();
+        if (syncIo is not null) syncIo.AllowSynchronousIO = true;
+
+        await _svc.WriteScreenshotsZipAsync(CurrentUser.AssociateId, CurrentSuperUsers, cycleId, Response.Body);
+        return new EmptyResult();
     }
 }

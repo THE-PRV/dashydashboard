@@ -1,3 +1,4 @@
+using DashyDashboard.Api.Common;
 using DashyDashboard.Api.Data;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Models.DTOs;
@@ -42,10 +43,13 @@ public class AdminService
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
             .ToListAsync();
 
+        // §7 completion: a tool counts as done only when exempt (no access) OR decided AND its
+        // screenshot is Approved. Pending/Rejected/missing screenshots are NOT done.
         var attestCounts = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => allUserIds.Contains(tca.AssociateId)
                        && tca.CycleID == cycleId
-                       && (tca.UsedThisCycle.HasValue || tca.HadAccess == false))
+                       && (tca.HadAccess == false
+                           || (tca.UsedThisCycle.HasValue && tca.ScreenshotStatus == "Approved")))
             .GroupBy(tca => tca.AssociateId)
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
             .ToListAsync();
@@ -72,7 +76,8 @@ public class AdminService
         var clientAttestedRows = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => allUserIds.Contains(tca.AssociateId)
                        && tca.CycleID == cycleId
-                       && (tca.UsedThisCycle.HasValue || tca.HadAccess == false))
+                       && (tca.HadAccess == false
+                           || (tca.UsedThisCycle.HasValue && tca.ScreenshotStatus == "Approved")))
             .Select(tca => new { tca.AssociateId, tca.ClientID })
             .ToListAsync();
 
@@ -186,7 +191,8 @@ public class AdminService
         var submittedCountsByReport = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => allReportIds.Contains(tca.AssociateId)
                        && tca.CycleID == cycleId
-                       && (tca.UsedThisCycle.HasValue || tca.HadAccess == false)
+                       && (tca.HadAccess == false
+                           || (tca.UsedThisCycle.HasValue && tca.ScreenshotStatus == "Approved"))
                        && (clientId == null || tca.ClientID == clientId))
             .GroupBy(tca => tca.AssociateId)
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
@@ -222,7 +228,8 @@ public class AdminService
         var deptSubmitted = await _db.ToolCycleAttestations.AsNoTracking()
             .CountAsync(tca => deptUserIds.Contains(tca.AssociateId)
                            && tca.CycleID == cycleId
-                           && (tca.UsedThisCycle.HasValue || tca.HadAccess == false)
+                           && (tca.HadAccess == false
+                               || (tca.UsedThisCycle.HasValue && tca.ScreenshotStatus == "Approved"))
                            && (clientId == null || tca.ClientID == clientId));
 
         var gfhRow = await _db.SuperUsers.AsNoTracking()
@@ -384,15 +391,26 @@ public class AdminService
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
             .ToListAsync();
 
-        var submittedCounts = await _db.ToolCycleAttestations.AsNoTracking()
-            .Where(tca => userIds.Contains(tca.AssociateId)
-                       && tca.CycleID == cycleId && (tca.UsedThisCycle.HasValue || tca.HadAccess == false))
-            .GroupBy(tca => tca.AssociateId)
-            .Select(g => new { AssociateId = g.Key, Count = g.Count() })
+        // All attestation rows for these members this cycle — needed both for the answered ratio
+        // (CompletionPct) and the screenshot-completion status column (§7).
+        var attestRows = await _db.ToolCycleAttestations.AsNoTracking()
+            .Where(tca => userIds.Contains(tca.AssociateId) && tca.CycleID == cycleId)
+            .Select(tca => new { tca.AssociateId, tca.HadAccess, tca.UsedThisCycle, tca.ScreenshotStatus })
             .ToListAsync();
 
+        // "Answered" = decided usage or declared no access (the existing completion proxy).
+        var answeredCountMap = attestRows
+            .Where(r => r.UsedThisCycle.HasValue || r.HadAccess == false)
+            .GroupBy(r => r.AssociateId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var ssByMember = attestRows
+            .GroupBy(r => r.AssociateId)
+            .ToDictionary(g => g.Key,
+                g => ScreenshotCompletion.Classify(
+                    g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus))));
+
         var toolCountMap = toolCounts.ToDictionary(x => x.AssociateId, x => x.Count);
-        var submittedCountMap = submittedCounts.ToDictionary(x => x.AssociateId, x => x.Count);
 
         var managerIds = users.Where(u => u.ManagerId != null).Select(u => u.ManagerId!).Distinct().ToList();
         var managers = await _db.Users.AsNoTracking()
@@ -404,13 +422,24 @@ public class AdminService
             .Select(u =>
             {
                 var total = toolCountMap.GetValueOrDefault(u.AssociateId, 0);
-                var submitted = submittedCountMap.GetValueOrDefault(u.AssociateId, 0);
-                var pct = total > 0 ? (int)Math.Round(submitted * 100.0 / total) : 0;
+                var answered = answeredCountMap.GetValueOrDefault(u.AssociateId, 0);
+                var pct = total > 0 ? (int)Math.Round(answered * 100.0 / total) : 0;
                 var mgrName = u.ManagerId != null ? managers.GetValueOrDefault(u.ManagerId, "—") : "—";
-                return new NonSubmittedDto(u.AssociateId, $"{u.FirstName} {u.LastName}".Trim(), pct, u.EmailAddr ?? "", mgrName);
+
+                var (anyAwaiting, anyRejected) = ssByMember.GetValueOrDefault(u.AssociateId, (false, false));
+                // Precedence: not finished answering > rejected screenshots > awaiting approval.
+                string? status =
+                    pct < 100        ? "Not submitted" :
+                    anyRejected      ? "Has rejected screenshots" :
+                    anyAwaiting      ? "Awaiting approval" :
+                                       null; // fully complete: answered everything and all screenshots approved
+                return new { Dto = new NonSubmittedDto(
+                    u.AssociateId, $"{u.FirstName} {u.LastName}".Trim(), pct, u.EmailAddr ?? "", mgrName, status ?? ""), Complete = status is null };
             })
-            .Where(r => r.CompletionPct < 100)
+            .Where(r => !r.Complete)
+            .Select(r => r.Dto)
             .OrderBy(r => r.CompletionPct)
+            .ThenBy(r => r.Status)
             .ToList();
     }
 }

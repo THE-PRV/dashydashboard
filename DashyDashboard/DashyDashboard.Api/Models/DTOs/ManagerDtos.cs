@@ -20,7 +20,13 @@ public record TeamMemberDto(
     string AttestationStatus,
     int TotalTools,
     int AttestedTools,
-    double ProgressPct
+    double ProgressPct,
+    // ── Screenshot review (Feature 2 §B1) ─────────────────────────────────
+    // Counts of this member's required screenshots that are still Pending /
+    // Rejected for the cycle. Drive the "Awaiting approval (n)" / "Rejected (n)"
+    // status chips on the team list and admin/GFH rollups.
+    int PendingScreenshots,
+    int RejectedScreenshots
 );
 
 public record MemberDetailDto(
@@ -31,7 +37,10 @@ public record MemberDetailDto(
     int AttestedTools,
     double ProgressPct,
     List<ClientProgressDto> ByClient,
-    List<MismatchDto> Mismatches
+    List<MismatchDto> Mismatches,
+    // ── Screenshot review (Feature 2 §B1/§B2) ─────────────────────────────
+    int PendingScreenshots,
+    int RejectedScreenshots
 );
 
 public record MismatchDto(string ClientName, string ToolName, string? Remarks);
@@ -40,7 +49,24 @@ public record ClientProgressDto(
     string ClientID,
     string ClientName,
     int TotalTools,
-    int AttestedTools
+    int AttestedTools,
+    // ── Screenshot review (Feature 2 §B2) ─────────────────────────────────
+    // Per-tool rows for this client, used to render the reviewer's screenshot
+    // gallery (grouped by client). Tools with HadAccess == false (exempt) are
+    // included so the gallery can show a muted "no screenshot required" tile.
+    List<MemberToolDto> Tools
+);
+
+/// <summary>One tool row for the reviewer gallery — mirrors the screenshot fields of
+/// <see cref="ToolAttestationDto"/> plus the tool's display name.</summary>
+public record MemberToolDto(
+    int ToolID,
+    string ToolName,
+    bool? UsedThisCycle,
+    bool HadAccess,
+    string? ScreenshotStatus,
+    string? ScreenshotRejectReason,
+    DateTime? ScreenshotUploadedAt
 );
 
 public record GrantAccessRequest(
@@ -85,6 +111,10 @@ public record AccessExportRowDto(
     DateOnly? AccessTo,
     string? ToolUserId
 );
+
+// ── Screenshot review (Feature 2) ─────────────────────────────────────────
+
+public record ReviewScreenshotRequest(bool Approve, [MaxLength(500)] string? Reason = null);
 
 public record UserListItem(
     string AssociateId,

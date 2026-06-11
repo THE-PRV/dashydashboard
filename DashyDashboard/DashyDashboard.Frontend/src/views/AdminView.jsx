@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import AdminDonut, { statusOf } from '../components/AdminDonut.jsx';
 import { getAdminDepartments, getDeptManagers, exportNonSubmitted, exportDisputes, addTool, addClient, getManagerTeam, getManagerMemberDetail } from '../api/admin.js';
-import { getClientsAndTools } from '../api/manager.js';
+import { getClientsAndTools, downloadScreenshotsZip } from '../api/manager.js';
 import { reopenAttestation } from '../api/attestations.js';
+import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
 import brandLogo from '../assets/broadridge-logo.svg';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1521,6 +1522,7 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
   const [clientFilter, setClientFilter] = useState('');  // '' = all clients
   const [exporting, setExporting] = React.useState(false);
   const [exportingDisputes, setExportingDisputes] = React.useState(false);
+  const [downloadingZip, setDownloadingZip] = React.useState(false);
 
   async function handleExport() {
     if (!dept?.departmentName || !cycle?.cycleID) return;
@@ -1536,6 +1538,14 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
     try { await exportDisputes(dept.departmentName, cycle.cycleID); }
     catch (e) { alert('Export failed: ' + e.message); }
     finally { setExportingDisputes(false); }
+  }
+
+  async function handleDownloadZip() {
+    if (!cycle?.cycleID) return;
+    setDownloadingZip(true);
+    try { await downloadScreenshotsZip(cycle.cycleID); }
+    catch (e) { alert('Download failed: ' + e.message); }
+    finally { setDownloadingZip(false); }
   }
 
   // Reset client filter + manager drilldown whenever the department changes
@@ -1782,6 +1792,44 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
                   <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
                 {exportingDisputes ? 'Exporting…' : 'Export'}
+              </button>
+            </div>
+
+            {/* Row 3: Screenshot archive */}
+            <div title="Download every screenshot uploaded for this cycle as a single .zip file." style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: '50%',
+                  background: 'color-mix(in oklab, var(--accent), transparent 88%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Svg size={16} style={{ color: 'var(--accent)' }}>
+                    <path d="M4 4h16v16H4z M9 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M5 18l5-6 4 4 2-2 4 5" />
+                  </Svg>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>Screenshot archive</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                    All uploaded screenshots for cycle {cycle?.cycleID ?? '—'}
+                  </div>
+                </div>
+              </div>
+              <button
+                className="btn-lift"
+                onClick={handleDownloadZip}
+                disabled={downloadingZip}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  background: 'transparent', border: '1px solid var(--accent)',
+                  color: 'var(--accent)', borderRadius: 6, padding: '7px 12px',
+                  fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
+                  cursor: downloadingZip ? 'not-allowed' : 'pointer', opacity: downloadingZip ? 0.7 : 1,
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 4v12M7 11l5 5 5-5M4 18v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" />
+                </svg>
+                {downloadingZip ? 'Preparing…' : `Download all (cycle ${cycle?.cycleID ?? ''})`}
               </button>
             </div>
 
@@ -2150,6 +2198,26 @@ function AssociateCard({ member, dark, onInfo, onOpen }) {
         <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
           {member.attestedTools}/{member.totalTools}
         </span>
+        {member.pendingScreenshots > 0 && (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
+            borderRadius: 999, fontSize: 11.5, fontWeight: 600,
+            background: 'var(--badge-pending-bg)', color: 'var(--badge-pending-fg)',
+          }}>
+            <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--badge-pending-dot)' }} />
+            Awaiting approval ({member.pendingScreenshots})
+          </span>
+        )}
+        {member.rejectedScreenshots > 0 && (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
+            borderRadius: 999, fontSize: 11.5, fontWeight: 600,
+            background: 'var(--danger-bg)', color: 'var(--danger-fg)',
+          }}>
+            <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--danger-fg)' }} />
+            Rejected ({member.rejectedScreenshots})
+          </span>
+        )}
       </div>
     </div>
   );
@@ -2319,6 +2387,21 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Screenshot review gallery */}
+          {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient?.some((c) => c.tools?.length)) && (
+            <div style={{ marginBottom: 24 }}>
+              <ScreenshotGallery
+                cycleId={cycle.cycleID}
+                associateId={detail.associateId}
+                memberName={detail.fullName}
+                byClient={detail.byClient}
+                pendingScreenshots={detail.pendingScreenshots}
+                rejectedScreenshots={detail.rejectedScreenshots}
+                onReviewed={load}
+              />
             </div>
           )}
 

@@ -1,3 +1,5 @@
+using System.IO.Compression;
+using DashyDashboard.Api.Common;
 using DashyDashboard.Api.Data;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Models.DTOs;
@@ -8,7 +10,14 @@ namespace DashyDashboard.Api.Services;
 public class ManagerService
 {
     private readonly AppDbContext _db;
-    public ManagerService(AppDbContext db) { _db = db; }
+    private readonly ScreenshotStorageService _screenshots;
+    private readonly EmailService _email;
+    public ManagerService(AppDbContext db, ScreenshotStorageService screenshots, EmailService email)
+    {
+        _db = db;
+        _screenshots = screenshots;
+        _email = email;
+    }
 
     public async Task<TeamDto> GetTeamAsync(string managerId, int cycleId, bool includeEmpty = false)
     {
@@ -29,21 +38,51 @@ public class ManagerService
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
             .ToListAsync();
 
-        var attestCounts = await _db.ToolCycleAttestations.AsNoTracking()
-            .Where(tca => userIds.Contains(tca.AssociateId)
-                       && tca.CycleID == cycleId
-                       && (tca.UsedThisCycle.HasValue || tca.HadAccess == false))
-            .GroupBy(tca => tca.AssociateId)
-            .Select(g => new { AssociateId = g.Key, Count = g.Count() })
+        var attestRows = await _db.ToolCycleAttestations.AsNoTracking()
+            .Where(tca => userIds.Contains(tca.AssociateId) && tca.CycleID == cycleId)
+            .Select(tca => new { tca.AssociateId, tca.HadAccess, tca.UsedThisCycle, tca.ScreenshotStatus })
             .ToListAsync();
+
+        var attestCounts = attestRows
+            .Where(r => r.UsedThisCycle.HasValue || r.HadAccess == false)
+            .GroupBy(r => r.AssociateId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // Per-member screenshot completeness (§7): a member is only "Submitted" (complete) when
+        // fully answered AND all required screenshots are Approved. Also surface the raw
+        // pending/rejected counts (§B1) for the "Awaiting approval (n)" / "Rejected (n)" chips.
+        var ssByMember = attestRows
+            .GroupBy(r => r.AssociateId)
+            .ToDictionary(g => g.Key, g => ScreenshotCompletion.Classify(
+                g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus))));
+
+        var pendingCounts = attestRows
+            .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
+                     && r.ScreenshotStatus != ScreenshotCompletion.StatusApproved
+                     && r.ScreenshotStatus != ScreenshotCompletion.StatusRejected)
+            .GroupBy(r => r.AssociateId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var rejectedCounts = attestRows
+            .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
+                     && r.ScreenshotStatus == ScreenshotCompletion.StatusRejected)
+            .GroupBy(r => r.AssociateId)
+            .ToDictionary(g => g.Key, g => g.Count());
 
         var allMembers = reports.Select(u =>
         {
             var total = toolCounts.FirstOrDefault(t => t.AssociateId == u.AssociateId)?.Count ?? 0;
-            var attested = attestCounts.FirstOrDefault(a => a.AssociateId == u.AssociateId)?.Count ?? 0;
+            var attested = attestCounts.GetValueOrDefault(u.AssociateId, 0);
             var pct = total > 0 ? (double)attested / total : 0;
-            var status = pct >= 1 ? "Submitted" : attested == 0 ? "NotStarted" : "InProgress";
-            return new TeamMemberDto(u.AssociateId, $"{u.FirstName} {u.LastName}", u.EmailAddr ?? "", status, total, attested, Math.Round(pct, 4));
+            var answeredAll = pct >= 1;
+            var (anyAwaiting, anyRejected) = ssByMember.GetValueOrDefault(u.AssociateId, (false, false));
+            var screenshotsApproved = !anyAwaiting && !anyRejected;
+            var status = answeredAll && screenshotsApproved ? "Submitted"
+                       : attested == 0 ? "NotStarted"
+                       : "InProgress";
+            var pendingScreenshots = pendingCounts.GetValueOrDefault(u.AssociateId, 0);
+            var rejectedScreenshots = rejectedCounts.GetValueOrDefault(u.AssociateId, 0);
+            return new TeamMemberDto(u.AssociateId, $"{u.FirstName} {u.LastName}", u.EmailAddr ?? "", status, total, attested, Math.Round(pct, 4), pendingScreenshots, rejectedScreenshots);
         }).ToList();
 
         var members = includeEmpty ? allMembers : allMembers.Where(m => m.TotalTools > 0).ToList();
@@ -79,21 +118,43 @@ public class ManagerService
                        && uta.Access
                        && uta.GivenDate <= today
                        && (uta.ToDate == null || uta.ToDate >= today))
-            .Select(uta => new { uta.ClientID, uta.ToolID })
+            .Include(uta => uta.ClientTool)
+            .Select(uta => new { uta.ClientID, uta.ToolID, ToolName = uta.ClientTool!.ToolName })
             .ToListAsync();
 
         var clientNames = await _db.Clients.AsNoTracking()
             .Where(c => accessKeys.Select(a => a.ClientID).Distinct().Contains(c.ClientID))
             .ToDictionaryAsync(c => c.ClientID, c => c.ClientName ?? c.ClientID);
 
-        var attestations = await _db.ToolCycleAttestations.AsNoTracking()
-            .Where(tca => tca.AssociateId == memberId && tca.CycleID == cycleId
-                       && (tca.UsedThisCycle.HasValue || tca.HadAccess == false))
+        var allAttestations = await _db.ToolCycleAttestations.AsNoTracking()
+            .Where(tca => tca.AssociateId == memberId && tca.CycleID == cycleId)
             .ToListAsync();
+
+        var attestations = allAttestations
+            .Where(tca => tca.UsedThisCycle.HasValue || tca.HadAccess == false)
+            .ToList();
 
         var answeredKeys = attestations
             .Select(a => (a.ClientID, a.ToolID))
             .ToHashSet();
+
+        var attestationsByKey = allAttestations
+            .ToDictionary(a => (a.ClientID, a.ToolID));
+
+        // §7: complete only when fully answered AND all required screenshots are Approved.
+        // §B1: also surface raw pending/rejected counts for the member's status chip.
+        var (anyAwaiting, anyRejected) = ScreenshotCompletion.Classify(
+            allAttestations.Select(a => (a.HadAccess, a.UsedThisCycle, a.ScreenshotStatus)));
+        var screenshotsApproved = !anyAwaiting && !anyRejected;
+
+        var pendingScreenshots = allAttestations.Count(a =>
+            ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
+            && a.ScreenshotStatus != ScreenshotCompletion.StatusApproved
+            && a.ScreenshotStatus != ScreenshotCompletion.StatusRejected);
+
+        var rejectedScreenshots = allAttestations.Count(a =>
+            ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
+            && a.ScreenshotStatus == ScreenshotCompletion.StatusRejected);
 
         var byClient = accessKeys
             .GroupBy(a => a.ClientID)
@@ -101,7 +162,25 @@ public class ManagerService
             {
                 var total = g.Count();
                 var attested = g.Count(ak => answeredKeys.Contains((ak.ClientID, ak.ToolID)));
-                return new ClientProgressDto(g.Key, clientNames.GetValueOrDefault(g.Key, g.Key), total, attested);
+
+                // §B2: per-tool rows for the reviewer gallery, in this client's group.
+                var tools = g.Select(ak =>
+                {
+                    var att = attestationsByKey.GetValueOrDefault((ak.ClientID, ak.ToolID));
+                    return new MemberToolDto(
+                        ak.ToolID,
+                        ak.ToolName ?? ak.ToolID.ToString(),
+                        att?.UsedThisCycle,
+                        att?.HadAccess ?? true,
+                        att?.ScreenshotStatus,
+                        att?.ScreenshotRejectReason,
+                        att?.ScreenshotUploadedAt
+                    );
+                })
+                .OrderBy(t => t.ToolName)
+                .ToList();
+
+                return new ClientProgressDto(g.Key, clientNames.GetValueOrDefault(g.Key, g.Key), total, attested, tools);
             })
             .OrderBy(c => c.ClientName)
             .ToList();
@@ -128,10 +207,13 @@ public class ManagerService
         var totalTools = byClient.Sum(c => c.TotalTools);
         var totalAttested = byClient.Sum(c => c.AttestedTools);
         var pct = totalTools > 0 ? (double)totalAttested / totalTools : 0;
-        var status = pct >= 1 ? "Submitted" : totalAttested == 0 ? "NotStarted" : "InProgress";
+        var status = pct >= 1 && screenshotsApproved ? "Submitted"
+                   : totalAttested == 0 ? "NotStarted"
+                   : "InProgress";
 
         return new MemberDetailDto(member.AssociateId, $"{member.FirstName} {member.LastName}",
-                                   status, totalTools, totalAttested, Math.Round(pct, 4), byClient, mismatchDtos);
+                                   status, totalTools, totalAttested, Math.Round(pct, 4), byClient, mismatchDtos,
+                                   pendingScreenshots, rejectedScreenshots);
     }
 
     public async Task<List<DisputeExportDto>> GetDisputesAsync(string managerId, int cycleId)
@@ -464,7 +546,7 @@ public class ManagerService
         return clients.Select(c => new ClientAttestationDto(
             c.ClientID, c.ClientName ?? c.ClientID,
             c.Tools.Count, 0, 0,
-            c.Tools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null)).ToList()
+            c.Tools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null, null, null, null)).ToList()
         )).ToList();
     }
 
@@ -490,7 +572,7 @@ public class ManagerService
                 return new ClientAttestationDto(
                     c.ClientID, c.ClientName ?? c.ClientID,
                     matchingTools.Count, 0, 0,
-                    matchingTools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null)).ToList()
+                    matchingTools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null, null, null, null)).ToList()
                 );
             })
             .Where(c => c.TotalTools > 0)
@@ -535,5 +617,306 @@ public class ManagerService
         return new CycleDto(cycle.CycleID, cycle.CycleName, cycle.StartDate,
                             cycle.EndDate, cycle.DueDate,
                             cycle.DueDate.DayNumber - today.DayNumber);
+    }
+
+    // ── Screenshot authorization, serving & review (§5, §6) ───────────────────
+
+    /// <summary>
+    /// True if <paramref name="callerId"/> may view/review screenshots for the associate
+    /// <paramref name="ownerId"/>. Rule: the owner (when <paramref name="includeSelf"/>),
+    /// the owner's manager, a GFH of the owner's department, any GFHDelegate, or any Admin.
+    /// <paramref name="callerSuperUsers"/> is the caller's active SuperUser rows (from middleware).
+    /// </summary>
+    public async Task<bool> CanAccessMemberScreenshotsAsync(
+        string callerId, IReadOnlyList<SuperUser> callerSuperUsers, string ownerId, bool includeSelf)
+    {
+        if (includeSelf && string.Equals(callerId, ownerId, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Admin and GFHDelegate have global visibility.
+        if (callerSuperUsers.Any(s => SuperUserRoles.IsAny(s.RoleName, SuperUserRoles.Admin, SuperUserRoles.GFHDelegate)))
+            return true;
+
+        var owner = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.AssociateId == ownerId);
+        if (owner is null) return false;
+
+        // Direct manager of the owner.
+        if (!string.IsNullOrEmpty(owner.ManagerId)
+            && string.Equals(owner.ManagerId, callerId, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // GFH scoped to the owner's department.
+        if (owner.Department != null && callerSuperUsers.Any(s =>
+                SuperUserRoles.Is(s.RoleName, SuperUserRoles.GFH)
+                && s.Department?.DepartmentName == owner.Department))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves the on-disk screenshot (or thumbnail) for one attestation row, gated by
+    /// <see cref="CanAccessMemberScreenshotsAsync"/>. Returns the file plus its hash (for ETag),
+    /// or null if the caller is not authorized, the row has no screenshot, or the file is missing.
+    /// Callers 404 on null — no 403 leak.
+    /// </summary>
+    public async Task<(ScreenshotFile File, string? Hash)?> GetScreenshotForServingAsync(
+        string callerId, IReadOnlyList<SuperUser> callerSuperUsers,
+        int cycleId, string ownerId, string clientId, int toolId, bool thumb)
+    {
+        if (!await CanAccessMemberScreenshotsAsync(callerId, callerSuperUsers, ownerId, includeSelf: true))
+            return null;
+
+        var att = await _db.ToolCycleAttestations.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.CycleID == cycleId && a.AssociateId == ownerId
+                                   && a.ClientID == clientId && a.ToolID == toolId);
+        if (att?.ScreenshotPath is null) return null;
+
+        var path = thumb ? ThumbPathFor(att.ScreenshotPath) : att.ScreenshotPath;
+        var file = _screenshots.Read(path);
+        if (file is null) return null;
+
+        return (file, att.ScreenshotHash);
+    }
+
+    /// <summary>Derives the {toolId}_thumb.webp relative path from the main {toolId}.webp path.</summary>
+    private static string ThumbPathFor(string mainRelativePath)
+    {
+        var dir = Path.GetDirectoryName(mainRelativePath) ?? "";
+        var stem = Path.GetFileNameWithoutExtension(mainRelativePath);
+        return Path.Combine(dir, $"{stem}_thumb.webp");
+    }
+
+    /// <summary>
+    /// Reviews a single screenshot (approve / reject). <paramref name="reason"/> is REQUIRED when
+    /// rejecting. The caller's authorization is checked first. Single-approval model: a later
+    /// authorized reviewer may overwrite an earlier decision.
+    /// </summary>
+    public async Task ReviewScreenshotAsync(
+        string callerId, IReadOnlyList<SuperUser> callerSuperUsers,
+        int cycleId, string ownerId, string clientId, int toolId, bool approve, string? reason)
+    {
+        if (!await CanAccessMemberScreenshotsAsync(callerId, callerSuperUsers, ownerId, includeSelf: false))
+            throw new UnauthorizedAccessException("You are not authorized to review this screenshot.");
+
+        if (!approve && string.IsNullOrWhiteSpace(reason))
+            throw new InvalidOperationException("A reason is required when rejecting a screenshot.");
+
+        // Load every attestation row for this member+cycle (tracked) so we can evaluate the
+        // AllApproved completeness transition once, before and after the change, in this request.
+        var rows = await _db.ToolCycleAttestations
+            .Where(a => a.CycleID == cycleId && a.AssociateId == ownerId)
+            .ToListAsync();
+
+        var att = rows.FirstOrDefault(a => a.ClientID == clientId && a.ToolID == toolId);
+        if (att?.ScreenshotPath is null)
+            throw new KeyNotFoundException("No screenshot found for this attestation.");
+
+        var wasComplete = ScreenshotCompletion.AllApproved(
+            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+
+        StampReview(att, callerId, approve, reason);
+
+        var verb = approve ? "approved" : "rejected";
+        var summary = approve
+            ? $"Screenshot approved for {ownerId} {clientId}/{toolId}."
+            : $"Screenshot rejected for {ownerId} {clientId}/{toolId}: {reason}";
+        LogReviewEvent(cycleId, callerId, 1, summary);
+
+        await _db.SaveChangesAsync();
+
+        if (!approve)
+            await EnqueueScreenshotRejectedAsync(cycleId, ownerId, clientId, toolId, callerId, reason);
+
+        var isComplete = ScreenshotCompletion.AllApproved(
+            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+
+        if (!wasComplete && isComplete)
+            await EnqueueAllApprovedAsync(cycleId, ownerId);
+    }
+
+    /// <summary>
+    /// Bulk-approves every Pending screenshot of <paramref name="ownerId"/> in the cycle. Authorization
+    /// is checked first. No-op (still authorized) when there is nothing pending.
+    /// </summary>
+    public async Task<int> ApproveAllScreenshotsAsync(
+        string callerId, IReadOnlyList<SuperUser> callerSuperUsers, int cycleId, string ownerId)
+    {
+        if (!await CanAccessMemberScreenshotsAsync(callerId, callerSuperUsers, ownerId, includeSelf: false))
+            throw new UnauthorizedAccessException("You are not authorized to review these screenshots.");
+
+        // Load every attestation row for this member+cycle (tracked) so we can evaluate the
+        // AllApproved completeness transition once, before and after the bulk change, in this
+        // request — this is what prevents a double-send when many rows flip to Approved at once.
+        var rows = await _db.ToolCycleAttestations
+            .Where(a => a.CycleID == cycleId && a.AssociateId == ownerId)
+            .ToListAsync();
+
+        var wasComplete = ScreenshotCompletion.AllApproved(
+            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+
+        var pending = rows.Where(a => a.ScreenshotStatus == "Pending").ToList();
+
+        foreach (var att in pending)
+            StampReview(att, callerId, approve: true, reason: null);
+
+        if (pending.Count > 0)
+            LogReviewEvent(cycleId, callerId, pending.Count,
+                $"Bulk approved {pending.Count} screenshot(s) for {ownerId}.");
+
+        await _db.SaveChangesAsync();
+
+        var isComplete = ScreenshotCompletion.AllApproved(
+            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+
+        if (!wasComplete && isComplete)
+            await EnqueueAllApprovedAsync(cycleId, ownerId);
+
+        return pending.Count;
+    }
+
+    /// <summary>
+    /// SINGLE CHOKE POINT for a screenshot state change after review. Both review paths
+    /// (<see cref="ReviewScreenshotAsync"/> and <see cref="ApproveAllScreenshotsAsync"/>) call this
+    /// for each row, then evaluate the email hooks ONCE per request after <c>SaveChangesAsync</c>
+    /// (see <see cref="EnqueueScreenshotRejectedAsync"/> / <see cref="EnqueueAllApprovedAsync"/>).
+    /// </summary>
+    private static void StampReview(ToolCycleAttestation att, string reviewerId, bool approve, string? reason)
+    {
+        att.ScreenshotStatus = approve ? "Approved" : "Rejected";
+        att.ScreenshotReviewedBy = reviewerId;
+        att.ScreenshotReviewedAt = DateTime.UtcNow;
+        att.ScreenshotRejectReason = approve ? null : reason?.Trim();
+    }
+
+    /// <summary>
+    /// Composes and queues the ScreenshotRejected mail (§04-email) for one rejected row. Looks up
+    /// the owner's email, the cycle/client/tool display names and the reviewer's display name.
+    /// All gating (Enabled, event toggle, missing EMailAddr) happens inside <see cref="EmailService"/>.
+    /// </summary>
+    private async Task EnqueueScreenshotRejectedAsync(
+        int cycleId, string ownerId, string clientId, int toolId, string reviewerId, string? reason)
+    {
+        var owner = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.AssociateId == ownerId);
+        if (string.IsNullOrWhiteSpace(owner?.EmailAddr))
+            return;
+
+        var cycle = await _db.Cycles.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CycleID == cycleId);
+
+        var client = await _db.Clients.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.ClientID == clientId);
+
+        var tool = await _db.ClientTools.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.ClientID == clientId && t.ToolID == toolId);
+
+        var reviewer = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.AssociateId == reviewerId);
+
+        _email.EnqueueScreenshotRejected(
+            owner.EmailAddr,
+            cycle?.CycleName ?? $"Cycle {cycleId}",
+            client?.ClientName ?? clientId,
+            tool?.ToolName ?? toolId.ToString(),
+            reviewer != null ? reviewer.FullName : reviewerId,
+            reason);
+    }
+
+    /// <summary>
+    /// Composes and queues the AllApproved "you're complete" mail (§04-email) for the owner.
+    /// Callers must have already established the not-complete -&gt; complete transition for this
+    /// request (see the <c>wasComplete</c>/<c>isComplete</c> checks in the two review paths).
+    /// </summary>
+    private async Task EnqueueAllApprovedAsync(int cycleId, string ownerId)
+    {
+        var owner = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.AssociateId == ownerId);
+        if (string.IsNullOrWhiteSpace(owner?.EmailAddr))
+            return;
+
+        var cycle = await _db.Cycles.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CycleID == cycleId);
+
+        _email.EnqueueAllApproved(owner.EmailAddr, cycle?.CycleName ?? $"Cycle {cycleId}");
+    }
+
+    private void LogReviewEvent(int cycleId, string reviewerId, int count, string summary)
+    {
+        _db.AttestationLogs.Add(new AttestationLog
+        {
+            CycleID = cycleId,
+            AssociateId = reviewerId,
+            SubmittedAt = DateTime.UtcNow,
+            ToolCount = count,
+            Summary = summary.Length > 100 ? summary[..100] : summary
+        });
+    }
+
+    /// <summary>
+    /// Streams a ZIP of every screenshot the caller may see in the cycle directly into
+    /// <paramref name="output"/> (no buffering, NoCompression). Entries are
+    /// <c>{associateId}\{clientId}_{toolId}.webp</c>. Scope: manager → team, GFH → department,
+    /// GFHDelegate/Admin → all.
+    /// </summary>
+    public async Task WriteScreenshotsZipAsync(
+        string callerId, IReadOnlyList<SuperUser> callerSuperUsers, int cycleId, Stream output)
+    {
+        var ownerIds = await ResolveScreenshotScopeOwnerIdsAsync(callerId, callerSuperUsers);
+
+        var rows = await _db.ToolCycleAttestations.AsNoTracking()
+            .Where(a => a.CycleID == cycleId
+                     && a.ScreenshotPath != null
+                     && ownerIds.Contains(a.AssociateId))
+            .Select(a => new { a.AssociateId, a.ClientID, a.ToolID, a.ScreenshotPath })
+            .ToListAsync();
+
+        using var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
+        foreach (var r in rows)
+        {
+            var file = _screenshots.Read(r.ScreenshotPath);
+            if (file is null) continue;
+            using (file.Content)
+            {
+                var entryName = $"{r.AssociateId}/{r.ClientID}_{r.ToolID}.webp";
+                var entry = zip.CreateEntry(entryName, CompressionLevel.NoCompression);
+                using var entryStream = entry.Open();
+                await file.Content.CopyToAsync(entryStream);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The associate ids whose screenshots the caller may see: Admin/GFHDelegate → everyone;
+    /// otherwise the union of the caller's direct reports and (for a GFH) their department members.
+    /// </summary>
+    private async Task<HashSet<string>> ResolveScreenshotScopeOwnerIdsAsync(
+        string callerId, IReadOnlyList<SuperUser> callerSuperUsers)
+    {
+        if (callerSuperUsers.Any(s => SuperUserRoles.IsAny(s.RoleName, SuperUserRoles.Admin, SuperUserRoles.GFHDelegate)))
+            return (await _db.Users.AsNoTracking().Select(u => u.AssociateId).ToListAsync()).ToHashSet();
+
+        var ids = (await _db.Users.AsNoTracking()
+            .Where(u => u.ManagerId == callerId)
+            .Select(u => u.AssociateId)
+            .ToListAsync()).ToHashSet();
+
+        var gfhDepts = callerSuperUsers
+            .Where(s => SuperUserRoles.Is(s.RoleName, SuperUserRoles.GFH) && s.Department != null)
+            .Select(s => s.Department!.DepartmentName)
+            .Distinct()
+            .ToList();
+
+        if (gfhDepts.Count > 0)
+        {
+            var deptMembers = await _db.Users.AsNoTracking()
+                .Where(u => u.Department != null && gfhDepts.Contains(u.Department))
+                .Select(u => u.AssociateId)
+                .ToListAsync();
+            foreach (var id in deptMembers) ids.Add(id);
+        }
+
+        return ids;
     }
 }

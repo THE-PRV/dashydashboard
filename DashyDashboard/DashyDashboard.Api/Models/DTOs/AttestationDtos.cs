@@ -17,7 +17,10 @@ public record ToolAttestationDto(
     bool? UsedThisCycle,
     bool HadAccess,
     string AttestationStatus,
-    string? Remarks
+    string? Remarks,
+    string? ScreenshotStatus,
+    string? ScreenshotRejectReason,
+    DateTime? ScreenshotUploadedAt
 );
 
 public record ToggleUsedRequest(bool? Used);
@@ -27,3 +30,14 @@ public record SubmitAllRequest(string? Remarks);
 public record UpdateRemarkRequest([MaxLength(500)] string? Text);
 
 public record ToggleHadAccessRequest(bool? HadAccess);
+
+// ── Screenshots (Feature 2) ───────────────────────────────────────────────
+
+/// <summary>Per-file outcome of a batch screenshot upload.</summary>
+/// <param name="Status">saved | unmatched | invalidImage | notAllowed</param>
+public record BatchScreenshotItemResult(string FileName, string Status, string? Detail);
+
+public record BatchScreenshotResult(List<BatchScreenshotItemResult> Results);
+
+/// <summary>One offending attestation row that blocks submission (missing/rejected screenshot).</summary>
+public record ScreenshotGateRow(string ClientID, int ToolID);

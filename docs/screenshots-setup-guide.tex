@@ -1,0 +1,539 @@
+\documentclass[12pt,a4paper]{report}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{tcolorbox}
+\usepackage{parskip}
+
+% ── Colours ───────────────────────────────────────────────────────────────────
+\definecolor{broadblue}{RGB}{0,60,120}
+\definecolor{lightgray}{RGB}{245,245,245}
+\definecolor{warnyellow}{RGB}{255,243,205}
+\definecolor{warnborder}{RGB}{204,153,0}
+\definecolor{noteblue}{RGB}{219,234,254}
+\definecolor{noteborder}{RGB}{59,130,246}
+\definecolor{codebg}{RGB}{245,245,245}
+
+% ── Hyperref ──────────────────────────────────────────────────────────────────
+\hypersetup{
+  colorlinks=true,
+  linkcolor=broadblue,
+  urlcolor=broadblue,
+  pdftitle={DashyDashboard Screenshot Attestation Setup Guide},
+  pdfauthor={Broadridge},
+  pdfsubject={Screenshot Attestation, Email and Storage Configuration}
+}
+
+% ── Headers / footers ─────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{broadblue}DashyDashboard — Screenshot Setup Guide}
+\fancyhead[R]{\small\color{broadblue}Broadridge}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ── Section formatting ────────────────────────────────────────────────────────
+\titleformat{\chapter}[display]
+  {\normalfont\Large\bfseries\color{broadblue}}
+  {Chapter \thechapter}{10pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{20pt}{20pt}
+
+\titleformat{\section}
+  {\normalfont\large\bfseries\color{broadblue}}
+  {\thesection}{1em}{}
+
+% ── Custom boxes ──────────────────────────────────────────────────────────────
+\tcbuselibrary{skins,breakable}
+
+\newtcolorbox{notebox}{
+  colback=noteblue,
+  colframe=noteborder,
+  fonttitle=\bfseries,
+  title=Note,
+  breakable
+}
+
+\newtcolorbox{warnbox}{
+  colback=warnyellow,
+  colframe=warnborder,
+  fonttitle=\bfseries,
+  title=Important,
+  breakable
+}
+
+% A simple monospace code block on a light-gray background, for copy-pasteable commands.
+\newtcolorbox{codebox}{
+  colback=codebg,
+  colframe=lightgray,
+  boxrule=0.4pt,
+  left=6pt,right=6pt,top=6pt,bottom=6pt,
+  breakable
+}
+
+% ── Misc ──────────────────────────────────────────────────────────────────────
+\setlist[enumerate]{itemsep=4pt,parsep=0pt}
+\setlist[itemize]{itemsep=4pt,parsep=0pt}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+% ── Title page ────────────────────────────────────────────────────────────────
+\begin{titlepage}
+  \centering
+  \vspace*{3cm}
+  {\color{broadblue}\rule{\linewidth}{1.5pt}}\\[0.6cm]
+  {\Huge\bfseries\color{broadblue} DashyDashboard}\\[0.4cm]
+  {\LARGE Screenshot Attestation — Setup \& Operations Guide}\\[0.3cm]
+  {\color{broadblue}\rule{\linewidth}{1.5pt}}\\[1cm]
+  {\large Screenshot storage, e-mail notifications, and database migrations}\\[2cm]
+  {\large\itshape Broadridge Financial Solutions}\\[0.5cm]
+  {\large June 2026}\\[3cm]
+  \vfill
+  {\small
+    \begin{tabular}{ll}
+      \textbf{Document type:}   & Setup / Operations Supplement \\
+      \textbf{Companion to:}    & DashyDashboard Deployment Guide \\
+      \textbf{Audience:}        & Server Administrators \& DBAs \\
+      \textbf{Classification:}  & Internal \\
+    \end{tabular}
+  }
+\end{titlepage}
+
+% ── Table of contents ─────────────────────────────────────────────────────────
+\tableofcontents
+\clearpage
+
+% ═════════════════════════════════════════════════════════════════════════════
+\chapter{Overview}
+
+This guide is a supplement to the main \emph{DashyDashboard Deployment Guide}. It covers the
+operational steps required to enable the \textbf{screenshot attestation} feature and the associated
+\textbf{e-mail notifications} introduced in the June 2026 release. Read the main deployment guide
+first; this document only describes what is \emph{new}.
+
+\section{What changed}
+
+\begin{itemize}
+  \item Associates now attach a screenshot to each tool they used during a cycle. Reviewers
+        (managers, GFH/GFH-Delegate, and Admin) approve or reject each screenshot.
+  \item Screenshots are written to a disk folder \emph{outside} the deployed application directory.
+  \item Two new configuration sections --- \texttt{Screenshots} and \texttt{Email} --- must be
+        present in \texttt{appsettings.Production.json} (or supplied via environment variables).
+  \item Two new Entity Framework migrations add columns to the database.
+  \item Optional event-driven e-mail (rejected screenshot / all approved) requires an internal SMTP
+        relay and an approved sending mailbox.
+\end{itemize}
+
+\section{What an administrator must do (checklist)}
+
+\begin{enumerate}
+  \item Add the \texttt{Screenshots} and \texttt{Email} sections to
+        \texttt{appsettings.Production.json}, or set the equivalent environment variables
+        (Chapter~\ref{ch:config}).
+  \item Create the screenshot storage folder outside the app folder and grant the IIS app-pool
+        identity \emph{Modify} access (Chapter~\ref{ch:storage}).
+  \item Apply the two database migrations, in order (Chapter~\ref{ch:migrations}).
+  \item (Optional) Request the internal SMTP relay details and an approved sending mailbox, then
+        enable e-mail (Chapter~\ref{ch:email}).
+  \item Confirm the storage folder is covered by server backups and understand the retention policy
+        (Chapter~\ref{ch:retention}).
+\end{enumerate}
+
+\begin{warnbox}
+\texttt{dotnet publish} OVERWRITES \texttt{appsettings.Production.json} and the entire app folder on
+every deployment. The screenshot folder must therefore live \emph{outside} the app folder, and the
+\texttt{Screenshots}/\texttt{Email} configuration must be re-applied (or supplied via environment
+variables, which survive a republish) after \emph{every} publish. See Chapter~\ref{ch:config}.
+\end{warnbox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\chapter{Configuration Keys}
+\label{ch:config}
+
+The application reads two new configuration sections. The base \texttt{appsettings.json} ships with
+safe defaults (storage on \texttt{C:}, e-mail disabled), but production should override at least
+\texttt{Screenshots:RootPath} and, if mail is wanted, the \texttt{Email} section.
+
+\section{The \texttt{Screenshots} section}
+
+\begin{longtable}{>{\ttfamily}p{4.8cm} >{\raggedright\arraybackslash}p{9.2cm}}
+\toprule
+\normalfont\textbf{Key} & \textbf{Meaning} \\
+\midrule
+\endhead
+Screenshots:RootPath &
+  Absolute disk path under which all screenshots are stored, using the layout
+  \texttt{\{root\}\textbackslash\{cycleId\}\textbackslash\{associateId\}\textbackslash\{clientId\}\textbackslash\{toolId\}.webp}
+  (plus a \texttt{\_thumb.webp} thumbnail). \textbf{Must be OUTSIDE the deployed app folder}
+  (Chapter~\ref{ch:storage}). The IIS app-pool identity needs \emph{Modify} permission here. \\
+Screenshots:RetainCycles &
+  Integer number of recent cycles to keep on disk. Default \texttt{6}. Retention is a policy target
+  only --- the automatic sweep is a future job (Chapter~\ref{ch:retention}). \\
+\bottomrule
+\end{longtable}
+
+\section{The \texttt{Email} section}
+
+\begin{longtable}{>{\ttfamily}p{5.4cm} >{\raggedright\arraybackslash}p{8.6cm}}
+\toprule
+\normalfont\textbf{Key} & \textbf{Meaning} \\
+\midrule
+\endhead
+Email:Enabled &
+  Master switch. \texttt{false} (the default) means no mail is ever sent --- the request paths run
+  normally, mail is simply skipped. Set \texttt{true} only once the relay and sender are confirmed. \\
+Email:SmtpHost &
+  Hostname of the internal SMTP relay. The relay is contacted \emph{unauthenticated} and without TLS
+  (corporate internal relay). \\
+Email:SmtpPort &
+  Relay port. Default \texttt{25}. \\
+Email:From &
+  The sending mailbox address that appears in the \emph{From} header. Must be an approved sender on
+  the relay. \\
+Email:AppUrl &
+  Absolute base URL of the deployed app (e.g.\
+  \texttt{http://clipvwbpod02/dashydashboard/}). Used to build the ``open DashyDashboard'' links in
+  mail bodies. \\
+Email:Events:ScreenshotRejected &
+  Per-event toggle for the ``your screenshot was rejected'' mail to the associate. Default
+  \texttt{true} (gated by the master switch). \\
+Email:Events:AllApproved &
+  Per-event toggle for the ``all your screenshots are approved'' mail. Sent exactly once, on the
+  not-complete to complete transition. Default \texttt{true}. \\
+\bottomrule
+\end{longtable}
+
+\section{Example \texttt{appsettings.Production.json} fragment}
+
+Add these two sections alongside the existing \texttt{ConnectionStrings} block:
+
+\begin{codebox}
+\ttfamily\small
+"Screenshots": \{\\
+\hspace*{2em}"RootPath": "D:\textbackslash\textbackslash DashyData\textbackslash\textbackslash Screenshots",\\
+\hspace*{2em}"RetainCycles": 6\\
+\},\\
+"Email": \{\\
+\hspace*{2em}"Enabled": false,\\
+\hspace*{2em}"SmtpHost": "smtprelay.internal.example.com",\\
+\hspace*{2em}"SmtpPort": 25,\\
+\hspace*{2em}"From": "dashydashboard-noreply@example.com",\\
+\hspace*{2em}"AppUrl": "http://clipvwbpod02/dashydashboard/",\\
+\hspace*{2em}"Events": \{ "ScreenshotRejected": true, "AllApproved": true \}\\
+\}
+\end{codebox}
+
+\begin{warnbox}
+Because \texttt{dotnet publish} overwrites \texttt{appsettings.Production.json}, these two sections
+must be re-added after \emph{every} publish --- this extends the existing
+``Restore \texttt{appsettings.Production.json}'' step in the deployment checklist. The most reliable
+way to avoid re-editing the file each time is to use environment variables instead (next section);
+they live outside the published artifact and survive a republish.
+\end{warnbox}
+
+\section{Environment-variable alternative (recommended for per-machine values)}
+
+Every configuration key can be supplied as a machine environment variable instead of being written
+into the JSON file. ASP.NET Core maps a nested key to an environment variable by replacing each
+colon (\texttt{:}) with a double underscore (\texttt{\_\_}):
+
+\begin{longtable}{>{\ttfamily}p{6.6cm} >{\ttfamily}p{7.4cm}}
+\toprule
+\normalfont\textbf{Configuration key} & \normalfont\textbf{Environment variable} \\
+\midrule
+\endhead
+Screenshots:RootPath          & Screenshots\_\_RootPath \\
+Screenshots:RetainCycles      & Screenshots\_\_RetainCycles \\
+Email:Enabled                 & Email\_\_Enabled \\
+Email:SmtpHost                & Email\_\_SmtpHost \\
+Email:From                    & Email\_\_From \\
+Email:Events:ScreenshotRejected & Email\_\_Events\_\_ScreenshotRejected \\
+\bottomrule
+\end{longtable}
+
+\begin{notebox}
+Prefer the environment-variable form for \emph{per-machine} values --- above all
+\texttt{Screenshots\_\_RootPath}. It mirrors the existing \texttt{ConnectionStrings\_\_Default}
+pattern already used on these servers: the value is set once at the machine level, lives outside the
+deployed artifact, and therefore survives every \texttt{dotnet publish} without any file editing. An
+environment variable takes precedence over the same key in \texttt{appsettings*.json}.
+\end{notebox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\chapter{Screenshot Storage Folder}
+\label{ch:storage}
+
+\section{Why it must live outside the app folder}
+
+Each deployment replaces the entire contents of the application folder
+(\texttt{C:\textbackslash inetpub\textbackslash wwwroot\textbackslash DashyDashboard}). If
+screenshots were stored inside that folder they would be deleted on the next deploy. The storage
+root must therefore be a separate location, for example:
+
+\begin{codebox}
+\ttfamily D:\textbackslash DashyData\textbackslash Screenshots
+\end{codebox}
+
+\section{One-time elevated setup (per server)}
+
+This is a one-time step on each server, performed by an administrator with elevation.
+
+\begin{enumerate}
+  \item Create the folder (substitute your chosen path):
+  \begin{codebox}
+  \ttfamily mkdir D:\textbackslash DashyData\textbackslash Screenshots
+  \end{codebox}
+
+  \item Grant the IIS application-pool identity \emph{Modify} permission on the folder, applied to
+        the folder, its subfolders, and files. Use \texttt{icacls} from an elevated Command Prompt
+        or PowerShell. For the local development pool (\texttt{DashyDashboardPool}):
+  \begin{codebox}
+  \ttfamily icacls "D:\textbackslash DashyData\textbackslash Screenshots" /grant "IIS AppPool\textbackslash DashyDashboardPool:(OI)(CI)M"
+  \end{codebox}
+
+  \item On the production server, substitute the production application pool's name for
+        \texttt{DashyDashboardPool}. Confirm the exact pool name in IIS Manager
+        (Application Pools) before running the command.
+\end{enumerate}
+
+\begin{notebox}
+The \texttt{icacls} flags mean: \texttt{(OI)} object inherit (files in the folder),
+\texttt{(CI)} container inherit (subfolders), and \texttt{M} the Modify permission set
+(read, write, create, delete). The app needs to create per-cycle subfolders and write image files,
+so Modify --- not just Write --- is required.
+\end{notebox}
+
+\begin{warnbox}
+The login name passed to \texttt{icacls} is derived from the application-pool name and is always
+prefixed \texttt{IIS AppPool\textbackslash}. It is \emph{not} a domain account and will not appear
+when browsing for users --- type it exactly. If the application logs ``Access to the path
+\ldots\ is denied'' when an associate uploads a screenshot, this ACL grant is the first thing to
+check.
+\end{warnbox}
+
+\section{Setting the path}
+
+After the folder exists, point the application at it via either:
+
+\begin{itemize}
+  \item \texttt{Screenshots:RootPath} in \texttt{appsettings.Production.json}, \emph{or}
+  \item the machine environment variable \texttt{Screenshots\_\_RootPath} (recommended ---
+        Chapter~\ref{ch:config}). The app will refuse to start if no root path is configured.
+\end{itemize}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\chapter{Database Migrations}
+\label{ch:migrations}
+
+Two Entity Framework migrations must be applied, \textbf{in this order} (this is their merge order ---
+the first shipped with the Tool-User-ID feature, the second with the screenshot feature):
+
+\begin{enumerate}
+  \item \texttt{20260611112843\_AddToolUserIdToUsersToolAccess} --- adds
+        \texttt{UsersToolAccess.ToolUserId} (\texttt{nvarchar(100) NULL}).
+  \item \texttt{20260611115259\_AddScreenshotColumnsToToolCycleAttestation} --- adds seven nullable
+        columns to \texttt{ToolCycleAttestation}: \texttt{ScreenshotPath}, \texttt{ScreenshotHash},
+        \texttt{ScreenshotUploadedAt}, \texttt{ScreenshotStatus}, \texttt{ScreenshotReviewedBy},
+        \texttt{ScreenshotReviewedAt}, and \texttt{ScreenshotRejectReason}.
+\end{enumerate}
+
+\begin{warnbox}
+Apply both migrations in the order listed. Applying the screenshot migration before the
+Tool-User-ID migration will leave the database history out of step with the deployed binaries.
+\end{warnbox}
+
+\section{Option A --- apply directly with the EF tools (dev / test)}
+
+From the API project directory, with the connection string pointing at the target database:
+
+\begin{codebox}
+\ttfamily\small
+\$env:ConnectionStrings\_\_Default = "Server=\ldots;Database=\ldots;\ldots"\\
+dotnet ef database update
+\end{codebox}
+
+\texttt{dotnet ef database update} (with no migration name) brings the database fully up to date,
+applying any pending migrations in order. This is appropriate for the development and test databases.
+
+\section{Option B --- generate an idempotent SQL script for the DBA (production)}
+
+On production, the database is usually changed only by a DBA running a reviewed script. Generate an
+idempotent script that can be run safely regardless of which migrations are already applied:
+
+\begin{codebox}
+\ttfamily\small
+dotnet ef migrations script --idempotent --output screenshots-migrations.sql
+\end{codebox}
+
+Hand \texttt{screenshots-migrations.sql} to the DBA to execute against \texttt{ClientsAppAttestation}
+in SSMS. An idempotent script wraps each migration in a guard so already-applied migrations are
+skipped --- it is safe to run even if the first migration was applied earlier.
+
+\begin{notebox}
+The application's app-pool SQL login has \texttt{db\_ddladmin}, so EF can also self-apply migrations
+on first launch in environments where that is the chosen workflow. On production, prefer the
+reviewed idempotent script (Option B).
+\end{notebox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\chapter{E-mail Notifications}
+\label{ch:email}
+
+E-mail is \textbf{disabled by default} (\texttt{Email:Enabled = false}). When disabled, the
+application behaves identically except that no mail is sent --- there is no error and no impact on
+the request paths. Enable it only after the relay and sending mailbox are confirmed.
+
+\section{Events}
+
+\begin{itemize}
+  \item \textbf{ScreenshotRejected} --- sent to the associate when a reviewer rejects one of their
+        screenshots. Includes the cycle, client, tool, reviewer name, the rejection reason, and a
+        link to re-upload in DashyDashboard.
+  \item \textbf{AllApproved} --- sent to the associate exactly once, when the last of their
+        screenshots is approved and their attestation becomes complete.
+\end{itemize}
+
+Delivery is fire-and-forget: events are queued in-process and sent by a background consumer over an
+unauthenticated internal SMTP relay. A misconfigured or unreachable relay never blocks or fails a
+user request.
+
+\section{IT request template}
+
+The relay host/port and an approved sending mailbox are not Broadridge-developer-owned --- request
+them from the messaging/IT team. A short copy-pasteable request:
+
+\begin{codebox}
+\ttfamily\small
+Subject: SMTP relay + sending mailbox for DashyDashboard\\[4pt]
+We are deploying an internal web application (DashyDashboard) on server\\
+CLIPVWBPOD02 that needs to send automated, plain-text notification e-mails\\
+to associates (screenshot rejected / attestation complete).\\[4pt]
+Please provide:\\
+\hspace*{1em}1. The internal SMTP relay hostname and port that this server may\\
+\hspace*{3em}use to send mail (unauthenticated relay from this host is fine).\\
+\hspace*{1em}2. An approved "from" sending mailbox / display address for the\\
+\hspace*{3em}From header (e.g. dashydashboard-noreply@<domain>).\\[4pt]
+Volume is low (a handful of mails per attestation cycle). No inbound mail\\
+or mailbox monitoring is required.
+\end{codebox}
+
+\section{Enabling}
+
+Once you have the relay details and sending mailbox:
+
+\begin{enumerate}
+  \item Set \texttt{Email:SmtpHost}, \texttt{Email:SmtpPort}, and \texttt{Email:From} (and confirm
+        \texttt{Email:AppUrl} points at the live site).
+  \item Set \texttt{Email:Enabled} to \texttt{true}.
+  \item Leave the per-event toggles at \texttt{true} unless a specific event is to be suppressed.
+\end{enumerate}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\chapter{Retention \& Backup}
+\label{ch:retention}
+
+\section{Retention policy}
+
+Cycles are monthly. The policy is to retain the most recent \textbf{6} cycles' screenshots on disk
+(\texttt{Screenshots:RetainCycles = 6}, roughly six months).
+
+\begin{warnbox}
+The automatic retention sweep is a \emph{future} scheduled job and is \textbf{not yet running}.
+Until it ships, retention is manual.
+\end{warnbox}
+
+\section{Manual purge (until the sweep ships)}
+
+Each cycle's screenshots live under a top-level folder named for the numeric cycle ID:
+
+\begin{codebox}
+\ttfamily \{root\}\textbackslash\{cycleId\}\textbackslash\ldots
+\end{codebox}
+
+To purge, delete the \texttt{\{root\}\textbackslash\{cycleId\}} folders for cycles older than the
+most recent six. Identify cycle IDs from \texttt{dbo.Cycles}. Deleting a folder removes only the
+images; the attestation rows and their stored paths remain in the database.
+
+\section{Backup coverage}
+
+The screenshot root folder holds attestation evidence that exists nowhere else. It should be added
+to the server's backup coverage so that an evidence loss is recoverable. Whether to back it up, and
+the retention of those backups, is an ops decision --- this guide simply flags that the folder is
+outside the app folder and outside the database, so it is easy to miss.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\chapter{Local Development Box (\texttt{deploy-dev.ps1})}
+\label{ch:devbox}
+
+The local PRV-SERVER box runs the production-mirror artifact under IIS against a local SQL instance.
+For the screenshot feature to work there, the same two prerequisites apply as on any server: a
+storage folder outside the app folder, and the configuration pointing at it. These should be added
+to the local \texttt{deploy-dev.ps1} (the elevated, machine-specific deploy script). The changes are
+described here; perform them in an elevated session --- they are not part of the unelevated build.
+
+\begin{enumerate}
+  \item \textbf{Set the machine environment variable} so it survives every republish, mirroring the
+        existing \texttt{ConnectionStrings\_\_Default} line:
+  \begin{codebox}
+  \ttfamily\small
+  [Environment]::SetEnvironmentVariable(\\
+  \hspace*{2em}"Screenshots\_\_RootPath", "D:\textbackslash DashyData\textbackslash Screenshots", "Machine")
+  \end{codebox}
+
+  \item \textbf{Create the folder and grant the local app-pool identity Modify} (idempotent):
+  \begin{codebox}
+  \ttfamily\small
+  New-Item -ItemType Directory -Force "D:\textbackslash DashyData\textbackslash Screenshots"\\
+  icacls "D:\textbackslash DashyData\textbackslash Screenshots" /grant "IIS AppPool\textbackslash DashyDashboardPool:(OI)(CI)M"
+  \end{codebox}
+\end{enumerate}
+
+\begin{notebox}
+\texttt{deploy-dev.ps1} already performs the analogous elevated work for the connection string
+(setting \texttt{ConnectionStrings\_\_Default} as a machine variable) and for IIS. Adding the two
+steps above keeps the local box self-contained and republish-proof. The local pool is
+\texttt{DashyDashboardPool}; on production substitute the real pool name.
+\end{notebox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\chapter{Future Phase}
+\label{ch:future}
+
+The following are documented as the planned \emph{next} phase. They reuse the e-mail plumbing
+(the queue + send split in \texttt{EmailService}) and the storage service's \texttt{Delete} method
+that already exist, so no new infrastructure is required --- only a scheduler.
+
+\begin{itemize}
+  \item \textbf{Scheduled \texttt{BackgroundService}.} A single hosted service that wakes on a timer
+        (e.g.\ daily) and performs the periodic tasks below. It composes mail via the existing
+        \texttt{EmailService} and enqueues it the same way the request paths do.
+  \item \textbf{Due-date reminder mails.} Seven days before a cycle's \texttt{DueDate}, mail
+        associates who have not yet completed their attestation.
+  \item \textbf{Manager pending-approvals digest.} A periodic summary to each reviewer listing the
+        screenshots awaiting their approval.
+  \item \textbf{Retention sweep.} Automatically delete \texttt{\{root\}\textbackslash\{cycleId\}}
+        folders for cycles older than \texttt{Screenshots:RetainCycles}, removing the manual purge
+        step in Chapter~\ref{ch:retention}.
+\end{itemize}
+
+\begin{notebox}
+None of these are built in the current release. They are listed so that the configuration keys
+(\texttt{Screenshots:RetainCycles}, the \texttt{Email} section) and the storage layout described in
+this guide are understood as forward-compatible with the next phase.
+\end{notebox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\end{document}
