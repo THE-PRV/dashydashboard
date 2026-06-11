@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Avatar, Badge, Button, Icon, Progress, TopBar } from '../components/ui.jsx';
-import { getMemberDetail, getTeam } from '../api/manager.js';
+import { getMemberDetail, getTeam, exportDisputes } from '../api/manager.js';
+import { reopenAttestation } from '../api/attestations.js';
 import { asAssociateId } from '../lib/contracts.js';
 
 const STATUS_META = {
@@ -89,6 +90,8 @@ export default function ManagerView({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [teamError, setTeamError] = useState('');
   const [detailError, setDetailError] = useState('');
+  const [exportingDisputes, setExportingDisputes] = useState(false);
+  const [reopening, setReopening] = useState(false);
 
   const loadTeam = async () => {
     if (!cycle) {
@@ -125,6 +128,36 @@ export default function ManagerView({
   useEffect(() => {
     loadTeam();
   }, [cycle]);
+
+  async function handleExportDisputes() {
+    if (!cycle?.cycleID) return;
+    setExportingDisputes(true);
+    try {
+      await exportDisputes(cycle.cycleID);
+    } catch (e) {
+      alert('Export failed: ' + e.message);
+    } finally {
+      setExportingDisputes(false);
+    }
+  }
+
+  async function handleReopen() {
+    if (!cycle?.cycleID || !selectedId) return;
+    if (!window.confirm(`Reopen ${detail?.fullName ?? selectedId}'s submitted attestation for ${cycle.cycleName ?? 'this cycle'}?`)) return;
+    setReopening(true);
+    try {
+      await reopenAttestation(cycle.cycleID, selectedId);
+      // Refresh both the member detail and the team list
+      getMemberDetail(selectedId, cycle.cycleID)
+        .then((response) => setDetail({ ...response, associateId: response.associateId }))
+        .catch(() => {});
+      loadTeam();
+    } catch (e) {
+      alert('Reopen failed: ' + e.message);
+    } finally {
+      setReopening(false);
+    }
+  }
 
   useEffect(() => {
     if (!cycle || !selectedId) {
@@ -231,9 +264,31 @@ export default function ManagerView({
       </div>
 
       {team?.mismatchCount > 0 && (
-        <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, padding: '10px 16px', margin: '16px 24px 0', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', color: 'var(--danger-fg)' }}>
-          <Icon name="bell" size={16} />
-          <strong>{team.mismatchCount} team member{team.mismatchCount !== 1 ? 's' : ''}</strong> reported access disputes this cycle
+        <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, padding: '10px 16px', margin: '16px 24px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, fontSize: '0.875rem', color: 'var(--danger-fg)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="bell" size={16} />
+            <strong>{team.mismatchCount} team member{team.mismatchCount !== 1 ? 's' : ''}</strong> reported access disputes this cycle
+          </span>
+          <button
+            className="btn-lift"
+            onClick={handleExportDisputes}
+            disabled={exportingDisputes}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'var(--danger-fg)', color: '#fff',
+              border: 'none', borderRadius: 6, padding: '6px 11px',
+              fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-sans)',
+              cursor: exportingDisputes ? 'not-allowed' : 'pointer', opacity: exportingDisputes ? 0.7 : 1,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            {exportingDisputes ? 'Exporting…' : 'Export disputes'}
+          </button>
         </div>
       )}
 
@@ -430,6 +485,28 @@ export default function ManagerView({
                       </div>
                     </div>
                   </div>
+                  {detail.attestationStatus === 'Submitted' && (
+                    <div style={{ marginTop: 10 }}>
+                      <button
+                        className="btn-lift"
+                        onClick={handleReopen}
+                        disabled={reopening}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          background: 'transparent', border: '1px solid var(--accent)',
+                          color: 'var(--accent)', borderRadius: 6, padding: '6px 12px',
+                          fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
+                          cursor: reopening ? 'not-allowed' : 'pointer', opacity: reopening ? 0.7 : 1,
+                        }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="1 4 1 10 7 10" />
+                          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                        </svg>
+                        {reopening ? 'Reopening…' : 'Reopen attestation'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflow: 'auto' }}>

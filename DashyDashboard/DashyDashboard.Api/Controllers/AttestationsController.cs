@@ -1,3 +1,4 @@
+using DashyDashboard.Api.Common;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Models.DTOs;
 using DashyDashboard.Api.Services;
@@ -13,6 +14,7 @@ public class AttestationsController : ControllerBase
     public AttestationsController(AttestationService svc) { _svc = svc; }
 
     private User? CurrentUser => HttpContext.Items["CurrentUser"] as User;
+    private SuperUser? CurrentSuperUser => HttpContext.Items["SuperUser"] as SuperUser;
 
     [HttpGet]
     public async Task<IActionResult> GetMyAttestations([FromQuery] int cycleId)
@@ -58,7 +60,25 @@ public class AttestationsController : ControllerBase
     public async Task<IActionResult> SubmitAll(int cycleId, [FromBody] SubmitAllRequest? req)
     {
         if (CurrentUser is null) return Unauthorized();
-        var summary = await _svc.SubmitAllAsync(CurrentUser.AssociateId, cycleId, req?.Remarks);
-        return Ok(new { summary });
+        try
+        {
+            var summary = await _svc.SubmitAllAsync(CurrentUser.AssociateId, cycleId, req?.Remarks);
+            return Ok(new { summary });
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
+    }
+
+    [HttpPost("{cycleId}/{associateId}/reopen")]
+    public async Task<IActionResult> Reopen(int cycleId, string associateId)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        var isAdmin = CurrentSuperUser != null && SuperUserRoles.Is(CurrentSuperUser.RoleName, SuperUserRoles.Admin);
+        try
+        {
+            await _svc.ReopenAsync(CurrentUser.AssociateId, isAdmin, associateId, cycleId);
+            return Ok(new { reopened = true });
+        }
+        catch (UnauthorizedAccessException) { return Forbid(); }
+        catch (InvalidOperationException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
     }
 }

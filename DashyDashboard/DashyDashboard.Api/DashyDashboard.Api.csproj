@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="7.0.20" />
+    <PackageReference Include="ClosedXML" Version="0.105.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="7.0.20" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="7.0.20">
       <PrivateAssets>all</PrivateAssets>
@@ -23,29 +23,19 @@
     <FrontendBuildInputs Include="$(SpaRoot)index.html;$(SpaRoot)package.json;$(SpaRoot)package-lock.json;$(SpaRoot)vite.config.js;$(SpaRoot)src\**\*;$(SpaRoot)public\**\*" />
   </ItemGroup>
 
-  <Target Name="RequireFrontendLockFile"
-          BeforeTargets="RestoreFrontendDependencies"
-          Condition="'$(SkipFrontendBuild)' != 'true' and Exists('$(SpaRoot)package.json') and !Exists('$(SpaRoot)package-lock.json')">
+  <Target Name="RequireFrontendLockFile" BeforeTargets="RestoreFrontendDependencies" Condition="'$(SkipFrontendBuild)' != 'true' and Exists('$(SpaRoot)package.json') and !Exists('$(SpaRoot)package-lock.json')">
     <Error Text="DashyDashboard.Frontend/package-lock.json is required for publish so frontend dependencies are restored deterministically." />
   </Target>
 
-  <Target Name="RestoreFrontendDependencies"
-          BeforeTargets="BuildFrontendAssets"
-          Inputs="$(SpaRoot)package.json;$(SpaRoot)package-lock.json"
-          Outputs="$(SpaRoot)node_modules\.package-lock.json"
-          Condition="'$(SkipFrontendBuild)' != 'true' and Exists('$(SpaRoot)package-lock.json')">
+  <Target Name="RestoreFrontendDependencies" BeforeTargets="BuildFrontendAssets" Inputs="$(SpaRoot)package.json;$(SpaRoot)package-lock.json" Outputs="$(SpaRoot)node_modules\.package-lock.json" Condition="'$(SkipFrontendBuild)' != 'true' and Exists('$(SpaRoot)package-lock.json')">
     <Message Importance="high" Text="Restoring frontend dependencies with npm ci..." />
     <Exec WorkingDirectory="$(SpaRoot)" Command="npm ci --no-audit --no-fund" />
   </Target>
 
-  <Target Name="BuildFrontendAssets"
-          BeforeTargets="ComputeFilesToPublish"
-          DependsOnTargets="RestoreFrontendDependencies"
-          Inputs="@(FrontendBuildInputs)"
-          Outputs="$(MSBuildProjectDirectory)\wwwroot\index.html"
-          Condition="'$(SkipFrontendBuild)' != 'true' and Exists('$(SpaRoot)package.json')">
+  <Target Name="BuildFrontendAssets" BeforeTargets="ComputeFilesToPublish" DependsOnTargets="RestoreFrontendDependencies" Inputs="@(FrontendBuildInputs)" Outputs="$(MSBuildProjectDirectory)\wwwroot\index.html" Condition="'$(SkipFrontendBuild)' != 'true' and Exists('$(SpaRoot)package.json')">
     <Message Importance="high" Text="Building frontend assets into $(MSBuildProjectDirectory)\wwwroot..." />
-    <Exec WorkingDirectory="$(SpaRoot)" Command="npm run build" />
+    <!-- Production mode so Vite loads .env.production (VITE_API_URL=/dashydashboard); dev mode omits the API base path and breaks the sub-path deployment. -->
+    <Exec WorkingDirectory="$(SpaRoot)" Command="npm run build -- --mode production" />
   </Target>
 
 </Project>

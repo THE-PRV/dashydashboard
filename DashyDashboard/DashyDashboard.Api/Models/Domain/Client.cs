@@ -27,11 +27,6 @@ public class Client
     [MaxLength(50)]
     public string? Tier { get; set; }
 
-    public int? DepartmentID { get; set; }
-
-    [ForeignKey(nameof(DepartmentID))]
-    public Department? Department { get; set; }
-
     public bool IsActive { get; set; } = true;
 
     public ICollection<ClientTool> Tools { get; set; } = new List<ClientTool>();

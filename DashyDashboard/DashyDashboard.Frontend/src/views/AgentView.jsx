@@ -22,6 +22,12 @@ function codeFor(name) {
   return (name ?? '???').split(/\s+/).map((word) => word[0]).join('').slice(0, 3).toUpperCase();
 }
 
+// A tool is "decided" (counts as attested / can be submitted) when the user has either
+// answered Did-you-use OR declared they did not have access — both are valid attestations.
+function isDecided(tool) {
+  return (tool.usedThisCycle !== null && tool.usedThisCycle !== undefined) || tool.hadAccess === false;
+}
+
 export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isManager, role, onRole, dark, onDark }) {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +82,11 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
     return { total, attested, pending: total - attested };
   }, [clients]);
 
+  const isSubmitted = useMemo(() =>
+    clients.length > 0 &&
+    clients.every((c) => c.tools.every((t) => t.attestationStatus === 'Submitted')),
+  [clients]);
+
   const visible = useMemo(() => {
     if (!search) return clients;
     const query = search.toLowerCase();
@@ -98,12 +109,18 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
   const handleSubmitAll = async () => {
     if (!cycle || submitting) return;
 
-    const hasAnyMarked = clients.some((client) =>
-      client.tools.some((tool) => tool.usedThisCycle !== null && tool.usedThisCycle !== undefined)
-    );
+    const allDecided = clients.every((client) => client.tools.every(isDecided));
 
-    if (!hasAnyMarked) {
-      flashToast('warn', 'Mark at least one tool as used or not used first.');
+    if (!allDecided) {
+      flashToast('warn', 'All tools must be answered before submitting.');
+      return;
+    }
+
+    const missingRemarks = clients.reduce((count, client) => count + client.tools.filter((tool) =>
+      tool.hadAccess === false && !(tool.remarks && String(tool.remarks).trim())).length, 0);
+
+    if (missingRemarks > 0) {
+      flashToast('warn', `Add a remark for each tool you marked as 'No access' before submitting (${missingRemarks} still need one).`);
       return;
     }
 
@@ -128,7 +145,8 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
       tools: client.tools.map((tool) => asToolIdKey(tool.toolID) !== toolKey ? tool : { ...tool, usedThisCycle: value }),
       attestedTools: client.tools.reduce((sum, tool) => {
         const used = asToolIdKey(tool.toolID) === toolKey ? value : tool.usedThisCycle;
-        return sum + (used !== null && used !== undefined ? 1 : 0);
+        const decided = (used !== null && used !== undefined) || tool.hadAccess === false;
+        return sum + (decided ? 1 : 0);
       }, 0),
     }));
 
@@ -144,13 +162,14 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
     if (!cycle) return;
     const toolKey = asToolIdKey(toolId);
 
-    setClients((previous) => previous.map((client) => client.clientID !== clientId ? client : {
-      ...client,
-      tools: client.tools.map((tool) => asToolIdKey(tool.toolID) !== toolKey ? tool : {
+    setClients((previous) => previous.map((client) => {
+      if (client.clientID !== clientId) return client;
+      const tools = client.tools.map((tool) => asToolIdKey(tool.toolID) !== toolKey ? tool : {
         ...tool,
         hadAccess: value,
         usedThisCycle: value === false ? null : tool.usedThisCycle,
-      }),
+      });
+      return { ...client, tools, attestedTools: tools.reduce((sum, tool) => sum + (isDecided(tool) ? 1 : 0), 0) };
     }));
 
     try {
@@ -247,7 +266,7 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
       }}>
         <div style={{ flex: '1 1 320px', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 11.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            <Icon name="shield" size={13} /> Biweekly access review
+            <Icon name="shield" size={13} /> Access report
           </div>
           {(() => {
             const hour = new Date().getHours();
@@ -349,9 +368,10 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
             size="sm"
             icon="check"
             onClick={handleSubmitAll}
-            style={{ justifyContent: 'center', opacity: submitting ? 0.7 : 1, cursor: submitting ? 'wait' : 'pointer' }}
+            disabled={isSubmitted}
+            style={{ justifyContent: 'center', opacity: (submitting || isSubmitted) ? 0.7 : 1, cursor: submitting ? 'wait' : isSubmitted ? 'default' : 'pointer' }}
           >
-            {submitting ? 'Submitting...' : 'Submit attestation'}
+            {submitting ? 'Submitting...' : isSubmitted ? 'Submitted' : 'Submit attestation'}
           </Button>
         </div>
       </div>
@@ -425,7 +445,7 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-                    {client.clientName}
+                    {client.clientName} ({client.clientID})
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {client.totalTools ?? 0} tools | {client.usedTools ?? 0} used | {(client.totalTools ?? 0) - (client.attestedTools ?? 0) > 0
@@ -463,11 +483,28 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
               </header>
 
               {open && (
+                <>
+                {isSubmitted && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '9px 16px',
+                    background: 'color-mix(in oklab, var(--success), transparent 88%)',
+                    borderBottom: '1px solid color-mix(in oklab, var(--success), transparent 70%)',
+                    color: 'var(--badge-used-fg)',
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}>
+                    <Icon name="check" size={13} stroke={2.5} />
+                    This attestation has been submitted and is locked.
+                  </div>
+                )}
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
                       <tr style={{ background: 'var(--surface-2)' }}>
-                        {['Tool', 'Had access?', 'Did you use?', 'Remark'].map((heading) => (
+                        {['Tool', 'Confirm Access', 'Did you use?', 'Remark'].map((heading) => (
                           <th key={heading} style={{
                             textAlign: 'left',
                             padding: '9px 16px',
@@ -486,7 +523,7 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                     </thead>
                     <tbody>
                       {client.tools.map((tool, index) => {
-                        const pending = tool.usedThisCycle === null || tool.usedThisCycle === undefined;
+                        const pending = !isDecided(tool);
                         return (
                           <tr key={tool.toolID} style={{
                             background: pending
@@ -501,16 +538,17 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                               <TriToggle
                                 value={tool.hadAccess ?? true}
                                 onChange={(value) => handleToggleHadAccess(client.clientID, tool.toolID, value)}
-                                labels={['Yes', 'No']}
+                                labels={['True', 'False']}
                                 size="sm"
+                                disabled={isSubmitted}
                               />
                             </td>
                             <td style={{ padding: '10px 16px' }}>
                               <TriToggle
                                 value={tool.usedThisCycle}
                                 onChange={(value) => handleToggle(client.clientID, tool.toolID, value)}
-                                disabled={tool.hadAccess === false}
-                                style={tool.hadAccess === false ? { opacity: 0.35, pointerEvents: 'none' } : {}}
+                                disabled={tool.hadAccess === false || isSubmitted}
+                                style={(tool.hadAccess === false || isSubmitted) ? { opacity: 0.35, pointerEvents: 'none' } : {}}
                                 size="sm"
                               />
                             </td>
@@ -520,7 +558,8 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                                 return (
                                   <button
                                     type="button"
-                                    onClick={() => setRemarkPane({
+                                    disabled={isSubmitted}
+                                    onClick={() => !isSubmitted && setRemarkPane({
                                       cycleId: cycle.cycleID,
                                       clientId: client.clientID,
                                       clientName: client.clientName,
@@ -529,7 +568,7 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                                       accent,
                                       initialText: tool.remarks ?? '',
                                     })}
-                                    title={hasRemark ? tool.remarks : 'Add a remark'}
+                                    title={isSubmitted ? 'Attestation is locked' : hasRemark ? tool.remarks : 'Add a remark'}
                                     style={{
                                       display: 'inline-flex',
                                       alignItems: 'center',
@@ -542,9 +581,10 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                                       color: hasRemark ? 'var(--accent)' : 'var(--text-muted)',
                                       fontSize: 11,
                                       fontWeight: 500,
-                                      cursor: 'pointer',
+                                      cursor: isSubmitted ? 'default' : 'pointer',
                                       fontFamily: 'inherit',
                                       maxWidth: 200,
+                                      opacity: isSubmitted ? 0.5 : 1,
                                     }}
                                   >
                                     <Icon name="message" size={12} />
@@ -561,6 +601,7 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
             </section>
           );

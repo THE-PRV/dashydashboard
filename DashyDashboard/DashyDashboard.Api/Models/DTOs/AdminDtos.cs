@@ -10,6 +10,7 @@ public record DeptSummaryDto(
     string GfhName,
     string GfhEmail,
     string Office,
+    int TotalUsers,
     int TotalAssociates,
     int SubmittedCount,
     List<ClientSummaryDto> ClientBreakdown
@@ -20,6 +21,7 @@ public record ManagerSummaryDto(
     string FullName,
     string Email,
     int TotalAssociates,
+    int TotalTools,
     int SubmittedCount
 );
 
@@ -28,10 +30,13 @@ public record ClientOptionDto(string ClientId, string ClientName);
 public record DeptManagersDto(
     string DeptName,
     string GfhName,
+    int TotalUsers,
     int TotalAssociates,
     int SubmittedCount,
     List<ManagerSummaryDto> Managers,
-    List<ClientOptionDto> AvailableClients
+    List<ClientOptionDto> AvailableClients,
+    int IncompleteCount,
+    int DisputeCount
 );
 
 public record AddToolRequest(
@@ -44,4 +49,42 @@ public record AddToolResponse(
     string ClientId,
     int ToolId,
     string ToolName
+);
+
+public record AddClientRequest(
+    [Required][MaxLength(50)] string ClientId,
+    [Required][MaxLength(255)] string ClientName
+);
+
+public record AddClientResponse(
+    string ClientId,
+    string ClientName
+);
+
+public record NonSubmittedDto(
+    string AssociateId,
+    string Name,
+    int CompletionPct,
+    string Email,
+    string ManagerName
+);
+
+public record DisputeExportDto(
+    string AssociateId,
+    string Name,
+    string ToolName,
+    string ClientName,
+    string ClientId,
+    string Reason,
+    string Email,
+    string ManagerName
+);
+
+public record UpdateUserRequest(
+    string? FirstName,
+    string? LastName,
+    string? UserName,
+    string? Department,
+    string? ManagerId,
+    string? Email
 );

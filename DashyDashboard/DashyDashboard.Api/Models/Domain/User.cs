@@ -39,12 +39,6 @@ public class User
 
     public bool IsActive { get; set; } = true;
 
-    [ForeignKey(nameof(ManagerId))]
-    public User? Manager { get; set; }
-
-    [InverseProperty(nameof(Manager))]
-    public ICollection<User> DirectReports { get; set; } = new List<User>();
-
     public ICollection<UserToolAccess> ToolAccess { get; set; } = new List<UserToolAccess>();
 
     [NotMapped]

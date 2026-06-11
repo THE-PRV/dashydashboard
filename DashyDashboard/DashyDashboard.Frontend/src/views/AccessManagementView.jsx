@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Icon, Avatar, Button, TopBar, SearchBar } from '../components/ui.jsx';
+import { Icon, Avatar, Badge, Button, TopBar, SearchBar } from '../components/ui.jsx';
 import {
   getTeam, getMemberAccess, grantAccess, revokeAccess,
-  updateAccessEndDate, getClientsAndTools,
+  updateAccessEndDate, setOpenAccess, getGrantableClientsAndTools,
 } from '../api/manager.js';
 import { asAssociateId, asToolId, asToolIdKey } from '../lib/contracts.js';
 
@@ -49,7 +49,7 @@ export default function AccessManagementView(props) {
     }
 
     setLoadingTeam(true);
-    getTeam(cycle.cycleID)
+    getTeam(cycle.cycleID, { includeEmpty: true })
       .then((data) => {
         const nextMembers = (data.members ?? []).map((member) => ({
           ...member,
@@ -173,6 +173,8 @@ function MemberAccessPanel({ member }) {
     withBusy(`${clientId}/${asToolIdKey(toolId)}`, () => updateAccessEndDate(memberId, clientId, toolId, value || null));
   const revokeNow = (clientId, toolId) =>
     withBusy(`${clientId}/${asToolIdKey(toolId)}`, () => revokeAccess(memberId, clientId, toolId));
+  const grantFull = (clientId, toolId) =>
+    withBusy(`${clientId}/${asToolIdKey(toolId)}`, () => setOpenAccess(memberId, clientId, toolId, false));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 880 }}>
@@ -194,12 +196,12 @@ function MemberAccessPanel({ member }) {
 
       <section style={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', overflow: 'hidden' }}>
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-          Active access
+          Tool access
         </div>
         {loading ? (
           <div style={{ padding: 16, fontSize: 13, color: 'var(--text-muted)' }}>Loading access...</div>
         ) : !groups || groups.length === 0 ? (
-          <div style={{ padding: 16, fontSize: 13, color: 'var(--text-muted)' }}>No active tool access.</div>
+          <div style={{ padding: 16, fontSize: 13, color: 'var(--text-muted)' }}>No tool access rows.</div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -220,46 +222,74 @@ function MemberAccessPanel({ member }) {
                   const busy = busyKey === key;
                   return (
                     <tr key={`${key}/${tool.accessTo ?? 'open'}`} style={{ borderBottom: '1px solid var(--border-subtle)', opacity: busy ? 0.6 : 1 }}>
-                      <td style={{ padding: '10px 16px', whiteSpace: 'nowrap' }}>{group.clientName}</td>
-                      <td style={{ padding: '10px 16px', fontWeight: 500, color: 'var(--text)', whiteSpace: 'nowrap' }}>{tool.toolName}</td>
+                      <td style={{ padding: '10px 16px', whiteSpace: 'nowrap' }}>{group.clientName} ({group.clientID})</td>
+                      <td style={{ padding: '10px 16px', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                          <span style={{ fontWeight: 500, color: 'var(--text)' }}>{tool.toolName}</span>
+                          {tool.isOpen && (
+                            <Badge variant="pending" size="sm">Open access</Badge>
+                          )}
+                        </div>
+                      </td>
                       <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{tool.givenDate}</td>
                       <td style={{ padding: '10px 16px' }}>
-                        <input
-                          type="date"
-                          defaultValue={tool.accessTo ?? ''}
-                          min={tool.givenDate}
-                          disabled={busy}
-                          onChange={(e) => setEndDate(group.clientID, tool.toolID, e.target.value || null)}
-                          style={{ ...inputStyle, height: 28, width: 150 }}
-                        />
+                        {tool.isOpen ? (
+                          <span style={{ fontSize: 13, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                            {tool.accessTo ?? '—'}
+                          </span>
+                        ) : (
+                          <input
+                            type="date"
+                            defaultValue={tool.accessTo ?? ''}
+                            min={tool.givenDate}
+                            disabled={busy}
+                            onChange={(e) => setEndDate(group.clientID, tool.toolID, e.target.value || null)}
+                            style={{ ...inputStyle, height: 28, width: 150 }}
+                          />
+                        )}
                       </td>
                       <td style={{ padding: '10px 16px', whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'inline-flex', gap: 6 }}>
-                          {tool.accessTo && (
-                            <button
-                              onClick={() => setEndDate(group.clientID, tool.toolID, null)}
-                              disabled={busy}
-                              title="Clear end date (make open-ended)"
-                              style={{
-                                height: 26, padding: '0 9px', borderRadius: 6, border: '1px solid var(--border)',
-                                background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 11,
-                                fontWeight: 500, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-                              }}
-                            >Clear</button>
-                          )}
+                        {tool.isOpen ? (
                           <button
-                            onClick={() => revokeNow(group.clientID, tool.toolID)}
+                            onClick={() => grantFull(group.clientID, tool.toolID)}
                             disabled={busy}
-                            title="Revoke access today"
+                            title="Grant full access (approve this open access)"
                             style={{
                               height: 26, padding: '0 9px', borderRadius: 6,
-                              border: '1px solid color-mix(in oklab, var(--danger-fg), transparent 60%)',
-                              background: 'color-mix(in oklab, var(--danger-fg), transparent 92%)',
-                              color: 'var(--danger-fg)', fontSize: 11, fontWeight: 500,
+                              border: '1px solid color-mix(in oklab, var(--accent), transparent 40%)',
+                              background: 'var(--accent)', color: 'var(--accent-fg)',
+                              fontSize: 11, fontWeight: 600,
                               cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
                             }}
-                          >Revoke now</button>
-                        </div>
+                          >Grant full access</button>
+                        ) : (
+                          <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                            {tool.accessTo && (
+                              <button
+                                onClick={() => setEndDate(group.clientID, tool.toolID, null)}
+                                disabled={busy}
+                                title="Clear end date (make open-ended)"
+                                style={{
+                                  height: 26, padding: '0 9px', borderRadius: 6, border: '1px solid var(--border)',
+                                  background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 11,
+                                  fontWeight: 500, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                                }}
+                              >Clear</button>
+                            )}
+                            <button
+                              onClick={() => revokeNow(group.clientID, tool.toolID)}
+                              disabled={busy}
+                              title="Revoke access today"
+                              style={{
+                                height: 26, padding: '0 9px', borderRadius: 6,
+                                border: '1px solid color-mix(in oklab, var(--danger-fg), transparent 60%)',
+                                background: 'color-mix(in oklab, var(--danger-fg), transparent 92%)',
+                                color: 'var(--danger-fg)', fontSize: 11, fontWeight: 500,
+                                cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                              }}
+                            >Revoke now</button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
@@ -275,12 +305,12 @@ function MemberAccessPanel({ member }) {
 
 function GrantAccessForm({ memberId, onGranted }) {
   const [clients, setClients] = useState([]);
-  const [form, setForm] = useState({ clientId: '', toolId: '', accessFrom: TODAY, accessTo: '' });
+  const [form, setForm] = useState({ clientId: '', toolId: '', accessFrom: TODAY, accessTo: '', open: false });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    getClientsAndTools().then(setClients).catch(() => setClients([]));
+    getGrantableClientsAndTools().then(setClients).catch(() => setClients([]));
   }, []);
 
   const setField = (key) => (e) => setForm((current) => ({ ...current, [key]: e.target.value }));
@@ -301,8 +331,9 @@ function GrantAccessForm({ memberId, onGranted }) {
         toolID: asToolId(form.toolId),
         accessFrom: form.accessFrom || null,
         accessTo: form.accessTo || null,
+        open: form.open,
       });
-      setForm({ clientId: '', toolId: '', accessFrom: TODAY, accessTo: '' });
+      setForm({ clientId: '', toolId: '', accessFrom: TODAY, accessTo: '', open: false });
       onGranted();
     } catch (err) {
       setError(err.message || 'Failed to grant access.');
@@ -327,7 +358,7 @@ function GrantAccessForm({ memberId, onGranted }) {
           >
             <option value="">Select client...</option>
             {clients.map((client) => (
-              <option key={client.clientID} value={client.clientID}>{client.clientName}</option>
+              <option key={client.clientID} value={client.clientID}>{client.clientName} ({client.clientID})</option>
             ))}
           </select>
         </Field>
@@ -350,6 +381,50 @@ function GrantAccessForm({ memberId, onGranted }) {
         <Field label="Access to (optional)">
           <input type="date" value={form.accessTo} min={form.accessFrom} onChange={setField('accessTo')} style={inputStyle} />
         </Field>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+          Access type
+        </span>
+        <div
+          style={{
+            display: 'inline-flex', borderRadius: 7, border: '1px solid var(--border)',
+            overflow: 'hidden', fontSize: 12, fontWeight: 500,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setForm((current) => ({ ...current, open: false }))}
+            style={{
+              height: 28, padding: '0 12px', border: 'none',
+              borderRight: '1px solid var(--border)',
+              background: !form.open ? 'var(--accent)' : 'var(--surface)',
+              color: !form.open ? 'var(--accent-fg)' : 'var(--text-muted)',
+              fontWeight: !form.open ? 600 : 500,
+              cursor: 'pointer', fontFamily: 'inherit', fontSize: 12,
+              transition: 'background .15s, color .15s',
+            }}
+          >Full access</button>
+          <button
+            type="button"
+            onClick={() => setForm((current) => ({ ...current, open: true }))}
+            style={{
+              height: 28, padding: '0 12px', border: 'none',
+              background: form.open
+                ? 'color-mix(in oklab, var(--badge-pending-fg, #b45309), transparent 82%)'
+                : 'var(--surface)',
+              color: form.open ? 'var(--badge-pending-fg, #b45309)' : 'var(--text-muted)',
+              fontWeight: form.open ? 600 : 500,
+              cursor: 'pointer', fontFamily: 'inherit', fontSize: 12,
+              transition: 'background .15s, color .15s',
+            }}
+          >Open access</button>
+        </div>
+        {form.open && (
+          <span style={{ fontSize: 11, color: 'var(--badge-pending-fg, #b45309)' }}>
+            Paperwork in-process — access will be marked as pending until fully granted.
+          </span>
+        )}
       </div>
       {error && <div style={{ fontSize: 12, color: 'var(--danger-fg)' }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>

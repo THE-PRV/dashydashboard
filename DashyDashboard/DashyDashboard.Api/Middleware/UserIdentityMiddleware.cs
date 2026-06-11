@@ -50,15 +50,19 @@ public class UserIdentityMiddleware
         {
             ctx.Items["CurrentUser"] = user;
 
-            var su = await db.SuperUsers.AsNoTracking()
+            var allSu = await db.SuperUsers.AsNoTracking()
                 .Include(s => s.Department)
                 .Where(s => s.AssociateId == user.AssociateId && s.IsActive)
                 .OrderBy(s => s.RoleName == "Admin" ? 0 : s.RoleName == "GFH" ? 1 : s.RoleName == "IFH" ? 2 : 3)
                 .ThenBy(s => s.AccessLevel == "Full" ? 0 : 1)
                 .ThenBy(s => s.Department!.DepartmentName)
-                .FirstOrDefaultAsync();
+                .ToListAsync();
+            var su = allSu.FirstOrDefault();
             if (su is not null)
+            {
                 ctx.Items["SuperUser"] = su;
+                ctx.Items["SuperUsers"] = allSu;
+            }
         }
 
         await _next(ctx);

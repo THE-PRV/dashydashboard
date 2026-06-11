@@ -16,3 +16,7 @@ export const submitAll = (cycleId, remarks = null) =>
 // Save (or clear) the free-text remark on a single tool's attestation for this cycle.
 export const addRemark = (cycleId, clientId, toolId, text) =>
   put(`/api/attestations/${routePart(cycleId)}/${routePart(clientId)}/${routePart(toolId)}/remark`, { text });
+
+// Admin-only: reopen a submitted attestation so the associate can edit it again.
+export const reopenAttestation = (cycleId, associateId) =>
+  post(`/api/attestations/${routePart(cycleId)}/${routePart(associateId)}/reopen`);

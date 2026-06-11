@@ -14,14 +14,23 @@ import {
 } from './api/auth.js';
 import { asAssociateId } from './lib/contracts.js';
 
+// Roles may arrive in any casing from the DB ("admin", "ADMIN", ...). Canonicalize
+// once here so every case-sensitive comparison downstream (tabs, AdminView) just works.
+const ROLE_CANON = { admin: 'Admin', gfh: 'GFH', gfhdelegate: 'GFHDelegate', ifh: 'IFH' };
+function canonRole(role) {
+  if (!role) return null;
+  return ROLE_CANON[String(role).trim().toLowerCase()] ?? role;
+}
+
 function normalizeUser(response) {
   return {
     associateId: asAssociateId(response.associateId),
     firstName: response.firstName,
     lastName: response.lastName,
     isManager: response.isManager,
-    superUserRole: response.superUserRole ?? null,
+    superUserRole: canonRole(response.superUserRole),
     superUserDept: response.superUserDepartment ?? null,
+    superUserDepts: Array.isArray(response.superUserDepartments) ? response.superUserDepartments : [],
   };
 }
 
@@ -300,6 +309,7 @@ export default function App() {
         {...sharedTopBarProps}
         superUserRole={authUser.superUserRole}
         superUserDept={authUser.superUserDept}
+        superUserDepts={authUser.superUserDepts}
       />
     );
   }

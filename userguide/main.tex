@@ -1,0 +1,630 @@
+% =====================================================================
+%  Broadridge — Access Review (DashyDashboard)
+%  User Guide.  Compile with: latexmk -pdf main.tex   (MiKTeX / pdfLaTeX)
+% =====================================================================
+\documentclass[11pt]{article}
+
+% ---- Encoding & fonts (sans-serif body, matches the product UI) ----
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{tgheros}                 % Helvetica-like sans
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{microtype}
+
+% ---- Page geometry & layout ----
+\usepackage[letterpaper,margin=1in,headheight=15pt]{geometry}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{enumitem}
+\setlist{itemsep=2pt,topsep=3pt,parsep=0pt}
+\usepackage{booktabs}
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{caption}
+\usepackage[most]{tcolorbox}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{lastpage}
+
+% ---- Brand palette ----
+\definecolor{brandnavy}{HTML}{000C36}
+\definecolor{brandblue}{HTML}{2563EB}
+\definecolor{tipgreen}{HTML}{0F9D58}
+\definecolor{warnamber}{HTML}{B45309}
+\definecolor{dangerred}{HTML}{DC2626}
+\definecolor{inkmuted}{HTML}{5B6472}
+\definecolor{rule}{HTML}{D7DCE3}
+
+% ---- Hyperlinks ----
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true, linkcolor=brandblue, urlcolor=brandblue, citecolor=brandblue,
+  pdftitle={Access Review — User Guide}, pdfauthor={Broadridge BPO},
+  bookmarksnumbered=true
+}
+
+% ---- Section styling ----
+\titleformat{\section}{\Large\bfseries\color{brandnavy}}{\thesection}{0.6em}{}[{\color{rule}\titlerule[1pt]}]
+\titleformat{\subsection}{\large\bfseries\color{brandblue}}{\thesubsection}{0.55em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{brandnavy}}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{18pt}{8pt}
+
+% ---- Header / footer ----
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyhead[L]{\footnotesize\color{inkmuted}Access Review \textbf{·} User Guide}
+\fancyhead[R]{\footnotesize\color{inkmuted}\leftmark}
+\fancyfoot[L]{\footnotesize\color{inkmuted}Broadridge BPO — Internal}
+\fancyfoot[R]{\footnotesize\color{inkmuted}Page \thepage\ of \pageref{LastPage}}
+
+% ---- Caption styling ----
+\captionsetup{font=small,labelfont={bf,color=brandblue},labelsep=endash,skip=6pt}
+
+% ---- Callout boxes ----
+\newtcolorbox{notebox}{enhanced,breakable,colback=brandblue!4,colframe=brandblue,
+  coltitle=white,fonttitle=\bfseries\footnotesize,title=NOTE,
+  boxrule=0.6pt,left=2.5mm,right=2.5mm,top=1.2mm,bottom=1.2mm,arc=2pt,
+  before skip=8pt,after skip=8pt}
+\newtcolorbox{tipbox}{enhanced,breakable,colback=tipgreen!5,colframe=tipgreen,
+  coltitle=white,fonttitle=\bfseries\footnotesize,title=TIP,
+  boxrule=0.6pt,left=2.5mm,right=2.5mm,top=1.2mm,bottom=1.2mm,arc=2pt,
+  before skip=8pt,after skip=8pt}
+\newtcolorbox{importantbox}{enhanced,breakable,colback=warnamber!7,colframe=warnamber,
+  coltitle=white,fonttitle=\bfseries\footnotesize,title=IMPORTANT,
+  boxrule=0.6pt,left=2.5mm,right=2.5mm,top=1.2mm,bottom=1.2mm,arc=2pt,
+  before skip=8pt,after skip=8pt}
+\newtcolorbox{adminbox}{enhanced,breakable,colback=brandnavy!5,colframe=brandnavy,
+  coltitle=white,fonttitle=\bfseries\footnotesize,title=ADMIN \& OVERSIGHT ROLES,
+  boxrule=0.6pt,left=2.5mm,right=2.5mm,top=1.2mm,bottom=1.2mm,arc=2pt,
+  before skip=8pt,after skip=8pt}
+
+% ---- Screenshot helper:  \fig{file}{width-fraction}{caption}{label} ----
+\newcommand{\fig}[4]{%
+  \begin{figure}[H]\centering
+    \setlength{\fboxsep}{0pt}\setlength{\fboxrule}{0.6pt}%
+    {\color{rule}\fbox{\includegraphics[width=#2\linewidth]{#1}}}%
+    \caption{#3}\label{#4}
+  \end{figure}}
+
+% UI control name styling
+\newcommand{\ui}[1]{\textcolor{brandnavy}{\textbf{#1}}}
+\newcommand{\tab}[1]{\textsf{\textbf{#1}}}
+
+\begin{document}
+
+% =====================================================================
+%  TITLE PAGE
+% =====================================================================
+\begin{titlepage}
+\thispagestyle{empty}
+\vspace*{1.2cm}
+\noindent\includegraphics[width=6.2cm]{broadridge-logo.png}
+
+\vspace{2.4cm}
+{\color{rule}\rule{\linewidth}{1.2pt}}\\[6pt]
+{\Huge\bfseries\color{brandnavy} Access Review}\\[10pt]
+{\LARGE\color{brandblue} User Guide}\\[8pt]
+{\large\color{inkmuted} Client Application Access Attestation — BPO Operations}\\[6pt]
+{\color{rule}\rule{\linewidth}{1.2pt}}
+
+\vfill
+\noindent
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\textbf{Audience} & Associates, Managers, and Oversight roles (GFH / GFH~Delegate / IFH / Admin)\\[3pt]
+\textbf{Application URL} & \texttt{http://10.17.69.188/ClientAppAttestation/}\\[3pt]
+\textbf{Document version} & 1.0\\[3pt]
+\textbf{Last updated} & 9 June 2026\\[3pt]
+\textbf{Classification} & Broadridge BPO — Internal Use Only\\
+\end{tabularx}
+
+\vspace{1cm}
+\noindent{\footnotesize\color{inkmuted} Screenshots in this guide are taken from a training environment populated with
+fictitious sample data. Names, associate IDs, clients, and tools shown are illustrative only.}
+\end{titlepage}
+
+% =====================================================================
+%  CONTENTS
+% =====================================================================
+\renewcommand{\contentsname}{Contents}
+\tableofcontents
+\thispagestyle{fancy}
+\clearpage
+
+% =====================================================================
+\section{Introduction}
+% =====================================================================
+\textbf{Access Review} is Broadridge BPO's web application for \emph{tool-access attestation}.
+Periodically (each \emph{review cycle}), every associate is asked to confirm which client
+applications and tools they still have access to, and which of those they actually used during
+the cycle. Managers track their team's progress, reconcile any access disputes, and adjust who can
+use which tool. Oversight roles (GFH, GFH~Delegate, IFH, and Admin) monitor completion across
+departments and export the exceptions that need follow-up.
+
+The result is an auditable record, each cycle, that access granted matches access needed --- a core
+control for client data protection and regulatory compliance.
+
+\subsection{Key concepts at a glance}
+\begin{description}[leftmargin=1.5cm,style=nextline]
+  \item[Cycle] A defined attestation period with a start date, end date, and \emph{due date}
+        (for example, \emph{Q1 2026 Attestation}, due 16 June 2026). The application always opens on
+        the current cycle; you can switch cycles from the cycle picker.
+  \item[Client] An external client whose applications your team supports (e.g.\ \emph{Barclays},
+        \emph{Marex}, \emph{Natixis}). Client IDs are stored as text to preserve leading zeros.
+  \item[Tool] A specific application or service used for a client (e.g.\ \emph{Trade Capture},
+        \emph{Risk Engine}, \emph{Compliance Portal}).
+  \item[Attestation] Your confirmation, per tool, of (a) whether you still have access and
+        (b) whether you used it this cycle.
+  \item[Dispute] A tool you flag as \emph{No access} --- you are telling the business that the system
+        shows access you do not actually have (or no longer need). Disputes are surfaced to your
+        manager and to oversight for reconciliation.
+\end{description}
+
+\subsection{Who does what}
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Role} & \textbf{Primary task in Access Review}\\
+\midrule
+Associate & Attest your own tools each cycle (used / not used / no access) and submit.\\
+Manager & Track direct reports' completion; reconcile disputes; grant, time-box, or revoke access.\\
+GFH (Global Functional Head) & Monitor completion for the department(s) you head; add clients/tools.\\
+GFH Delegate & Same organisation-wide visibility as an administrator (minus user administration).\\
+IFH (In-Country Functional Head) & Monitor completion for your department(s) --- view only.\\
+Admin & Organisation-wide oversight, client/tool setup, and the user directory.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{notebox}
+Roles are \emph{additive}. A person can be an associate \emph{and} a manager \emph{and} an oversight
+role at the same time. The view you land on is your highest role, and you can switch between the
+views you are entitled to (see Section~\ref{sec:navigation}).
+\end{notebox}
+
+% =====================================================================
+\section{Getting started}
+% =====================================================================
+\subsection{Opening the application}
+Open a web browser (Microsoft Edge or Google Chrome are recommended) and go to:
+\begin{center}\large\texttt{http://10.17.69.188/ClientAppAttestation/}\end{center}
+Bookmark this address. The trailing slash matters --- always open the URL exactly as shown.
+
+\subsection{Signing in}
+Access Review uses your \textbf{Windows / company sign-in} automatically. In normal use you will
+\emph{not} see a login form --- the application recognises your Windows account and takes you
+straight to your dashboard.
+
+If your identity cannot be verified (for example, you are not yet registered in the system, or you
+opened the site from an unsupported network), you will see the sign-in card in
+Figure~\ref{fig:login}. Click \ui{Try again}; if it still fails, contact the dashboard administrator
+to confirm your account is set up.
+
+\fig{login-sso.png}{0.62}{The sign-in card. You normally bypass this automatically via Windows
+single sign-on; it only appears when your account could not be verified.}{fig:login}
+
+\begin{importantbox}
+``We could not verify your sign-in'' almost always means your Windows account is not yet mapped to a
+user record in Access Review, or your browser did not pass your Windows credentials. Try the site in
+Edge/Chrome on the corporate network first, then raise it with the administrator.
+\end{importantbox}
+
+\subsection{The top bar and navigation}\label{sec:navigation}
+Every screen shares a top bar (Figure~\ref{fig:cyclepicker}). From left to right it contains:
+\begin{itemize}
+  \item the \textbf{Broadridge / Access Review} brand mark;
+  \item the \ui{Cycle picker} --- shows the current cycle, its due date, and days remaining; click it
+        to switch to a past or future cycle;
+  \item the \textbf{view tabs} (only shown if you have more than the associate role) ---
+        \tab{Associate view}, \tab{Manager view}, \tab{Access}, and, for administrators,
+        \tab{Admin Dashboard} and \tab{Users};
+  \item a \ui{Search} box (filters the current screen);
+  \item a \ui{Theme toggle} (light / dark --- see Section~\ref{sec:theme});
+  \item your \ui{Profile menu} (name, ID, and \emph{Sign out}).
+\end{itemize}
+
+\fig{assoc-cycle-picker.png}{0.95}{The cycle picker open. Each cycle shows its date range and how
+many days remain until the due date; a tick marks the cycle you are currently viewing.}{fig:cyclepicker}
+
+\begin{tipbox}
+Switching cycles changes \emph{everything} on the screen to that cycle's data. If your numbers look
+unexpected, check which cycle is selected in the picker first.
+\end{tipbox}
+
+\subsection{Switching between your views}
+If you hold more than one role, use the view tabs in the top bar (or, on the oversight dashboard, the
+\ui{Associate View} / \ui{Team View} links in the left sidebar) to move between:
+the \textbf{Associate view} (your own attestations), the \textbf{Manager view} (your team), the
+\textbf{Access} screen (granting/revoking), the \textbf{Admin Dashboard} (oversight), and the
+\textbf{Users} directory (administrators only).
+
+% =====================================================================
+\section{Associate view --- attesting your own access}
+% =====================================================================
+This is the part of Access Review that every user completes each cycle.
+
+\subsection{Your dashboard}
+On opening, the associate dashboard (Figure~\ref{fig:assocdash}) greets you and summarises the cycle:
+\begin{itemize}
+  \item \textbf{Headline} --- how many tools you still have left to attest before the due date.
+  \item \textbf{KPI tiles} --- \ui{Attested}, \ui{Remaining}, \ui{Clients}, and \ui{Days left}.
+  \item \textbf{Cycle progress} card --- your overall completion (e.g.\ ``4 / 5, 80\%'') with the
+        \ui{Submit attestation} button.
+  \item \textbf{Client cards} --- one expandable card per client you have access to, each showing the
+        tool count and how many are still pending.
+\end{itemize}
+
+\fig{assoc-dashboard.png}{0.98}{The associate dashboard. The amber row is a tool still awaiting an
+answer; the last client shows one tool marked \emph{Not used} and one flagged as a \emph{No access}
+dispute (with a remark).}{fig:assocdash}
+
+\subsection{Reading the attestation table}
+Click a client card to expand it. Each tool is one row with four columns
+(Figure~\ref{fig:attesttable}):
+\begin{description}[leftmargin=2.7cm,style=nextline]
+  \item[Tool] The application name.
+  \item[Confirm Access] \ui{True} = ``yes, I do have access to this tool''. \ui{False} = ``no, I do
+        not have (or no longer need) this access'' --- this raises a \emph{dispute}.
+  \item[Did you use?] \ui{Used} or \ui{Not used} this cycle. This is disabled if you set
+        \emph{Confirm Access} to \emph{False} (you cannot have ``used'' a tool you say you cannot
+        access).
+  \item[Remark] An optional free-text note --- \emph{required} when you flag \emph{No access}.
+\end{description}
+
+\fig{assoc-attest-table.png}{0.85}{A single client's tool table. ``Risk Engine'' is confirmed but
+\emph{Not used}; ``Reporting Suite'' is a \emph{No access} dispute carrying a remark.}{fig:attesttable}
+
+\subsection{Attesting a tool --- step by step}
+\begin{enumerate}[leftmargin=*]
+  \item Expand the client card.
+  \item For each tool, set \ui{Confirm Access}:
+        \begin{itemize}
+          \item \textbf{Keep it \ui{True}} if you still have (and need) this access.
+          \item \textbf{Set it to \ui{False}} if you should \emph{not} have this access. The
+                \emph{Did you use?} toggle then greys out, and you must add a remark explaining why
+                (see Section~\ref{sec:dispute}).
+        \end{itemize}
+  \item For tools you confirmed access to, set \ui{Did you use?} to \ui{Used} or \ui{Not used}.
+  \item (Optional) Add a \ui{Remark} on any tool to give your manager or auditor context.
+\end{enumerate}
+Your changes save automatically as you click --- there is no separate ``save'' step. Rows you have not
+yet answered are highlighted amber and counted in \ui{Remaining}.
+
+\subsection{Reporting a tool you should not have (a dispute)}\label{sec:dispute}
+When you set \ui{Confirm Access} to \ui{False}, click the \ui{Remark} button on that row and explain
+the situation --- for example, ``I no longer use this tool, please remove my access.''
+(Figure~\ref{fig:remark}). Remarks are limited to 500 characters and are visible to your manager and
+to audit.
+
+\fig{assoc-remark-modal.png}{0.7}{The remark editor. Leave the box empty and save to clear an existing
+remark. A remark is mandatory for every tool you flag as \emph{No access}.}{fig:remark}
+
+\begin{importantbox}
+You cannot submit until \textbf{every} tool you marked \emph{No access} has a remark. The application
+tells you how many remarks are still missing.
+\end{importantbox}
+
+\subsection{Submitting your attestation}
+When every tool has an answer (and every dispute has a remark), click \ui{Submit attestation} in the
+Cycle progress card. After submission:
+\begin{itemize}
+  \item the attestation is \textbf{locked} --- a green banner appears on each client and the toggles
+        become read-only (Figure~\ref{fig:submitted});
+  \item the \ui{Submit} button changes to \ui{Submitted};
+  \item your manager sees your status flip to \emph{Submitted}.
+\end{itemize}
+
+\fig{assoc-submitted.png}{0.98}{A submitted, locked attestation. Everything is read-only and the
+``submitted and locked'' banner is shown. Only a manager can reopen it.}{fig:submitted}
+
+\begin{notebox}
+Made a mistake after submitting? Ask your manager to \ui{Reopen} your attestation
+(Section~\ref{sec:reopen}); you can then edit and re-submit.
+\end{notebox}
+
+\subsection{Dark mode}\label{sec:theme}
+Use the sun/moon toggle in the top bar to switch between light and dark themes
+(Figure~\ref{fig:dark}). The choice is purely visual and applies to every screen.
+
+\fig{dark-mode.png}{0.98}{The associate dashboard in dark mode.}{fig:dark}
+
+% =====================================================================
+\section{Manager view --- tracking your team}
+% =====================================================================
+Managers see the \tab{Manager view} by default. It answers one question: \emph{is my team done, and
+what needs my attention?}
+
+\subsection{Team overview}
+The manager overview (Figure~\ref{fig:mgr}) shows:
+\begin{itemize}
+  \item a red \textbf{disputes banner} when one or more reports have flagged access disputes this
+        cycle, with an \ui{Export disputes} button;
+  \item \textbf{summary tiles} --- \ui{Direct reports}, \ui{Submitted}, \ui{In progress},
+        \ui{Not started};
+  \item the \textbf{Team completion} table --- every direct report with a progress bar, a tools count,
+        and a status badge. Filter with \tab{Everyone} / \tab{Not started} / \tab{In progress} /
+        \tab{Submitted}, or search by name or ID.
+\end{itemize}
+
+\fig{mgr-overview.png}{0.98}{The manager overview, with the access-disputes banner, status summary,
+and the filterable team table.}{fig:mgr}
+
+\subsection{Inspecting a team member}
+Click any team member to open the \textbf{Selected member} panel (Figure~\ref{fig:mgrdetail}). It
+shows their completion percentage and status, a \textbf{per-client progress} breakdown, and ---
+if they reported any --- an \textbf{Access disputes} list with the tool, client, and the associate's
+remark.
+
+\fig{mgr-member-detail.png}{0.98}{Member detail. The selected associate is fully complete, but has one
+access dispute (``Compliance Portal --- Barclays'') that the manager should reconcile.}{fig:mgrdetail}
+
+\subsection{Reopening a submitted attestation}\label{sec:reopen}
+If a report needs to correct an attestation they already submitted, select them and click
+\ui{Reopen attestation} (visible only when their status is \emph{Submitted}). Confirm the prompt; the
+attestation unlocks and the associate can edit and re-submit.
+
+\subsection{Exporting disputes}
+Click \ui{Export disputes} (in the banner) to download a spreadsheet of every disputed tool across
+your team --- associate, tool, client, the remark, and contact details --- for reconciliation and
+access removal.
+
+% =====================================================================
+\section{Access management --- granting and revoking}
+% =====================================================================
+The \tab{Access} screen (Figure~\ref{fig:access}) lets managers control \emph{which tools each direct
+report can use}. Pick a team member from the left list; their access appears on the right.
+
+\fig{access-overview.png}{0.98}{Access management for a selected report: the \emph{Grant new access}
+form on top, and the current \emph{Tool access} table below (note the full-access rows, an
+\emph{Open access} row, and a row with an end date).}{fig:access}
+
+\subsection{Granting new access}
+In \ui{Grant new access}:
+\begin{enumerate}[leftmargin=*]
+  \item Choose a \ui{Client}, then a \ui{Tool}. (You can only grant tools that belong to \emph{your}
+        department.)
+  \item Set \ui{Access from} (defaults to today) and, optionally, \ui{Access to} for time-boxed
+        access. Leave \emph{Access to} blank for open-ended access.
+  \item Choose the \ui{Access type} (Figure~\ref{fig:grantform}):
+        \begin{itemize}
+          \item \ui{Full access} --- access is active immediately.
+          \item \ui{Open access} --- a placeholder for access whose paperwork is still in process.
+                It is marked \emph{pending} until you later grant it fully.
+        \end{itemize}
+  \item Click \ui{Grant access}.
+\end{enumerate}
+
+\fig{access-grant-form.png}{0.8}{The grant form with \emph{Open access} selected --- used when the
+access request is still being processed.}{fig:grantform}
+
+\subsection{Managing existing access}
+In the \ui{Tool access} table, each row offers:
+\begin{itemize}
+  \item \textbf{End date} --- edit the \ui{To} date to time-box a full-access row; click \ui{Clear}
+        to make it open-ended again.
+  \item \ui{Revoke now} --- ends access today (the row is closed out with today's date).
+  \item \ui{Grant full access} --- shown on \emph{Open access} rows; promotes a pending placeholder to
+        active, open-ended access.
+\end{itemize}
+
+\begin{importantbox}
+Access scoping is enforced by department: a manager can only grant or change tools that belong to
+their own department. If a tool you expect is missing from the \emph{Tool} list, it belongs to another
+department --- ask that department's GFH or an administrator to add it.
+\end{importantbox}
+
+% =====================================================================
+\section{Oversight dashboards --- Admin, GFH, GFH Delegate, IFH}
+% =====================================================================
+Oversight roles open on the \textbf{dashboard} (Figure~\ref{fig:admin}). All four roles share the same
+layout; they differ in \emph{how much} they can see and \emph{what} they can do.
+
+\fig{admin-dashboard.png}{0.98}{The Admin Dashboard: an organisation-wide KPI band, then one card per
+department with a completion donut and a per-client breakdown.}{fig:admin}
+
+\subsection{Dashboard anatomy}
+\begin{itemize}
+  \item \textbf{KPI band} --- associates, associate-tool combinations, submitted, pending, and the
+        number of \emph{at-risk} departments in scope.
+  \item \textbf{Department cards} --- each shows the responsible GFH, a completion donut, a status
+        badge, the submitted/total count, and a per-client completion breakdown. The card colour and
+        status follow the completion thresholds in Section~\ref{sec:statusref}.
+  \item \textbf{Search} --- filter the visible departments.
+  \item \textbf{Cycle picker, notifications, theme, profile} --- as on every screen. The
+        notifications bell (Figure~\ref{fig:notif}) flags departments that are behind as the due date
+        approaches.
+\end{itemize}
+
+\subsection{How the four oversight roles differ}\label{sec:rolediff}
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{@{}lcccc@{}}
+\toprule
+ & \textbf{Admin} & \textbf{GFH Delegate} & \textbf{GFH} & \textbf{IFH}\\
+\midrule
+Departments visible        & All & All & Own department(s) & Own department(s)\\
+Title shown                & ``Admin Dashboard'' & ``Admin Dashboard'' & ``\emph{Name} --- GFH View'' & ``\emph{Name} --- IFH View''\\
+Add Client / Add Tool      & Yes & Yes & Yes & ---\\
+User directory (Users tab)  & Yes & --- & --- & ---\\
+Drill-down \& exports       & Yes & Yes & Yes & Yes\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{adminbox}
+\textbf{In plain terms:} \emph{Admin} can do everything, including managing user records.
+\emph{GFH Delegate} sees the whole organisation and can add clients/tools, but cannot administer
+users. A \emph{GFH} (Global Functional Head) manages the department(s) they head and can add
+clients/tools there. An \emph{IFH} (In-Country Functional Head) monitors their department(s) but
+cannot add clients or tools --- it is a view-only oversight role.
+\end{adminbox}
+
+\subsubsection{GFH view (scoped, with setup rights)}
+A GFH sees only the department(s) they head and the title reads ``\emph{Name} --- GFH View''
+(Figure~\ref{fig:gfh}). The \ui{Add Client} and \ui{Add Tool} buttons are available.
+
+\fig{gfh-dashboard.png}{0.98}{A GFH dashboard scoped to a single department (``International''),
+retaining the Add Client / Add Tool buttons.}{fig:gfh}
+
+\subsubsection{GFH Delegate view (organisation-wide)}
+A GFH Delegate has the same organisation-wide reach as an administrator and keeps the
+\ui{Add Client}/\ui{Add Tool} buttons, but has \emph{no} access to the user directory. The dashboard
+is titled ``Admin Dashboard''; the role badge in the sidebar reads ``GFHDelegate''
+(Figure~\ref{fig:delegate}).
+
+\fig{gfhdelegate-dashboard.png}{0.98}{A GFH Delegate sees every department, like an administrator. The
+sidebar role badge (lower left) distinguishes the delegate from a full administrator.}{fig:delegate}
+
+\subsubsection{IFH view (scoped, view-only)}
+An IFH sees only their department(s), titled ``\emph{Name} --- IFH View'', and has \emph{no}
+\ui{Add Client}/\ui{Add Tool} buttons (Figure~\ref{fig:ifh}).
+
+\fig{ifh-dashboard.png}{0.98}{An IFH dashboard --- scoped like a GFH, but without client/tool setup
+buttons.}{fig:ifh}
+
+\subsection{Drilling into a department}
+Click a department card to drill in (Figure~\ref{fig:drill}). You get:
+\begin{itemize}
+  \item a breadcrumb (\ui{All Departments}) to go back, and a \ui{Filter by client} row;
+  \item a department header with the \emph{completion breakdown} bar and donut;
+  \item an \textbf{Exception Exports} card --- download \ui{Incomplete submissions} (associates who
+        have not finished) and \ui{Access disputes} (tools reported as \emph{No access});
+  \item a \textbf{Managers} grid --- each manager's completion. Click a manager to drill further into
+        their associates.
+\end{itemize}
+
+\fig{admin-drilldown.png}{0.98}{Department drill-down: completion breakdown, the Exception Exports card,
+and the managers grid.}{fig:drill}
+
+\subsection{Notifications}
+The bell in the top bar opens the notifications panel (Figure~\ref{fig:notif}), which highlights
+departments falling behind as the due date nears, plus a cycle reminder. Use \ui{Mark all read} to
+clear the badge.
+
+\fig{admin-notifications.png}{0.6}{The notifications panel.}{fig:notif}
+
+\subsection{Adding clients and tools (Admin / GFH / GFH Delegate)}
+\textbf{Add a client.} Click \ui{Add Client}, enter a \ui{Client ID} (text --- leading zeros are
+preserved, e.g.\ ``0039'') and a \ui{Client Name}, then \ui{Add Client}
+(Figure~\ref{fig:addclient}).
+
+\fig{admin-add-client.png}{0.55}{The Add Client dialog.}{fig:addclient}
+
+\textbf{Add a tool.} Click \ui{Add Tool}, choose the \ui{Client} and the \ui{Department} the tool
+belongs to, type the \ui{Tool Name}, then \ui{Add Tool} (Figure~\ref{fig:addtool}). The tool then
+becomes available for managers in that department to assign.
+
+\fig{admin-add-tool.png}{0.55}{The Add Tool dialog. The department determines which managers can later
+grant the tool.}{fig:addtool}
+
+% =====================================================================
+\section{User directory (Administrators)}
+% =====================================================================
+Administrators can open the \tab{Users} tab for a read-only directory of everyone in the system
+(Figure~\ref{fig:users}): associate ID, full name, user name, department, and manager. Use the search
+box to filter by name, ID, user name, department, or manager.
+
+\fig{users-directory.png}{0.98}{The user directory. The edit (pencil) action in the last column is
+available to administrators only.}{fig:users}
+
+\subsection{Editing a user}
+Click the pencil icon on a row to open \ui{Edit User} (Figure~\ref{fig:useredit}). You can update the
+first/last name, user name, department, manager, and e-mail address, then \ui{Save}.
+
+\fig{users-edit-modal.png}{0.62}{The Edit User dialog.}{fig:useredit}
+
+\begin{importantbox}
+Changing a user's \ui{Manager} immediately moves them into that manager's team for tracking and access
+management. Changing the \ui{Department} affects which tools can be granted to them.
+\end{importantbox}
+
+% =====================================================================
+\section{Reference}
+% =====================================================================
+\subsection{Completion status thresholds}\label{sec:statusref}
+Department and manager completion is colour-coded by percentage:
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\toprule
+\textbf{Status} & \textbf{Completion}\\
+\midrule
+At Risk        & below 50\%\\
+Below Target   & 50\% -- 74\%\\
+On Track       & 75\% -- 89\%\\
+Completed      & 90\% and above\\
+\bottomrule
+\end{tabularx}
+\end{table}
+Associate / team-member status is reported as \textbf{Not started} (nothing answered),
+\textbf{In progress} (some answered), or \textbf{Submitted} (all answered / locked).
+
+\subsection{Role \& permission matrix}
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{@{}Xccccc@{}}
+\toprule
+\textbf{Capability} & \textbf{Assoc.} & \textbf{Mgr} & \textbf{IFH} & \textbf{GFH} & \textbf{Admin/Del.}\\
+\midrule
+Attest own tools                & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark\\
+Track a team                    & --- & \checkmark & --- & --- & ---\\
+Grant / revoke access           & --- & \checkmark & --- & --- & ---\\
+Reopen a submission             & --- & \checkmark & --- & --- & ---\\
+Department oversight dashboard  & --- & --- & \checkmark & \checkmark & \checkmark\\
+Add clients / tools             & --- & --- & --- & \checkmark & \checkmark\\
+Org-wide visibility             & --- & --- & --- & --- & \checkmark\\
+Edit the user directory         & --- & --- & --- & --- & Admin only\\
+\bottomrule
+\end{tabularx}
+\end{table}
+\emph{Mgr} capabilities also apply to any oversight user who happens to manage a team. ``Admin/Del.''
+= Admin and GFH Delegate; only a full Admin can edit the user directory, and only a full Admin sees
+the whole organisation \emph{and} the user directory.
+
+\subsection{Glossary}
+\begin{description}[leftmargin=2.8cm,style=nextline]
+  \item[Attestation] A user's per-tool confirmation of access and usage for a cycle.
+  \item[Cycle] A dated attestation period with a due date.
+  \item[Client] An external client supported by the BPO operation.
+  \item[Tool] An application/service used for a client.
+  \item[Dispute / No access] A tool the user states they should not have; requires a remark.
+  \item[Full access] Active access to a tool.
+  \item[Open access] A pending access placeholder (paperwork in process), not yet active.
+  \item[GFH] Global Functional Head --- owns oversight (and setup) for a department.
+  \item[GFH Delegate] An organisation-wide delegate of the GFH function, without user administration.
+  \item[IFH] In-Country Functional Head --- view-only department oversight.
+  \item[Admin] Full administrator: org-wide oversight, setup, and user administration.
+\end{description}
+
+\subsection{Troubleshooting \& FAQ}
+\begin{description}[leftmargin=0.4cm,style=nextline]
+  \item[\textmd{\textbf{``We could not verify your sign-in.''}}]
+        Your Windows account is not yet linked to an Access Review user, or your browser did not pass
+        your corporate credentials. Use Edge/Chrome on the corporate network and click \ui{Try again};
+        if it persists, contact the administrator.
+  \item[\textmd{\textbf{The page loads but shows no data / 404s.}}]
+        Make sure you opened the exact URL \texttt{http://10.17.69.188/ClientAppAttestation/}
+        (including the trailing slash).
+  \item[\textmd{\textbf{I can't click \emph{Submit}.}}]
+        Every tool must have an answer, and every \emph{No access} tool must have a remark. The app
+        shows how many items still need attention.
+  \item[\textmd{\textbf{My attestation is locked.}}]
+        You have already submitted. Ask your manager to \ui{Reopen} it, then edit and re-submit.
+  \item[\textmd{\textbf{A tool I need to grant isn't in the list.}}]
+        Tools are scoped to a department. Ask that department's GFH or an administrator to add it.
+  \item[\textmd{\textbf{My numbers look wrong.}}]
+        Check the cycle picker --- you may be viewing a different cycle.
+\end{description}
+
+\vspace{1.2cm}
+\begin{center}\color{inkmuted}\footnotesize
+--- End of guide --- \\
+For access or account issues, contact your Access Review administrator.
+\end{center}
+
+\end{document}

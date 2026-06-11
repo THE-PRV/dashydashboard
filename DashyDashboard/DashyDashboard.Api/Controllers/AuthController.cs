@@ -1,3 +1,4 @@
+using DashyDashboard.Api.Common;
 using DashyDashboard.Api.Data;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Models.DTOs;
@@ -69,17 +70,21 @@ public class AuthController : ControllerBase
 
         var isManager = await _db.Users.AnyAsync(u => u.ManagerId == user.AssociateId);
 
-        var su = await _db.SuperUsers.AsNoTracking()
+        var allSu = await _db.SuperUsers.AsNoTracking()
             .Include(s => s.Department)
             .Where(s => s.AssociateId == user.AssociateId && s.IsActive)
             .OrderBy(s => s.RoleName == "Admin" ? 0 : s.RoleName == "GFH" ? 1 : s.RoleName == "IFH" ? 2 : 3)
             .ThenBy(s => s.AccessLevel == "Full" ? 0 : 1)
             .ThenBy(s => s.Department!.DepartmentName)
-            .FirstOrDefaultAsync();
+            .ToListAsync();
 
-        var superRole = su?.RoleName;
-        var superDept = su?.RoleName == "Admin" ? null : su?.Department?.DepartmentName;
+        var su = allSu.FirstOrDefault();
+        var superRole = SuperUserRoles.Canonical(su?.RoleName);
+        var superDept = SuperUserRoles.Is(su?.RoleName, SuperUserRoles.Admin) ? null : su?.Department?.DepartmentName;
+        var superDepts = SuperUserRoles.IsAny(su?.RoleName, SuperUserRoles.Admin, SuperUserRoles.GFHDelegate)
+            ? new List<string>()
+            : allSu.Select(s => s.Department?.DepartmentName).Where(d => d != null).Select(d => d!).Distinct().ToList();
 
-        return Ok(new LoginResponse(user.AssociateId, user.FirstName, user.LastName, isManager, superRole, superDept));
+        return Ok(new LoginResponse(user.AssociateId, user.FirstName, user.LastName, isManager, superRole, superDept, superDepts));
     }
 }

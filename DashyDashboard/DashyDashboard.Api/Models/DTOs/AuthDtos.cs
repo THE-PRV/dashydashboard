@@ -13,5 +13,6 @@ public record LoginResponse(
     string LastName,
     bool IsManager,
     string? SuperUserRole,
-    string? SuperUserDepartment
+    string? SuperUserDepartment,
+    List<string> SuperUserDepartments
 );

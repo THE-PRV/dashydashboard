@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import AdminDonut, { statusOf } from '../components/AdminDonut.jsx';
-import { getAdminDepartments, getDeptManagers } from '../api/admin.js';
+import { getAdminDepartments, getDeptManagers, exportNonSubmitted, exportDisputes, addTool, addClient, getManagerTeam, getManagerMemberDetail } from '../api/admin.js';
 import { getClientsAndTools } from '../api/manager.js';
-import { addTool } from '../api/admin.js';
+import { reopenAttestation } from '../api/attestations.js';
+import brandLogo from '../assets/broadridge-logo.svg';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AdminView — port of admin-dashboard-mockup.html to a live React component.
@@ -97,6 +98,7 @@ export default function AdminView({
   onDark,
   superUserRole,
   superUserDept,
+  superUserDepts = [],
   onRole,
   isManager,
 }) {
@@ -122,6 +124,11 @@ export default function AdminView({
   const [addToolName, setAddToolName] = useState('');
   const [addToolError, setAddToolError] = useState(null);
   const [addToolSaving, setAddToolSaving] = useState(false);
+  const [showAddClient, setShowAddClient] = useState(false);
+  const [addClientId, setAddClientId] = useState('');
+  const [addClientName, setAddClientName] = useState('');
+  const [addClientError, setAddClientError] = useState(null);
+  const [addClientSaving, setAddClientSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [gfhPopover, setGfhPopover] = useState(null);
 
@@ -205,11 +212,41 @@ export default function AdminView({
     }
   }
 
+  // ── Add Client helpers ──────────────────────────────────────────────────────
+  function openAddClient() {
+    setAddClientId('');
+    setAddClientName('');
+    setAddClientError(null);
+    setAddClientSaving(false);
+    setShowAddClient(true);
+  }
+
+  async function submitAddClient() {
+    if (!addClientId.trim() || !addClientName.trim()) return;
+    setAddClientSaving(true);
+    setAddClientError(null);
+    try {
+      const result = await addClient(addClientId.trim(), addClientName.trim());
+      setShowAddClient(false);
+      setAddClientId('');
+      setAddClientName('');
+      setToast(`Client "${result.clientName}" (${result.clientId}) added`);
+      const newEntry = { clientID: result.clientId, clientName: result.clientName };
+      setClients((prev) =>
+        prev.some((c) => c.clientID === newEntry.clientID) ? prev : [...prev, newEntry]
+      );
+    } catch (e) {
+      setAddClientError(e.message || 'Failed to add client. Please try again.');
+    } finally {
+      setAddClientSaving(false);
+    }
+  }
+
   // ── Scope filtering ─────────────────────────────────────────────────────────
-  const isAdmin = superUserRole === 'Admin';
+  const isAdmin = superUserRole === 'Admin' || superUserRole === 'GFHDelegate';
   const scopedDepts = isAdmin
     ? depts
-    : depts.filter((d) => d.departmentName === superUserDept);
+    : depts.filter((d) => superUserDepts.includes(d.departmentName));
 
   // ── Search + zero-tool filtering ─────────────────────────────────────────
   const q = search.trim().toLowerCase();
@@ -218,6 +255,7 @@ export default function AdminView({
     .filter((d) => !q || (d.departmentName ?? '').toLowerCase().includes(q) || (d.gfhName ?? '').toLowerCase().includes(q));
 
   // ── KPI band aggregates (computed over the scoped set) ──────────────────────
+  const totalUsers = scopedDepts.reduce((s, d) => s + (d.totalUsers ?? d.totalAssociates), 0);
   const totalAssociates = scopedDepts.reduce((s, d) => s + d.totalAssociates, 0);
   const submitted = scopedDepts.reduce((s, d) => s + d.submittedCount, 0);
   const pending = totalAssociates - submitted;
@@ -269,7 +307,7 @@ export default function AdminView({
             zIndex: 30,
           }}
         >
-          <h1 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: 'var(--text)', letterSpacing: '-0.01em' }}>
+          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--text)', letterSpacing: '-0.01em' }}>
             {pageTitle}
           </h1>
 
@@ -302,29 +340,54 @@ export default function AdminView({
 
           {/* Add Tool (GFH, GFH-Delegate, and Admin) */}
           {(superUserRole === 'GFH' || superUserRole === 'GFHDelegate' || superUserRole === 'Admin') && (
-            <button
-              onClick={() => openAddTool()}
-              style={{
-                background: 'var(--accent)',
-                color: 'var(--accent-fg)',
-                border: 'none',
-                borderRadius: 8,
-                padding: '8px 14px',
-                fontSize: 13,
-                fontWeight: 600,
-                fontFamily: 'var(--font-sans)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                cursor: 'pointer',
-              }}
-            >
-              <Svg size={15} stroke={2.4}>
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </Svg>
-              Add Tool
-            </button>
+            <>
+              <button
+                onClick={() => openAddClient()}
+                style={{
+                  background: 'var(--accent)',
+                  color: 'var(--accent-fg)',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '8px 14px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  fontFamily: 'var(--font-sans)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer',
+                }}
+              >
+                <Svg size={15} stroke={2.4}>
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </Svg>
+                Add Client
+              </button>
+              <button
+                onClick={() => openAddTool()}
+                style={{
+                  background: 'var(--accent)',
+                  color: 'var(--accent-fg)',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '8px 14px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  fontFamily: 'var(--font-sans)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer',
+                }}
+              >
+                <Svg size={15} stroke={2.4}>
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </Svg>
+                Add Tool
+              </button>
+            </>
           )}
 
           {/* Cycle picker */}
@@ -411,13 +474,15 @@ export default function AdminView({
               dept={drillDept}
               cycle={cycle}
               dark={dark}
+              superUserRole={superUserRole}
               onBack={() => setDrillDept(null)}
             />
           ) : (
             <>
               {/* KPI band */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
-                <KpiCard eyebrow="Total Associates" value={totalAssociates} unit={`${scopedDepts.length} depts`} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 24 }}>
+                <KpiCard eyebrow="Associates" value={totalUsers} unit={`${scopedDepts.length} depts`} />
+                <KpiCard eyebrow="Associate-Tools" value={totalAssociates} accent="var(--accent-2)" />
                 <KpiCard eyebrow="Submitted" value={submitted} unit={`${completionPct}%`} accent="var(--st-completed)" />
                 <KpiCard eyebrow="Pending" value={pending} unit="open" />
                 <KpiCard eyebrow="At Risk Depts" value={atRiskCount} unit={`of ${scopedDepts.length}`} accent="var(--st-risk)" />
@@ -502,7 +567,7 @@ export default function AdminView({
                 {clients.length === 0 && <option value="">Loading clients…</option>}
                 {clients.map((c) => (
                   <option key={c.clientID} value={c.clientID}>
-                    {c.clientID} — {c.clientName}
+                    {c.clientName} ({c.clientID})
                   </option>
                 ))}
               </select>
@@ -601,6 +666,120 @@ export default function AdminView({
         </div>
       )}
 
+      {/* ════════════ ADD CLIENT MODAL ════════════ */}
+      {showAddClient && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,.52)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={() => !addClientSaving && setShowAddClient(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--surface)', borderRadius: 14, padding: '28px 28px 24px',
+              width: 380, border: '1px solid var(--border)', boxShadow: 'var(--shadow-lift-h)',
+            }}
+          >
+            <h2 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
+              Add Client
+            </h2>
+            <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-muted)' }}>
+              The client will be available for tool assignment and attestation cycles.
+            </p>
+
+            {/* Client ID input */}
+            <label style={{ display: 'block', marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
+                Client ID
+              </div>
+              <input
+                type="text"
+                value={addClientId}
+                onChange={(e) => setAddClientId(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submitAddClient()}
+                placeholder="e.g. DTC-US or 0039"
+                disabled={addClientSaving}
+                maxLength={50}
+                style={{
+                  width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
+                  borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
+                  fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </label>
+
+            {/* Client Name input */}
+            <label style={{ display: 'block', marginBottom: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
+                Client Name
+              </div>
+              <input
+                type="text"
+                value={addClientName}
+                onChange={(e) => setAddClientName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submitAddClient()}
+                placeholder="e.g. DTC United States"
+                disabled={addClientSaving}
+                maxLength={200}
+                style={{
+                  width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
+                  borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
+                  fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </label>
+
+            {/* Inline error */}
+            {addClientError && (
+              <div style={{
+                marginBottom: 14, padding: '10px 12px', borderRadius: 8,
+                background: 'var(--st-risk-bg)', color: 'var(--st-risk)',
+                fontSize: 12.5, fontWeight: 500,
+                border: '1px solid color-mix(in oklab, var(--st-risk) 28%, transparent)',
+              }}>
+                {addClientError}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                onClick={() => setShowAddClient(false)}
+                disabled={addClientSaving}
+                style={{
+                  background: 'transparent', color: 'var(--text-muted)',
+                  border: '1px solid var(--border)', borderRadius: 8,
+                  padding: '9px 16px', fontSize: 13, fontWeight: 500,
+                  fontFamily: 'var(--font-sans)', cursor: addClientSaving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitAddClient}
+                disabled={addClientSaving || !addClientId.trim() || !addClientName.trim()}
+                style={{
+                  background: !addClientSaving && addClientId.trim() && addClientName.trim() ? 'var(--accent)' : 'var(--surface-2)',
+                  color: !addClientSaving && addClientId.trim() && addClientName.trim() ? 'var(--accent-fg)' : 'var(--text-muted)',
+                  border: '1px solid transparent', borderRadius: 8,
+                  padding: '9px 16px', fontSize: 13, fontWeight: 600,
+                  fontFamily: 'var(--font-sans)',
+                  cursor: addClientSaving || !addClientId.trim() || !addClientName.trim() ? 'not-allowed' : 'pointer',
+                  transition: 'background .15s ease, color .15s ease',
+                }}
+              >
+                {addClientSaving ? 'Adding…' : 'Add Client'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast notification */}
       {toast && (
         <div
@@ -666,8 +845,8 @@ function Sidebar({ activeNav, onNav, onLogout, onRole, isManager, user, superUse
       style={{
         width: 240,
         flexShrink: 0,
-        background: 'var(--surface)',
-        borderRight: '1px solid var(--border)',
+        background: 'var(--side-bg)',
+        borderRight: '1px solid var(--side-edge)',
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
@@ -675,34 +854,16 @@ function Sidebar({ activeNav, onNav, onLogout, onRole, isManager, user, superUse
       }}
     >
       {/* Logo row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '20px 18px', borderBottom: '1px solid var(--border-subtle)' }}>
-        <div
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: 12,
-            background: 'linear-gradient(135deg, #10b981, #059669)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 700,
-            fontSize: 22,
-            color: '#ffffff',
-            boxShadow: '0 0 0 1px rgba(16,185,129,0.3), 0 2px 8px rgba(16,185,129,0.2)',
-            flexShrink: 0,
-          }}
-        >
-          B
-        </div>
-        <div>
-          <div style={{ fontWeight: 600, fontSize: 14, letterSpacing: '-0.01em', color: 'var(--text)' }}>Access Review</div>
-          <div style={{ fontSize: 11, color: 'var(--text-faint)', letterSpacing: '0.02em' }}>Broadridge BPO T+1</div>
+      <div style={{ padding: '22px 18px 18px', borderBottom: '1px solid var(--side-border)' }}>
+        <img src={brandLogo} alt="Broadridge" style={{ height: 26, display: 'block', filter: 'brightness(0) invert(1)' }} />
+        <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--side-faint)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>
+          Access Review · BPO
         </div>
       </div>
 
       {/* Nav */}
       <nav style={{ padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '4px 10px 6px' }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--side-faint)', padding: '4px 10px 6px' }}>
           Workspace
         </div>
         {navItems.map((item) => {
@@ -717,15 +878,15 @@ function Sidebar({ activeNav, onNav, onLogout, onRole, isManager, user, superUse
                 gap: 11,
                 padding: '10px 14px',
                 borderRadius: 8,
-                color: active ? 'var(--accent)' : 'var(--text-muted)',
+                color: active ? 'var(--side-active-text)' : 'var(--side-text-muted)',
                 fontSize: 13,
                 fontWeight: active ? 600 : 500,
                 cursor: 'pointer',
                 userSelect: 'none',
-                background: active ? 'color-mix(in oklab, var(--accent) 12%, transparent)' : 'transparent',
+                background: active ? 'var(--side-active-bg)' : 'transparent',
               }}
             >
-              <Svg size={17} style={{ color: active ? 'var(--accent)' : 'var(--text-faint)' }}>
+              <Svg size={17} style={{ color: active ? 'var(--side-active-text)' : 'var(--side-faint)' }}>
                 {item.icon}
               </Svg>
               {item.label}
@@ -737,19 +898,40 @@ function Sidebar({ activeNav, onNav, onLogout, onRole, isManager, user, superUse
       {/* Spacer */}
       <div style={{ flex: 1 }} />
 
+      {/* Associate View escape hatch — available to every user (own attestations) */}
+      {onRole && (
+        <div style={{ padding: '0 12px 8px', borderTop: '1px solid var(--side-border)', paddingTop: 8, marginTop: 4 }}>
+          <div
+            onClick={() => onRole('agent')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 11,
+              padding: '10px 14px', borderRadius: 8,
+              color: 'var(--side-text-muted)', fontSize: 13, fontWeight: 500,
+              cursor: 'pointer', userSelect: 'none',
+            }}
+          >
+            <Svg size={17} style={{ color: 'var(--side-faint)' }}>
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </Svg>
+            Associate View
+          </div>
+        </div>
+      )}
+
       {/* Team View escape hatch — only for users who are also managers */}
       {isManager && onRole && (
-        <div style={{ padding: '0 12px 8px', borderTop: '1px solid var(--border-subtle)', paddingTop: 8, marginTop: 4 }}>
+        <div style={{ padding: '0 12px 8px', borderTop: '1px solid var(--side-border)', paddingTop: 8, marginTop: 4 }}>
           <div
             onClick={() => onRole('manager')}
             style={{
               display: 'flex', alignItems: 'center', gap: 11,
               padding: '10px 14px', borderRadius: 8,
-              color: 'var(--text-muted)', fontSize: 13, fontWeight: 500,
+              color: 'var(--side-text-muted)', fontSize: 13, fontWeight: 500,
               cursor: 'pointer', userSelect: 'none',
             }}
           >
-            <Svg size={17} style={{ color: 'var(--text-faint)' }}>
+            <Svg size={17} style={{ color: 'var(--side-faint)' }}>
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
               <circle cx="9" cy="7" r="4" />
               <path d="M23 21v-2a4 4 0 0 1-3-3.87" />
@@ -770,14 +952,14 @@ function Sidebar({ activeNav, onNav, onLogout, onRole, isManager, user, superUse
             gap: 11,
             padding: '10px 14px',
             borderRadius: 8,
-            color: 'var(--text-muted)',
+            color: 'var(--side-text-muted)',
             fontSize: 13,
             fontWeight: 500,
             cursor: 'pointer',
             userSelect: 'none',
           }}
         >
-          <Svg size={17} style={{ color: 'var(--text-faint)' }}>
+          <Svg size={17} style={{ color: 'var(--side-faint)' }}>
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
@@ -787,14 +969,14 @@ function Sidebar({ activeNav, onNav, onLogout, onRole, isManager, user, superUse
       </div>
 
       {/* Role badge (replaces the demo switcher from the mockup) */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--side-border)' }}>
+        <div style={{ fontSize: 10, color: 'var(--side-faint)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>
           Logged in as
         </div>
-        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--side-text)' }}>
           {user?.firstName} {user?.lastName}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>
+        <div style={{ fontSize: 11, color: 'var(--side-role)', marginTop: 2 }}>
           {superUserRole}
           {superUserDept ? ` · ${superUserDept}` : ''}
         </div>
@@ -1106,7 +1288,7 @@ function KpiCard({ eyebrow, value, unit, accent }) {
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
         {eyebrow}
       </div>
-      <div style={{ fontSize: 28, lineHeight: 1, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>
+      <div style={{ fontSize: 34, lineHeight: 1, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>
         {value}
         {unit != null && <span style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 600, marginLeft: 8 }}>{unit}</span>}
       </div>
@@ -1207,7 +1389,7 @@ function DeptCard({ dept, dark, onDrill, onInfo }) {
               gap: 6,
               padding: '4px 9px',
               borderRadius: 999,
-              fontSize: 11,
+              fontSize: 11.5,
               fontWeight: 600,
               whiteSpace: 'nowrap',
               background: badgeBg,
@@ -1245,7 +1427,7 @@ function DeptCard({ dept, dark, onDrill, onInfo }) {
             return (
               <div key={c.clientId} style={{ paddingTop: 14, marginTop: 10, borderTop: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>{c.clientName}</span>
+                  <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>{c.clientName} ({c.clientId})</span>
                   <span style={{ fontSize: 11, color: `var(${cst.varName})`, fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
                     {c.submitted}/{c.total} · {cpct}%
                   </span>
@@ -1330,15 +1512,34 @@ function GfhPopover({ info, onClose }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DRILL-DOWN SECTION
 // ─────────────────────────────────────────────────────────────────────────────
-function DrillDownSection({ dept, onBack, cycle, dark }) {
+function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
   const [managers, setManagers] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [mgrPopover, setMgrPopover] = useState(null);
+  const [drillManager, setDrillManager] = useState(null);  // selected manager -> associate sub-view
   const [clientFilter, setClientFilter] = useState('');  // '' = all clients
+  const [exporting, setExporting] = React.useState(false);
+  const [exportingDisputes, setExportingDisputes] = React.useState(false);
 
-  // Reset client filter whenever the department changes
-  useEffect(() => { setClientFilter(''); }, [dept?.departmentName]);
+  async function handleExport() {
+    if (!dept?.departmentName || !cycle?.cycleID) return;
+    setExporting(true);
+    try { await exportNonSubmitted(dept.departmentName, cycle.cycleID); }
+    catch (e) { alert('Export failed: ' + e.message); }
+    finally { setExporting(false); }
+  }
+
+  async function handleExportDisputes() {
+    if (!dept?.departmentName || !cycle?.cycleID) return;
+    setExportingDisputes(true);
+    try { await exportDisputes(dept.departmentName, cycle.cycleID); }
+    catch (e) { alert('Export failed: ' + e.message); }
+    finally { setExportingDisputes(false); }
+  }
+
+  // Reset client filter + manager drilldown whenever the department changes
+  useEffect(() => { setClientFilter(''); setDrillManager(null); }, [dept?.departmentName]);
 
   useEffect(() => {
     if (!dept?.departmentName || !cycle?.cycleID) return;
@@ -1365,6 +1566,19 @@ function DrillDownSection({ dept, onBack, cycle, dark }) {
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [mgrPopover]);
+
+  // Manager drilldown sub-view: list this manager's direct reports
+  if (drillManager) {
+    return (
+      <ManagerTeamSection
+        mgr={drillManager}
+        cycle={cycle}
+        dark={dark}
+        superUserRole={superUserRole}
+        onBack={() => setDrillManager(null)}
+      />
+    );
+  }
 
   return (
     <div>
@@ -1415,7 +1629,7 @@ function DrillDownSection({ dept, onBack, cycle, dark }) {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {c.clientName}
+                {c.clientName} ({c.clientId})
               </button>
             ))}
           </div>
@@ -1434,11 +1648,11 @@ function DrillDownSection({ dept, onBack, cycle, dark }) {
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 5 }}>
             Department
           </div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
             {dept.departmentName}
           </div>
           {managers && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
               GFH: {managers.gfhName || dept.gfhName || '—'}
             </div>
           )}
@@ -1470,6 +1684,112 @@ function DrillDownSection({ dept, onBack, cycle, dark }) {
         <div style={{ color: 'var(--st-risk)', fontSize: 13, padding: '12px 0' }}>{error}</div>
       ) : (
         <>
+          {/* Exception Exports card */}
+          <div style={{
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-lift)',
+            padding: '18px 20px', marginBottom: 16,
+          }}>
+            {/* Card header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 14 }}>
+              <Svg size={14} style={{ color: 'var(--text-muted)' }}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </Svg>
+              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.02em', color: 'var(--text)' }}>
+                Exception Exports
+              </span>
+            </div>
+
+            {/* Row 1: Incomplete submissions */}
+            <div title="Associates in this department who have not finished attesting all of their assigned tools for this cycle." style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: '50%',
+                  background: 'color-mix(in oklab, var(--accent), transparent 88%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Svg size={16} style={{ color: 'var(--accent)' }}>
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                  </Svg>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>Incomplete submissions</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {managers?.incompleteCount ?? 0} associates
+                  </div>
+                </div>
+              </div>
+              <button
+                className="btn-lift"
+                onClick={handleExport}
+                disabled={exporting}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  background: 'transparent', border: '1px solid var(--accent)',
+                  color: 'var(--accent)', borderRadius: 6, padding: '7px 12px',
+                  fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
+                  cursor: exporting ? 'not-allowed' : 'pointer', opacity: exporting ? 0.7 : 1,
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                {exporting ? 'Exporting…' : 'Export'}
+              </button>
+            </div>
+
+            {/* Row 2: Access disputes */}
+            <div title="Tools an associate marked as 'No access' — they report not having access that the system shows as granted. Review and reconcile." style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: '50%',
+                  background: 'var(--danger-bg)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Svg size={16} style={{ color: 'var(--danger-fg)' }}>
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                    <line x1="12" y1="9" x2="12" y2="13" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </Svg>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>Access disputes</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {managers?.disputeCount ?? 0} records
+                  </div>
+                </div>
+              </div>
+              <button
+                className="btn-lift"
+                onClick={handleExportDisputes}
+                disabled={exportingDisputes}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  background: 'transparent', border: '1px solid var(--accent)',
+                  color: 'var(--accent)', borderRadius: 6, padding: '7px 12px',
+                  fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
+                  cursor: exportingDisputes ? 'not-allowed' : 'pointer', opacity: exportingDisputes ? 0.7 : 1,
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                {exportingDisputes ? 'Exporting…' : 'Export'}
+              </button>
+            </div>
+
+            {/* Footer caption */}
+            <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10 }}>
+              Exports include records requiring review or action.
+            </div>
+          </div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 12 }}>
             Managers ({managers?.managers?.length ?? 0})
           </div>
@@ -1480,7 +1800,7 @@ function DrillDownSection({ dept, onBack, cycle, dark }) {
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
               {managers.managers.filter((m) => m.totalAssociates > 0).map((mgr) => (
-                <ManagerCard key={mgr.associateId} mgr={mgr} dark={dark} onInfo={setMgrPopover} />
+                <ManagerCard key={mgr.associateId} mgr={mgr} dark={dark} onInfo={setMgrPopover} onOpen={() => setDrillManager(mgr)} />
               ))}
             </div>
           )}
@@ -1552,15 +1872,17 @@ function StackedBar({ submitted, total }) {
 }
 
 // Manager card in the drill-down grid
-function ManagerCard({ mgr, dark, onInfo }) {
+function ManagerCard({ mgr, dark, onInfo, onOpen }) {
   const [hover, setHover] = useState(false);
-  const pct = mgr.totalAssociates > 0
-    ? Math.round((mgr.submittedCount / mgr.totalAssociates) * 100)
+  const totalTools = mgr.totalTools ?? mgr.totalAssociates;
+  const pct = totalTools > 0
+    ? Math.round((mgr.submittedCount / totalTools) * 100)
     : 0;
   const st = statusOf(pct);
 
   return (
     <div
+      onClick={onOpen}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
@@ -1568,15 +1890,18 @@ function ManagerCard({ mgr, dark, onInfo }) {
         borderRadius: 'var(--radius-card)', boxShadow: '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
         padding: '20px 22px', minHeight: 160,
         display: 'flex', flexDirection: 'column', gap: 10, position: 'relative', overflow: 'hidden',
-        transition: 'border-color .18s ease',
+        transition: 'border-color .18s ease', cursor: 'pointer',
       }}
     >
       {/* Name row + info button */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>{mgr.fullName}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>{mgr.fullName}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
             {mgr.totalAssociates} associate{mgr.totalAssociates !== 1 ? 's' : ''}
+            {mgr.totalTools != null && mgr.totalTools !== mgr.totalAssociates && (
+              <span style={{ color: 'var(--text-faint)' }}> / {mgr.totalTools} tools</span>
+            )}
           </div>
         </div>
         {/* Info icon */}
@@ -1607,17 +1932,414 @@ function ManagerCard({ mgr, dark, onInfo }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{
           display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
-          borderRadius: 999, fontSize: 10.5, fontWeight: 600,
+          borderRadius: 999, fontSize: 11.5, fontWeight: 600,
           background: `var(${st.varName}-bg)`, color: `var(${st.varName})`,
         }}>
           <span style={{ width: 5, height: 5, borderRadius: '50%', background: `var(${st.varName})` }} />
           {st.label}
         </span>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-          {mgr.submittedCount}/{mgr.totalAssociates}
+        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+          {mgr.submittedCount}/{totalTools}
         </span>
       </div>
 
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MANAGER TEAM SUB-VIEW — associate list for a single manager (admin drilldown)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Map a TeamMemberDto / MemberDetailDto attestationStatus enum to a badge descriptor.
+const MEMBER_STATUS_META = {
+  Submitted: { label: 'Submitted', varName: '--st-completed' },
+  InProgress: { label: 'In Progress', varName: '--st-ontrack' },
+  NotStarted: { label: 'Not Started', varName: '--st-risk' },
+};
+function memberStatusMeta(status) {
+  return MEMBER_STATUS_META[status] ?? MEMBER_STATUS_META.NotStarted;
+}
+
+function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
+  const [team, setTeam] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [memberPopover, setMemberPopover] = useState(null);
+  const [drillMember, setDrillMember] = useState(null);  // selected associate -> detail view
+
+  useEffect(() => {
+    if (!mgr?.associateId || !cycle?.cycleID) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    getManagerTeam(mgr.associateId, cycle.cycleID).then((data) => {
+      if (!cancelled) { setTeam(data); setLoading(false); }
+    }).catch((e) => {
+      if (!cancelled) { setError(e.message || 'Failed to load team.'); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [mgr?.associateId, cycle?.cycleID]);
+
+  // Close member popover on outside click
+  useEffect(() => {
+    if (!memberPopover) return;
+    function close() { setMemberPopover(null); }
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [memberPopover]);
+
+  if (drillMember) {
+    return (
+      <AssociateDetailSection
+        mgr={mgr}
+        member={drillMember}
+        cycle={cycle}
+        dark={dark}
+        superUserRole={superUserRole}
+        onBack={() => setDrillMember(null)}
+      />
+    );
+  }
+
+  return (
+    <div>
+      {/* Breadcrumb back to managers */}
+      <button
+        onClick={onBack}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 7,
+          background: 'transparent', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', padding: '7px 13px 7px 10px',
+          color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 500,
+          fontFamily: 'var(--font-sans)', cursor: 'pointer', marginBottom: 18,
+        }}
+      >
+        <Svg size={15}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></Svg>
+        Managers
+      </button>
+
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 5 }}>
+        Direct reports
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em', marginBottom: 20 }}>
+        {mgr.fullName}
+      </div>
+
+      {loading ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '32px 0', textAlign: 'center' }}>
+          Loading associates…
+        </div>
+      ) : error ? (
+        <div style={{ color: 'var(--st-risk)', fontSize: 13, padding: '12px 0' }}>{error}</div>
+      ) : (!team?.members?.length) ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>
+          No direct reports found for this manager.
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 12 }}>
+            Associates ({team.members.length})
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
+            {team.members.map((m) => (
+              <AssociateCard
+                key={m.associateId}
+                member={m}
+                dark={dark}
+                onInfo={setMemberPopover}
+                onOpen={() => setDrillMember(m)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Associate info popover */}
+      {memberPopover && (
+        <div
+          onClick={() => setMemberPopover(null)}
+          style={{
+            position: 'fixed', zIndex: 80,
+            left: Math.min(Math.max(12, memberPopover.rect.left), window.innerWidth - 226 - 12),
+            top: memberPopover.rect.bottom + 8,
+            minWidth: 226,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lift)',
+            padding: '14px 15px',
+          }}
+        >
+          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Associate
+          </div>
+          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>{memberPopover.name}</div>
+          {memberPopover.email && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', marginTop: 7 }}>
+              <Svg size={13} style={{ color: 'var(--text-faint)' }}>
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                <polyline points="22,6 12,13 2,6" />
+              </Svg>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{memberPopover.email}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Associate card in the manager drilldown grid
+function AssociateCard({ member, dark, onInfo, onOpen }) {
+  const [hover, setHover] = useState(false);
+  const pct = Math.round((member.progressPct ?? 0) * 100);
+  const st = memberStatusMeta(member.attestationStatus);
+
+  return (
+    <div
+      onClick={onOpen}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        background: 'var(--surface-elev)', border: `1px solid ${hover ? 'color-mix(in oklab, var(--accent), var(--border) 55%)' : 'var(--border)'}`,
+        borderRadius: 'var(--radius-card)', boxShadow: '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
+        padding: '20px 22px', minHeight: 160,
+        display: 'flex', flexDirection: 'column', gap: 10, position: 'relative', overflow: 'hidden',
+        transition: 'border-color .18s ease', cursor: 'pointer',
+      }}
+    >
+      {/* Name row + info button */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', marginBottom: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.fullName}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>ID · {member.associateId}</div>
+        </div>
+        {/* Info icon */}
+        <span
+          onClick={(e) => {
+            e.stopPropagation();
+            onInfo({ name: member.fullName, email: member.email, rect: e.currentTarget.getBoundingClientRect() });
+          }}
+          style={{
+            width: 22, height: 22, borderRadius: '50%', border: '1px solid var(--border)',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            color: 'var(--text-faint)', cursor: 'pointer', flexShrink: 0,
+          }}
+        >
+          <Svg size={12} stroke={2.2}>
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
+          </Svg>
+        </span>
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <AdminDonut pct={pct} size={80} strokeWidth={9} dark={dark} />
+      </div>
+
+      {/* Status badge + count */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
+          borderRadius: 999, fontSize: 11.5, fontWeight: 600,
+          background: `var(${st.varName}-bg)`, color: `var(${st.varName})`,
+        }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: `var(${st.varName})` }} />
+          {st.label}
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+          {member.attestedTools}/{member.totalTools}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASSOCIATE DETAIL SUB-VIEW — per-client / per-tool breakdown (third drilldown level)
+// Mirrors ManagerView's "Selected member" panel: completion + status + per-client
+// progress + access disputes, rendered with AdminView's visual vocabulary.
+// ─────────────────────────────────────────────────────────────────────────────
+function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBack }) {
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [reopening, setReopening] = useState(false);
+
+  const load = React.useCallback(() => {
+    if (!mgr?.associateId || !member?.associateId || !cycle?.cycleID) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    getManagerMemberDetail(mgr.associateId, member.associateId, cycle.cycleID).then((data) => {
+      if (!cancelled) { setDetail(data); setLoading(false); }
+    }).catch((e) => {
+      if (!cancelled) { setError(e.message || 'Failed to load member details.'); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [mgr?.associateId, member?.associateId, cycle?.cycleID]);
+
+  useEffect(() => load(), [load]);
+
+  async function handleReopen() {
+    if (!cycle?.cycleID || !member?.associateId) return;
+    if (!window.confirm(`Reopen ${detail?.fullName ?? member.fullName}'s submitted attestation for ${cycle.cycleName ?? 'this cycle'}?`)) return;
+    setReopening(true);
+    try {
+      await reopenAttestation(cycle.cycleID, member.associateId);
+      load();
+    } catch (e) {
+      alert('Reopen failed: ' + e.message);
+    } finally {
+      setReopening(false);
+    }
+  }
+
+  const pct = Math.round((detail?.progressPct ?? 0) * 100);
+  const st = memberStatusMeta(detail?.attestationStatus);
+  const canReopen = superUserRole === 'Admin' && detail?.attestationStatus === 'Submitted';
+
+  return (
+    <div>
+      {/* Breadcrumb back to associates */}
+      <button
+        onClick={onBack}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 7,
+          background: 'transparent', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', padding: '7px 13px 7px 10px',
+          color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 500,
+          fontFamily: 'var(--font-sans)', cursor: 'pointer', marginBottom: 18,
+        }}
+      >
+        <Svg size={15}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></Svg>
+        {mgr.fullName}
+      </button>
+
+      {loading ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '32px 0', textAlign: 'center' }}>
+          Loading details…
+        </div>
+      ) : error ? (
+        <div style={{ color: 'var(--st-risk)', fontSize: 13, padding: '12px 0' }}>{error}</div>
+      ) : !detail ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>No details available.</div>
+      ) : (
+        <>
+          {/* Header card: associate identity + completion donut + status */}
+          <div style={{
+            background: 'var(--surface-elev)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-card)', padding: '24px 28px',
+            marginBottom: 24, boxShadow: '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
+            display: 'flex', alignItems: 'center', gap: 28, position: 'relative', overflow: 'hidden',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 5 }}>
+                Associate
+              </div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
+                {detail.fullName}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+                ID · {detail.associateId}{member.email ? ` · ${member.email}` : ''}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+                  borderRadius: 999, fontSize: 12, fontWeight: 600,
+                  background: `var(${st.varName}-bg)`, color: `var(${st.varName})`,
+                }}>
+                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: `var(${st.varName})` }} />
+                  {st.label}
+                </span>
+                <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                  {detail.attestedTools}/{detail.totalTools} tools
+                </span>
+                {canReopen && (
+                  <button
+                    className="btn-lift"
+                    onClick={handleReopen}
+                    disabled={reopening}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      background: 'transparent', border: '1px solid var(--accent)',
+                      color: 'var(--accent)', borderRadius: 6, padding: '6px 12px',
+                      fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
+                      cursor: reopening ? 'not-allowed' : 'pointer', opacity: reopening ? 0.7 : 1,
+                    }}
+                  >
+                    <Svg size={13} stroke={2.2}>
+                      <polyline points="1 4 1 10 7 10" />
+                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                    </Svg>
+                    {reopening ? 'Reopening…' : 'Reopen attestation'}
+                  </button>
+                )}
+              </div>
+            </div>
+            <div style={{ flexShrink: 0 }}>
+              <AdminDonut pct={pct} size={96} strokeWidth={10} dark={dark} />
+            </div>
+            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'var(--border)' }} />
+          </div>
+
+          {/* Per-client progress */}
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 12 }}>
+            Per-client progress
+          </div>
+          {(!detail.byClient?.length) ? (
+            <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '12px 0', marginBottom: 24 }}>
+              No client access is active for this associate.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
+              {detail.byClient.map((client) => {
+                const cPct = client.totalTools > 0 ? Math.round((client.attestedTools / client.totalTools) * 100) : 0;
+                const cSt = statusOf(cPct);
+                return (
+                  <div
+                    key={client.clientID}
+                    style={{
+                      background: 'var(--surface)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius)', padding: '14px 18px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {client.clientName} ({client.clientID})
+                      </div>
+                      <div style={{ marginTop: 8, height: 6, borderRadius: 4, background: 'var(--surface-2)', overflow: 'hidden' }}>
+                        <div style={{ width: `${cPct}%`, height: '100%', background: `var(${cSt.varName})`, transition: 'width 0.8s cubic-bezier(.4,0,.2,1)' }} />
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                      {client.attestedTools}/{client.totalTools}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Access disputes */}
+          {detail.mismatches?.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--danger-fg)', marginBottom: 12 }}>
+                Access disputes ({detail.mismatches.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {detail.mismatches.map((m, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, fontSize: 13, color: 'var(--text)' }}>
+                    <span style={{ minWidth: 0 }}><strong>{m.toolName}</strong><span style={{ color: 'var(--text-muted)' }}> — {m.clientName}</span></span>
+                    {m.remarks && <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.remarks}</span>}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }

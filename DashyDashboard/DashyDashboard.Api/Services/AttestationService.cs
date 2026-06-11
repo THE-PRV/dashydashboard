@@ -102,7 +102,8 @@ public class AttestationService
                     );
                 }).ToList();
 
-                var attested = tools.Count(t => t.UsedThisCycle.HasValue);
+                // "Decided" = answered Did-you-use OR declared no access. Both are complete attestations.
+                var attested = tools.Count(t => t.UsedThisCycle.HasValue || t.HadAccess == false);
                 var used = tools.Count(t => t.UsedThisCycle == true);
 
                 return new ClientAttestationDto(
@@ -140,10 +141,10 @@ public class AttestationService
             _db.ToolCycleAttestations.Add(att);
         }
 
-        att.UsedThisCycle = used;
         if (att.AttestationStatus == "Submitted")
-            att.AttestationStatus = "InProgress";
+            throw new InvalidOperationException("Attestation already submitted for this cycle.");
 
+        att.UsedThisCycle = used;
         await _db.SaveChangesAsync();
     }
 
@@ -167,6 +168,9 @@ public class AttestationService
             };
             _db.ToolCycleAttestations.Add(att);
         }
+
+        if (att.AttestationStatus == "Submitted")
+            throw new InvalidOperationException("Attestation already submitted for this cycle.");
 
         att.HadAccess = hadAccess ?? true;
         if (hadAccess == false)
@@ -196,6 +200,9 @@ public class AttestationService
             _db.ToolCycleAttestations.Add(att);
         }
 
+        if (att.AttestationStatus == "Submitted")
+            throw new InvalidOperationException("Attestation already submitted for this cycle.");
+
         att.Remarks = string.IsNullOrWhiteSpace(text) ? null : text.Trim();
         await _db.SaveChangesAsync();
     }
@@ -203,6 +210,21 @@ public class AttestationService
     public async Task<string> SubmitAllAsync(string associateId, int cycleId, string? remarks)
     {
         await AssertCycleExistsAsync(cycleId);
+
+        var alreadySubmitted = await _db.ToolCycleAttestations.AsNoTracking()
+            .AnyAsync(tca => tca.AssociateId == associateId
+                          && tca.CycleID == cycleId
+                          && tca.AttestationStatus == "Submitted");
+        if (alreadySubmitted)
+            throw new InvalidOperationException("Attestation for this cycle has already been submitted.");
+
+        var missingRemark = await _db.ToolCycleAttestations.AsNoTracking()
+            .AnyAsync(tca => tca.CycleID == cycleId
+                          && tca.AssociateId == associateId
+                          && tca.HadAccess == false
+                          && (tca.Remarks == null || tca.Remarks.Trim() == ""));
+        if (missingRemark)
+            throw new InvalidOperationException("Add a remark for each tool you marked as 'No access' before submitting.");
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         var accessKeys = await _db.UserToolAccess.AsNoTracking()
@@ -232,7 +254,8 @@ public class AttestationService
                 _db.ToolCycleAttestations.Add(att);
             }
 
-            if (att.UsedThisCycle.HasValue)
+            // Submit tools the user actually decided on: either answered usage, or declared no access.
+            if (att.UsedThisCycle.HasValue || att.HadAccess == false)
             {
                 att.AttestationStatus = "Submitted";
                 att.SubmittedAt = now;
@@ -266,5 +289,28 @@ public class AttestationService
 
         await _db.SaveChangesAsync();
         return summary;
+    }
+
+    public async Task ReopenAsync(string actorAssociateId, bool isAdmin, string targetAssociateId, int cycleId)
+    {
+        if (!isAdmin)
+        {
+            var reports = await _db.Users.AnyAsync(u => u.AssociateId == targetAssociateId && u.ManagerId == actorAssociateId);
+            if (!reports) throw new UnauthorizedAccessException("You can only reopen your own direct reports' attestations.");
+        }
+
+        var rows = await _db.ToolCycleAttestations
+            .Where(a => a.AssociateId == targetAssociateId
+                     && a.CycleID == cycleId
+                     && a.AttestationStatus == "Submitted")
+            .ToListAsync();
+
+        foreach (var row in rows)
+        {
+            row.AttestationStatus = "InProgress";
+            row.SubmittedAt = null;
+        }
+
+        await _db.SaveChangesAsync();
     }
 }

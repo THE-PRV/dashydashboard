@@ -1,3 +1,4 @@
+using DashyDashboard.Api.Common;
 using DashyDashboard.Api.Data;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Models.DTOs;
@@ -27,15 +28,39 @@ public class ManagerController : ControllerBase
 
     [NonAction]
     private bool IsAdminSuperUser() =>
-        CurrentSuperUser?.RoleName == "Admin" && CurrentSuperUser.IsActive;
+        SuperUserRoles.Is(CurrentSuperUser?.RoleName, SuperUserRoles.Admin) && (CurrentSuperUser?.IsActive ?? false);
 
     [HttpGet("team")]
-    public async Task<IActionResult> GetTeam([FromQuery] int cycleId)
+    public async Task<IActionResult> GetTeam([FromQuery] int cycleId, [FromQuery] bool includeEmpty = false)
     {
         if (CurrentUser is null) return Unauthorized();
         if (!await IsManagerAsync()) return Forbid();
-        var team = await _svc.GetTeamAsync(CurrentUser.AssociateId, cycleId);
+        var team = await _svc.GetTeamAsync(CurrentUser.AssociateId, cycleId, includeEmpty);
         return Ok(team);
+    }
+
+    [HttpGet("disputes")]
+    public async Task<IActionResult> GetDisputes([FromQuery] int cycleId)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        if (!await IsManagerAsync()) return Forbid();
+        var result = await _svc.GetDisputesAsync(CurrentUser.AssociateId, cycleId);
+        return Ok(result);
+    }
+
+    [HttpGet("disputes/export")]
+    public async Task<IActionResult> GetDisputesExport([FromQuery] int cycleId)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        if (!await IsManagerAsync()) return Forbid();
+
+        var rows = await _svc.GetDisputesAsync(CurrentUser.AssociateId, cycleId);
+        var headers = new[] { "Associate ID", "Name", "Tool", "Client Name", "Client ID", "Reason", "Email", "Reports To" };
+        var bytes = XlsxExporter.Build("Access Disputes", headers,
+            rows.Select(d => new object?[] { d.AssociateId, d.Name, d.ToolName, d.ClientName, d.ClientId, d.Reason, d.Email, d.ManagerName }));
+        const string xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return File(bytes, xlsxMime, $"access-disputes-cycle{cycleId}.xlsx");
     }
 
     [HttpGet("team/{memberId}")]
@@ -72,8 +97,30 @@ public class ManagerController : ControllerBase
         if (CurrentUser is null) return Unauthorized();
         if (!await IsManagerAsync()) return Forbid();
         if (!ModelState.IsValid) return BadRequest(ModelState);
-        await _svc.GrantAccessAsync(CurrentUser.AssociateId, memberId, req);
-        return NoContent();
+        try
+        {
+            await _svc.GrantAccessAsync(CurrentUser.AssociateId, memberId, req);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
+        catch (KeyNotFoundException ex) { return NotFound(new { status = 404, title = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
+    }
+
+    [HttpPut("team/{memberId}/access/{clientId}/{toolId}/open")]
+    public async Task<IActionResult> SetOpenAccess(string memberId, string clientId, int toolId,
+        [FromBody] SetOpenAccessRequest req)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        if (!await IsManagerAsync()) return Forbid();
+        try
+        {
+            await _svc.SetOpenAccessAsync(CurrentUser.AssociateId, memberId, clientId, toolId, req.Open);
+            return Ok();
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { status = 404, title = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
     }
 
     [HttpPut("team/{memberId}/access/{clientId}/{toolId}/revoke")]
@@ -101,6 +148,15 @@ public class ManagerController : ControllerBase
         if (CurrentUser is null) return Unauthorized();
         if (!await IsManagerAsync()) return Forbid();
         var data = await _svc.GetClientsAndToolsAsync();
+        return Ok(data);
+    }
+
+    [HttpGet("grantable-clients-tools")]
+    public async Task<IActionResult> GetGrantableClientsAndTools()
+    {
+        if (CurrentUser is null) return Unauthorized();
+        if (!await IsManagerAsync()) return Forbid();
+        var data = await _svc.GetGrantableClientsAndToolsAsync(CurrentUser.AssociateId);
         return Ok(data);
     }
 

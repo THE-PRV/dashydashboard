@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin Dashboard — Broadridge Theme Preview</title>
+<style>
+:root {
+  --bg:#f8fafc; --surface:#ffffff; --surface-2:#f1f5f9;
+  --border:#e2e8f0; --tx:#0f172a; --tx-m:#64748b; --tx-f:#94a3b8;
+  --ac:#2662FC; --ac-fg:#ffffff;
+  --sb-bg:#000C36; --sb-tx:#e8edf6; --sb-mt:rgba(232,237,246,.50);
+  --sb-act:rgba(38,98,252,.20); --sb-hov:rgba(255,255,255,.06); --sb-brd:rgba(255,255,255,.08);
+  --tb-bg:#ffffff; --tb-brd:#e2e8f0;
+  --s-ok:#059669; --s-ok-bg:rgba(5,150,105,.10);
+  --s-on:#d97706; --s-on-bg:rgba(217,119,6,.10);
+  --s-bl:#ea580c; --s-bl-bg:rgba(234,88,12,.10);
+  --s-ri:#e11d48; --s-ri-bg:rgba(225,29,72,.10);
+  --sh:0 1px 3px rgba(15,23,42,.06),0 2px 8px rgba(15,23,42,.04);
+  --sh-h:0 8px 28px rgba(15,23,42,.13),0 2px 6px rgba(15,23,42,.06);
+  --r:8px; --rc:14px;
+}
+[data-theme="dark"] {
+  --bg:#1a1a1a; --surface:#242424; --surface-2:#2e2e2e;
+  --border:#3d3d3d; --tx:#e8e8e8; --tx-m:#a0a0a0; --tx-f:#646464;
+  --ac:#5b8df8; --ac-fg:#ffffff;
+  --sb-bg:#111111; --sb-tx:#d8d8d8; --sb-mt:rgba(216,216,216,.42);
+  --sb-act:rgba(91,141,248,.20); --sb-hov:rgba(255,255,255,.05); --sb-brd:rgba(255,255,255,.07);
+  --tb-bg:#1f1f1f; --tb-brd:#2e2e2e;
+  --s-ok:#34d399; --s-ok-bg:rgba(52,211,153,.13);
+  --s-on:#fbbf24; --s-on-bg:rgba(251,191,36,.13);
+  --s-bl:#fb923c; --s-bl-bg:rgba(251,146,60,.13);
+  --s-ri:#f87171; --s-ri-bg:rgba(248,113,113,.13);
+  --sh:0 1px 4px rgba(0,0,0,.45),0 2px 8px rgba(0,0,0,.30);
+  --sh-h:0 10px 32px rgba(0,0,0,.60),0 2px 8px rgba(0,0,0,.40);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;color:var(--tx);background:var(--bg);-webkit-font-smoothing:antialiased}
+.app{display:flex;height:100vh;overflow:hidden}
+/* Sidebar */
+.sb{width:200px;flex:none;background:var(--sb-bg);border-right:1px solid var(--sb-brd);display:flex;flex-direction:column}
+.sb-logo{display:flex;align-items:center;gap:10px;padding:15px 14px;border-bottom:1px solid var(--sb-brd)}
+.sb-logo-ic{width:34px;height:34px;border-radius:8px;background:var(--ac);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;color:#fff;flex:none}
+.sb-logo-name{font-size:12.5px;font-weight:700;color:var(--sb-tx)}
+.sb-logo-sub{font-size:10.5px;color:var(--sb-mt);margin-top:1px}
+.sb-sec{padding:18px 14px 5px;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sb-mt)}
+.sb-nav{flex:1;padding:4px 7px}
+.sb-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:7px;cursor:pointer;font-size:14px;font-weight:500;color:var(--sb-mt)}
+.sb-item:hover{background:var(--sb-hov)}
+.sb-item.on{background:var(--sb-act);color:var(--sb-tx);font-weight:600}
+.sb-item svg{flex:none;opacity:.65}
+.sb-item.on svg{opacity:1}
+.sb-bot{padding:6px 7px;border-top:1px solid var(--sb-brd)}
+.sb-foot{padding:11px 14px 13px;border-top:1px solid var(--sb-brd)}
+.sb-foot-lbl{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--sb-mt);margin-bottom:3px}
+.sb-foot-name{font-size:14px;font-weight:700;color:var(--sb-tx)}
+.sb-foot-role{font-size:11px;color:var(--ac);font-weight:600;margin-top:2px}
+/* Main */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+/* Top bar */
+.tb{height:54px;flex:none;background:var(--tb-bg);border-bottom:1px solid var(--tb-brd);display:flex;align-items:center;gap:10px;padding:0 22px}
+.tb-title{font-size:20px;font-weight:700;color:var(--tx);letter-spacing:-.025em}
+.tb-sp{flex:1}
+.tb-sw{position:relative}
+.tb-si{height:32px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--tx-m);font-size:13px;padding:0 10px 0 30px;width:195px;outline:none;font-family:inherit}
+.tb-si-ic{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--tx-f);pointer-events:none}
+.btn-add{height:32px;padding:0 13px;border-radius:7px;background:var(--ac);color:var(--ac-fg);border:none;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;font-family:inherit}
+.cycle{height:32px;padding:0 11px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;color:var(--tx-m);display:flex;align-items:center;gap:5px;white-space:nowrap}
+.cycle-lbl{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--tx-f)}
+.tb-ic{width:32px;height:32px;border-radius:7px;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--tx-m)}
+.av{width:32px;height:32px;border-radius:50%;background:var(--ac);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer}
+/* Content */
+.content{flex:1;min-height:0;overflow-y:auto;padding:22px 24px}
+/* View switcher */
+.mtabs{display:flex;align-items:center;gap:8px;margin-bottom:22px;padding-bottom:15px;border-bottom:1px dashed var(--border)}
+.mtab{padding:6px 15px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;cursor:pointer;color:var(--tx-m);font-family:inherit}
+.mtab.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.mnote{font-size:11px;color:var(--tx-f);margin-left:auto;font-style:italic}
+.view{display:none}.view.on{display:block}
+/* KPI band */
+.kpi-band{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--rc);padding:18px 20px;box-shadow:var(--sh);transition:box-shadow .18s,transform .18s;cursor:default}
+.kpi:hover{box-shadow:var(--sh-h);transform:translateY(-1px)}
+.kpi.kpi-risk{border-left:3px solid var(--s-ri)}
+.kpi.kpi-ac{border-left:3px solid var(--ac)}
+.kpi-ey{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--tx-f);margin-bottom:8px}
+.kpi-v{font-size:36px;font-weight:800;color:var(--tx);letter-spacing:-.04em;line-height:1}
+.kpi-u{font-size:12.5px;color:var(--tx-m);margin-top:5px}
+.kpi-u.g{color:var(--s-ok);font-weight:600}
+/* Section header */
+.sec{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--tx-f);margin-bottom:16px}
+/* Dept grid */
+.dg{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.dc{background:var(--surface);border:1px solid var(--border);border-radius:var(--rc);padding:20px 20px 18px;box-shadow:var(--sh);cursor:pointer;transition:box-shadow .2s,transform .2s}
+.dc:hover{box-shadow:var(--sh-h);transform:translateY(-2px)}
+.dc-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}
+.dc-name{font-size:17px;font-weight:700;color:var(--tx);line-height:1.3}
+.dc-gfh{font-size:12px;color:var(--tx-m);margin-top:4px}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;border-radius:20px;padding:4px 10px;margin:10px 0 8px}
+.b-ok{background:var(--s-ok-bg);color:var(--s-ok)}
+.b-on{background:var(--s-on-bg);color:var(--s-on)}
+.b-bl{background:var(--s-bl-bg);color:var(--s-bl)}
+.b-ri{background:var(--s-ri-bg);color:var(--s-ri)}
+.bd{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.dc-prog{font-size:14px;color:var(--tx-m);margin-bottom:14px;font-weight:500}
+.crs{display:flex;flex-direction:column;gap:11px}
+.cr{display:flex;flex-direction:column;gap:5px}
+.cr-t{display:flex;justify-content:space-between;align-items:baseline}
+.cr-n{font-size:12.5px;color:var(--tx-m)}
+.cr-s{font-size:12px;color:var(--tx-f);font-variant-numeric:tabular-nums}
+.cr-b{height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden;display:flex}
+.bok{background:var(--s-ok)}.bon{background:var(--s-on)}
+/* Drill-down */
+.back{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ac);font-weight:600;cursor:pointer;margin-bottom:16px}
+.fchips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:20px}
+.chip{height:30px;padding:0 14px;border-radius:15px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-weight:500;cursor:pointer;color:var(--tx-m);font-family:inherit}
+.chip.on{background:var(--ac);color:#fff;border-color:var(--ac);font-weight:600}
+/* Dept header card */
+.dhc{background:var(--surface);border:1px solid var(--border);border-radius:var(--rc);padding:22px 24px;box-shadow:var(--sh);margin-bottom:20px;display:flex;gap:24px;align-items:flex-start}
+.dh-l{flex:1;min-width:0}
+.dh-ey{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--tx-f);margin-bottom:4px}
+.dh-ti{font-size:26px;font-weight:800;color:var(--tx);letter-spacing:-.025em}
+.dh-gfh{font-size:14px;color:var(--ac);font-weight:600;margin-top:4px}
+.dh-bk{margin-top:16px}
+.dh-bk-l{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--tx-f);margin-bottom:9px}
+.dh-bar{height:9px;border-radius:5px;background:var(--surface-2);overflow:hidden;display:flex;margin-bottom:10px}
+.dh-leg{display:flex;gap:16px;font-size:12px;color:var(--tx-f)}
+.dh-li{display:flex;align-items:center;gap:5px}
+.dh-ld{width:9px;height:9px;border-radius:2px;flex:none}
+/* Section row with inline export */
+.sec-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.btn-export{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:7px;border:1px solid var(--border);background:var(--surface);color:var(--tx-m);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s,box-shadow .15s}
+.btn-export:hover{border-color:var(--ac);color:var(--ac);box-shadow:0 0 0 3px rgba(38,98,252,.08)}
+[data-theme="dark"] .btn-export:hover{box-shadow:0 0 0 3px rgba(91,141,248,.12)}
+/* Manager grid */
+.mg{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.mc{background:var(--surface);border:1px solid var(--border);border-radius:var(--rc);padding:20px;box-shadow:var(--sh);display:flex;flex-direction:column;transition:box-shadow .2s,transform .2s}
+.mc:hover{box-shadow:var(--sh-h);transform:translateY(-2px)}
+.mc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px}
+.mc-name{font-size:16px;font-weight:700;color:var(--tx)}
+.mc-sub{font-size:12px;color:var(--tx-f);margin-top:2px}
+.mc-sub-t{color:var(--tx-m);font-weight:500}
+.mc-ic{width:24px;height:24px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--tx-f);flex:none;font-size:12px;cursor:pointer}
+.mc-dn{display:flex;flex-direction:column;align-items:center;padding:14px 0 12px}
+.mc-ft{display:flex;align-items:center;justify-content:space-between;margin-top:auto}
+.mc-fr{font-size:13px;color:var(--tx-m);font-variant-numeric:tabular-nums;font-weight:500}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="sb">
+  <div class="sb-logo">
+    <div class="sb-logo-ic">B</div>
+    <div><div class="sb-logo-name">Access Review</div><div class="sb-logo-sub">Broadridge BPO T+1</div></div>
+  </div>
+  <div class="sb-sec">Workspace</div>
+  <nav class="sb-nav">
+    <div class="sb-item on">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      Overview
+    </div>
+  </nav>
+  <div class="sb-bot">
+    <div class="sb-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Team View</div>
+    <div class="sb-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign Out</div>
+  </div>
+  <div class="sb-foot">
+    <div class="sb-foot-lbl">Logged in as</div>
+    <div class="sb-foot-name">Prakhar Verma</div>
+    <div class="sb-foot-role">Admin</div>
+  </div>
+</aside>
+
+<div class="main">
+  <header class="tb">
+    <div class="tb-title" id="tb-title">Admin Dashboard</div>
+    <div class="tb-sp"></div>
+    <div class="tb-sw">
+      <svg class="tb-si-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input class="tb-si" placeholder="Search departments…" readonly>
+    </div>
+    <button class="btn-add"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Tool</button>
+    <div class="cycle"><span class="cycle-lbl">Cycle</span>Q1 2026 Attestation<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></div>
+    <div class="tb-ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+    <div class="tb-ic" onclick="toggleTheme()" style="cursor:pointer">
+      <svg id="ic-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg id="ic-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </div>
+    <div class="av">PV</div>
+  </header>
+
+  <div class="content">
+    <div class="mtabs">
+      <button class="mtab on" onclick="sv('ov',this)">Overview</button>
+      <button class="mtab" onclick="sv('dd',this)">Dept Drill-Down</button>
+      <span class="mnote">← switch views · sun/moon = toggle theme</span>
+    </div>
+
+    <!-- OVERVIEW -->
+    <div class="view on" id="view-ov">
+      <div class="kpi-band">
+        <div class="kpi"><div class="kpi-ey">Total Associates</div><div class="kpi-v">1 893</div><div class="kpi-u">4 depts</div></div>
+        <div class="kpi kpi-ac"><div class="kpi-ey">Tool Assignments</div><div class="kpi-v">4 950</div><div class="kpi-u">all depts combined</div></div>
+        <div class="kpi"><div class="kpi-ey">Submitted</div><div class="kpi-v">3 465</div><div class="kpi-u g">70%</div></div>
+        <div class="kpi"><div class="kpi-ey">Pending</div><div class="kpi-v">1 485</div><div class="kpi-u">open</div></div>
+        <div class="kpi kpi-risk"><div class="kpi-ey">At Risk Depts</div><div class="kpi-v">0</div><div class="kpi-u">of 4</div></div>
+      </div>
+
+      <div class="sec">Departments &nbsp;·&nbsp; 4 departments &nbsp;·&nbsp; Q1 2026 Attestation</div>
+
+      <div class="dg">
+        <!-- DTC Settlements -->
+        <div class="dc">
+          <div class="dc-top">
+            <div><div class="dc-name">DTC Settlements</div><div class="dc-gfh">GFH: Diana Prince &nbsp;ⓘ</div></div>
+            <svg width="102" height="102" viewBox="0 0 102 102" style="flex:none">
+              <circle cx="51" cy="51" r="39" fill="none" stroke="var(--surface-2)" stroke-width="11"/>
+              <circle cx="51" cy="51" r="39" fill="none" stroke="var(--s-bl)" stroke-width="11" stroke-linecap="round" stroke-dasharray="171.5 245.0" style="transform-origin:51px 51px;transform:rotate(-90deg)"/>
+              <text x="51" y="56" text-anchor="middle" font-size="20" font-weight="800" fill="var(--tx)">70%</text>
+              <text x="51" y="70" text-anchor="middle" font-size="10.5" fill="var(--tx-f)">done</text>
+            </svg>
+          </div>
+          <div class="badge b-bl"><span class="bd"></span>Below Target</div>
+          <div class="dc-prog">332 of 475</div>
+          <div class="crs">
+            <div class="cr"><div class="cr-t"><span class="cr-n">Barclays · 001</span><span class="cr-s">0/2 · 0%</span></div><div class="cr-b"></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">DTC · 083</span><span class="cr-s">254/353 · 72%</span></div><div class="cr-b"><div class="bok" style="width:61%"></div><div class="bon" style="width:11%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">DTC · 084</span><span class="cr-s">74/113 · 65%</span></div><div class="cr-b"><div class="bok" style="width:55%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">Marex · 047</span><span class="cr-s">0/2 · 0%</span></div><div class="cr-b"></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">Natixis · 039</span><span class="cr-s">4/5 · 80%</span></div><div class="cr-b"><div class="bok" style="width:70%"></div><div class="bon" style="width:10%"></div></div></div>
+          </div>
+        </div>
+        <!-- Government Settlement -->
+        <div class="dc">
+          <div class="dc-top">
+            <div><div class="dc-name">Government Settlement</div><div class="dc-gfh">GFH: Bruce Banner &nbsp;ⓘ</div></div>
+            <svg width="102" height="102" viewBox="0 0 102 102" style="flex:none">
+              <circle cx="51" cy="51" r="39" fill="none" stroke="var(--surface-2)" stroke-width="11"/>
+              <circle cx="51" cy="51" r="39" fill="none" stroke="var(--s-bl)" stroke-width="11" stroke-linecap="round" stroke-dasharray="166.6 245.0" style="transform-origin:51px 51px;transform:rotate(-90deg)"/>
+              <text x="51" y="56" text-anchor="middle" font-size="20" font-weight="800" fill="var(--tx)">68%</text>
+              <text x="51" y="70" text-anchor="middle" font-size="10.5" fill="var(--tx-f)">done</text>
+            </svg>
+          </div>
+          <div class="badge b-bl"><span class="bd"></span>Below Target</div>
+          <div class="dc-prog">320 of 470</div>
+          <div class="crs">
+            <div class="cr"><div class="cr-t"><span class="cr-n">Barclays · 001</span><span class="cr-s">162/237 · 68%</span></div><div class="cr-b"><div class="bok" style="width:58%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">DTC · 083</span><span class="cr-s">0/2 · 0%</span></div><div class="cr-b"></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">Marex · 047</span><span class="cr-s">157/230 · 68%</span></div><div class="cr-b"><div class="bok" style="width:58%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">Natixis · 039</span><span class="cr-s" style="color:var(--s-ok)">1/1 · 100%</span></div><div class="cr-b"><div class="bok" style="width:100%"></div></div></div>
+          </div>
+        </div>
+        <!-- International -->
+        <div class="dc">
+          <div class="dc-top">
+            <div><div class="dc-name">International</div><div class="dc-gfh">GFH: Carlos Patel &nbsp;ⓘ</div></div>
+            <svg width="102" height="102" viewBox="0 0 102 102" style="flex:none">
+              <circle cx="51" cy="51" r="39" fill="none" stroke="var(--surface-2)" stroke-width="11"/>
+              <circle cx="51" cy="51" r="39" fill="none" stroke="var(--s-bl)" stroke-width="11" stroke-linecap="round" stroke-dasharray="176.4 245.0" style="transform-origin:51px 51px;transform:rotate(-90deg)"/>
+              <text x="51" y="56" text-anchor="middle" font-size="20" font-weight="800" fill="var(--tx)">72%</text>
+              <text x="51" y="70" text-anchor="middle" font-size="10.5" fill="var(--tx-f)">done</text>
+            </svg>
+          </div>
+          <div class="badge b-bl"><span class="bd"></span>Below Target</div>
+          <div class="dc-prog">348 of 482</div>
+          <div class="crs">
+            <div class="cr"><div class="cr-t"><span class="cr-n">Barclays · 001</span><span class="cr-s">88/118 · 75%</span></div><div class="cr-b"><div class="bok" style="width:65%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">DTC · 083</span><span class="cr-s">84/122 · 69%</span></div><div class="cr-b"><div class="bok" style="width:59%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">DTC · 084</span><span class="cr-s">0/2 · 0%</span></div><div class="cr-b"></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">Marex · 047</span><span class="cr-s">94/120 · 78%</span></div><div class="cr-b"><div class="bok" style="width:68%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">Natixis · 039</span><span class="cr-s">82/120 · 68%</span></div><div class="cr-b"><div class="bok" style="width:58%"></div><div class="bon" style="width:10%"></div></div></div>
+          </div>
+        </div>
+        <!-- Reorg -->
+        <div class="dc">
+          <div class="dc-top">
+            <div><div class="dc-name">Reorg</div><div class="dc-gfh">GFH: James Garcia &nbsp;ⓘ</div></div>
+            <svg width="102" height="102" viewBox="0 0 102 102" style="flex:none">
+              <circle cx="51" cy="51" r="39" fill="none" stroke="var(--surface-2)" stroke-width="11"/>
+              <circle cx="51" cy="51" r="39" fill="none" stroke="var(--s-bl)" stroke-width="11" stroke-linecap="round" stroke-dasharray="171.5 245.0" style="transform-origin:51px 51px;transform:rotate(-90deg)"/>
+              <text x="51" y="56" text-anchor="middle" font-size="20" font-weight="800" fill="var(--tx)">70%</text>
+              <text x="51" y="70" text-anchor="middle" font-size="10.5" fill="var(--tx-f)">done</text>
+            </svg>
+          </div>
+          <div class="badge b-bl"><span class="bd"></span>Below Target</div>
+          <div class="dc-prog">325 of 466</div>
+          <div class="crs">
+            <div class="cr"><div class="cr-t"><span class="cr-n">Barclays · 001</span><span class="cr-s">3/4 · 75%</span></div><div class="cr-b"><div class="bok" style="width:65%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">DTC · 083</span><span class="cr-s" style="color:var(--s-ok)">1/1 · 100%</span></div><div class="cr-b"><div class="bok" style="width:100%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">DTC · 084</span><span class="cr-s">2/3 · 67%</span></div><div class="cr-b"><div class="bok" style="width:57%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">Marex · 047</span><span class="cr-s">78/109 · 72%</span></div><div class="cr-b"><div class="bok" style="width:62%"></div><div class="bon" style="width:10%"></div></div></div>
+            <div class="cr"><div class="cr-t"><span class="cr-n">Natixis · 039</span><span class="cr-s">241/349 · 69%</span></div><div class="cr-b"><div class="bok" style="width:59%"></div><div class="bon" style="width:10%"></div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DRILL-DOWN -->
+    <div class="view" id="view-dd">
+      <div class="back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>All Departments</div>
+      <div class="fchips">
+        <button class="chip on">All clients</button>
+        <button class="chip">Barclays · 001</button>
+        <button class="chip">DTC · 083</button>
+        <button class="chip">DTC · 084</button>
+        <button class="chip">Marex · 047</button>
+        <button class="chip">Natixis · 039</button>
+      </div>
+      <div class="dhc">
+        <div class="dh-l">
+          <div class="dh-ey">Department</div>
+          <div class="dh-ti">DTC Settlements</div>
+          <div class="dh-gfh">GFH: Diana Prince</div>
+          <div class="dh-bk">
+            <div class="dh-bk-l">Completion Breakdown</div>
+            <div class="dh-bar"><div class="bok" style="width:70%"></div><div class="bon" style="width:12%"></div></div>
+            <div class="dh-leg">
+              <div class="dh-li"><div class="dh-ld" style="background:var(--s-ok)"></div>Submitted (332)</div>
+              <div class="dh-li"><div class="dh-ld" style="background:var(--s-on)"></div>In Progress (~57)</div>
+              <div class="dh-li"><div class="dh-ld" style="background:var(--surface-2)"></div>Not Started (~86)</div>
+            </div>
+          </div>
+        </div>
+        <svg width="106" height="106" viewBox="0 0 106 106" style="flex:none;margin-top:4px">
+          <circle cx="53" cy="53" r="40" fill="none" stroke="var(--surface-2)" stroke-width="11"/>
+          <circle cx="53" cy="53" r="40" fill="none" stroke="var(--s-bl)" stroke-width="11" stroke-linecap="round" stroke-dasharray="175.9 251.3" style="transform-origin:53px 53px;transform:rotate(-90deg)"/>
+          <text x="53" y="59" text-anchor="middle" font-size="19" font-weight="800" fill="var(--tx)">70%</text>
+          <text x="53" y="73" text-anchor="middle" font-size="11" fill="var(--tx-f)">done</text>
+        </svg>
+      </div>
+
+      <div class="sec-row">
+        <div class="sec" style="margin-bottom:0">Managers (4)</div>
+        <button class="btn-export">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export Non-Submitted
+        </button>
+      </div>
+
+      <div class="mg">
+        <div class="mc">
+          <div class="mc-top"><div><div class="mc-name">Diana Prince</div><div class="mc-sub">150 associates <span class="mc-sub-t">/ 270 tools</span></div></div><div class="mc-ic">ⓘ</div></div>
+          <div class="mc-dn">
+            <svg width="120" height="120" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--surface-2)" stroke-width="12"/>
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--s-on)" stroke-width="12" stroke-linecap="round" stroke-dasharray="235.2 301.6" style="transform-origin:60px 60px;transform:rotate(-90deg)"/>
+              <text x="60" y="66" text-anchor="middle" font-size="26" font-weight="800" fill="var(--tx)">78%</text>
+              <text x="60" y="82" text-anchor="middle" font-size="12" fill="var(--tx-f)">done</text>
+            </svg>
+          </div>
+          <div class="mc-ft"><div class="badge b-on" style="margin:0"><span class="bd"></span>On Track</div><div class="mc-fr">211/270</div></div>
+        </div>
+        <div class="mc">
+          <div class="mc-top"><div><div class="mc-name">David Kumar</div><div class="mc-sub">151 associates <span class="mc-sub-t">/ 272 tools</span></div></div><div class="mc-ic">ⓘ</div></div>
+          <div class="mc-dn">
+            <svg width="120" height="120" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--surface-2)" stroke-width="12"/>
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--s-bl)" stroke-width="12" stroke-linecap="round" stroke-dasharray="202.1 301.6" style="transform-origin:60px 60px;transform:rotate(-90deg)"/>
+              <text x="60" y="66" text-anchor="middle" font-size="26" font-weight="800" fill="var(--tx)">67%</text>
+              <text x="60" y="82" text-anchor="middle" font-size="12" fill="var(--tx-f)">done</text>
+            </svg>
+          </div>
+          <div class="mc-ft"><div class="badge b-bl" style="margin:0"><span class="bd"></span>Below Target</div><div class="mc-fr">182/272</div></div>
+        </div>
+        <div class="mc">
+          <div class="mc-top"><div><div class="mc-name">Emma Silva</div><div class="mc-sub">159 associates <span class="mc-sub-t">/ 286 tools</span></div></div><div class="mc-ic">ⓘ</div></div>
+          <div class="mc-dn">
+            <svg width="120" height="120" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--surface-2)" stroke-width="12"/>
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--s-bl)" stroke-width="12" stroke-linecap="round" stroke-dasharray="208.1 301.6" style="transform-origin:60px 60px;transform:rotate(-90deg)"/>
+              <text x="60" y="66" text-anchor="middle" font-size="26" font-weight="800" fill="var(--tx)">69%</text>
+              <text x="60" y="82" text-anchor="middle" font-size="12" fill="var(--tx-f)">done</text>
+            </svg>
+          </div>
+          <div class="mc-ft"><div class="badge b-bl" style="margin:0"><span class="bd"></span>Below Target</div><div class="mc-fr">197/286</div></div>
+        </div>
+        <div class="mc">
+          <div class="mc-top"><div><div class="mc-name">Prakhar Verma</div><div class="mc-sub">12 associates <span class="mc-sub-t">/ 22 tools</span></div></div><div class="mc-ic">ⓘ</div></div>
+          <div class="mc-dn">
+            <svg width="120" height="120" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--surface-2)" stroke-width="12"/>
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--s-ri)" stroke-width="12" stroke-linecap="round" stroke-dasharray="99.5 301.6" style="transform-origin:60px 60px;transform:rotate(-90deg)"/>
+              <text x="60" y="66" text-anchor="middle" font-size="26" font-weight="800" fill="var(--tx)">33%</text>
+              <text x="60" y="82" text-anchor="middle" font-size="12" fill="var(--tx-f)">done</text>
+            </svg>
+          </div>
+          <div class="mc-ft"><div class="badge b-ri" style="margin:0"><span class="bd"></span>At Risk</div><div class="mc-fr">7/22</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+<script>
+function sv(id,btn){document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));document.querySelectorAll('.mtab').forEach(t=>t.classList.remove('on'));document.getElementById('view-'+id).classList.add('on');btn.classList.add('on');document.getElementById('tb-title').textContent=id==='ov'?'Admin Dashboard':'DTC Settlements — Drill-Down';}
+function toggleTheme(){const d=document.documentElement.getAttribute('data-theme')==='dark';document.documentElement.setAttribute('data-theme',d?'light':'dark');document.getElementById('ic-sun').style.display=d?'':'none';document.getElementById('ic-moon').style.display=d?'none':'';}
+</script>
+</body>
+</html>

@@ -1,0 +1,575 @@
+% =====================================================================
+%  DashyDashboard / Access Review — End-User Guide
+%  Plain-language walkthrough of every role and what each button does.
+%
+%  Build:  pdflatex UserGuide.tex   (run twice for the table of contents)
+%     or:  latexmk -pdf UserGuide.tex
+%
+%  Screenshots: drop PNG/JPG files into ./figures and replace the
+%  \shotph{...} placeholders with \shot{filename}{caption}. Until then
+%  the placeholders render as labelled empty boxes so the document is
+%  complete and print-ready as-is.
+% =====================================================================
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=2.4cm,headheight=14pt]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage[most]{tcolorbox}
+\usepackage{fontawesome5}
+\usepackage[hidelinks]{hyperref}
+
+% ---------- Brand palette ----------
+\definecolor{brand}{HTML}{1F6FEB}      % primary blue
+\definecolor{brandDark}{HTML}{0B3D91}  % deep blue
+\definecolor{ink}{HTML}{1A1A1A}
+\definecolor{muted}{HTML}{5B6470}
+\definecolor{line}{HTML}{D9DEE6}
+\definecolor{soft}{HTML}{F4F7FB}
+\definecolor{ok}{HTML}{1A7F4B}
+\definecolor{warn}{HTML}{B26A00}
+\definecolor{danger}{HTML}{C2362B}
+
+\graphicspath{{figures/}}
+\hypersetup{
+  pdftitle={Access Review — User Guide},
+  pdfauthor={DashyDashboard},
+  colorlinks=true, linkcolor=brand, urlcolor=brand
+}
+
+% ---------- Headings ----------
+\titleformat{\section}{\Large\bfseries\color{brandDark}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{ink}}{\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{18pt}{8pt}
+\titlespacing*{\subsection}{0pt}{12pt}{4pt}
+
+% ---------- Header / footer ----------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\small\color{muted}Access Review — User Guide}
+\fancyhead[R]{\small\color{muted}\leftmark}
+\fancyfoot[C]{\small\color{muted}\thepage}
+
+% ---------- Callout boxes ----------
+\newtcolorbox{tipbox}{
+  enhanced, breakable, colback=soft, colframe=brand,
+  boxrule=0.4pt, arc=3pt, left=10pt, right=10pt, top=7pt, bottom=7pt,
+  borderline west={3pt}{0pt}{brand},
+  fontupper=\small
+}
+\newtcolorbox{notebox}{
+  enhanced, breakable, colback=white, colframe=line,
+  boxrule=0.6pt, arc=3pt, left=10pt, right=10pt, top=7pt, bottom=7pt,
+  fontupper=\small
+}
+\newtcolorbox{warnbox}{
+  enhanced, breakable, colback=white, colframe=warn,
+  boxrule=0.4pt, arc=3pt, left=10pt, right=10pt, top=7pt, bottom=7pt,
+  borderline west={3pt}{0pt}{warn},
+  fontupper=\small
+}
+
+% ---------- Screenshot helpers ----------
+% \shot{file}{caption}  -> real screenshot once you add an image to ./figures
+\newcommand{\shot}[2]{%
+  \begin{center}
+  \begin{tcolorbox}[enhanced, colback=white, colframe=line, boxrule=0.6pt,
+       arc=3pt, left=4pt, right=4pt, top=4pt, bottom=4pt, width=\linewidth]
+    \centering\includegraphics[width=\linewidth]{#1}\\[4pt]
+    {\footnotesize\color{muted} #2}
+  \end{tcolorbox}
+  \end{center}}
+% \shotph{caption} -> placeholder box until a screenshot is dropped in
+\newcommand{\shotph}[1]{%
+  \begin{center}
+  \begin{tcolorbox}[enhanced, colback=soft, colframe=brand, boxrule=0pt,
+       arc=4pt, left=8pt, right=8pt, top=20pt, bottom=20pt, width=\linewidth,
+       borderline={0.6pt}{0pt}{brand, dashed}]
+    \centering
+    {\color{brand}\faImage\;\large Screenshot}\\[5pt]
+    {\footnotesize\color{muted} #1}\\[3pt]
+    {\scriptsize\color{muted}\itshape (drop the image into \texttt{figures/} and swap this for \texttt{{\textbackslash}shot})}
+  \end{tcolorbox}
+  \end{center}}
+
+% Little inline "button" chip so steps read like the UI
+\newtcbox{\btn}{on line, colback=brand, colframe=brand, coltext=white,
+  boxrule=0pt, arc=3pt, left=4pt, right=4pt, top=1pt, bottom=1pt,
+  fontupper=\footnotesize\bfseries}
+\newtcbox{\ghost}{on line, colback=white, colframe=line, coltext=ink,
+  boxrule=0.6pt, arc=3pt, left=4pt, right=4pt, top=1pt, bottom=1pt,
+  fontupper=\footnotesize\bfseries}
+
+\newcommand{\role}[1]{{\color{brandDark}\bfseries #1}}
+
+% =====================================================================
+\begin{document}
+
+% ---------------- Title page ----------------
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{2.2cm}
+{\color{brand}\rule{\linewidth}{2pt}}\\[6pt]
+{\Huge\bfseries\color{brandDark} Access Review}\\[6pt]
+{\LARGE\color{ink} User Guide}\\[10pt]
+{\large\color{muted} What every person sees, and what each button does}\\[4pt]
+{\color{brand}\rule{\linewidth}{2pt}}
+
+\vfill
+\begin{tcolorbox}[enhanced, width=0.85\linewidth, colback=soft, colframe=line,
+   boxrule=0.6pt, arc=4pt, left=14pt, right=14pt, top=12pt, bottom=12pt]
+\small
+This guide walks through the dashboard from the point of view of each kind of
+user --- \role{Associate}, \role{Manager}, \role{Access Management},
+\role{User Directory}, and \role{Admin / Super User}. For each one it shows the
+screen you can expect, the information you can see, and exactly what every button
+does. No technical knowledge is needed.
+\end{tcolorbox}
+\vfill
+
+{\small\color{muted} Broadridge BPO --- T+1 Access Review \quad\textbullet\quad Internal use}
+\vspace*{1.5cm}
+\end{titlepage}
+
+% ---------------- Contents ----------------
+\tableofcontents
+\thispagestyle{fancy}
+\clearpage
+
+% =====================================================================
+\section{Welcome}
+
+The \textbf{Access Review} dashboard is where you confirm, every cycle, which
+client tools you actually used. This is called \emph{attestation}: a quick,
+regular sign-off that keeps everyone's access correct and audit-ready.
+
+\subsection{What is a ``cycle''?}
+A \textbf{cycle} is one review period (it runs roughly every two weeks). Each
+cycle has a \textbf{due date}. During the cycle you go through your list of tools
+and mark which ones you used. Managers and administrators watch how many people
+have finished before the due date.
+
+\begin{tipbox}
+\faLightbulb\; \textbf{The whole job, in one sentence:} open the dashboard, mark
+each tool as \emph{used} or \emph{not used} (or \emph{no access}), add a remark if
+something looks wrong, then press \textbf{Submit attestation}.
+\end{tipbox}
+
+\subsection{Which role am I?}
+You don't choose a role --- the system already knows who you are when you sign in.
+Most people are an \role{Associate}. Some people are \emph{also} a \role{Manager},
+and a small number are \role{Super Users} (Admin, GFH, GFH Delegate, or IFH). If
+you have more than one role, a small set of tabs lets you switch between the views
+(see Section~\ref{sec:switch}).
+
+\begin{notebox}
+\faInfoCircle\; \textbf{Roles at a glance}
+\begin{itemize}[leftmargin=1.4em, itemsep=2pt]
+  \item \role{Associate} --- everyone. Attest your own tools.
+  \item \role{Manager} --- people who have direct reports. Track and manage your team.
+  \item \role{Access Management} --- grant or remove tool access for your reports.
+  \item \role{User Directory} --- Admins only. A read-only list of all users.
+  \item \role{Admin Dashboard} --- Super Users (Admin / GFH / GFH Delegate / IFH).
+        A department-wide overview.
+\end{itemize}
+\end{notebox}
+
+% =====================================================================
+\section{Signing in}
+
+When you open the dashboard it checks your company sign-in automatically, so
+usually you go straight to your dashboard --- there is nothing to type.
+
+\shotph{The sign-in screen with the Broadridge ``B'' logo and ``Access Review'' title.}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item If sign-in needs a moment, you'll see \textbf{Checking your access\ldots}
+  \item If it can't confirm who you are, you'll see a short message and a
+        \ghost{Try again} button. Press it to retry; if it keeps failing,
+        contact the dashboard administrator.
+\end{itemize}
+
+\begin{notebox}
+\faInfoCircle\; On test machines a \textbf{User name / Password} box may appear.
+On the normal company site you will not see this --- your Windows sign-in is used
+instead.
+\end{notebox}
+
+% =====================================================================
+\section{Things you'll see everywhere}\label{sec:switch}
+
+Most screens share the same strip across the top (the \textbf{top bar}). Once you
+know it, every view feels familiar.
+
+\shotph{The top bar: logo, cycle picker, view tabs, search, light/dark toggle, profile menu.}
+
+\begin{longtable}{>{\raggedright}p{4.2cm} p{10.3cm}}
+\toprule
+\textbf{Control} & \textbf{What it does} \\
+\midrule
+\endhead
+Broadridge logo / ``Access Review'' & Branding. Confirms you're in the right place. \\
+\addlinespace
+\textbf{Cycle picker} (e.g. ``\texttt{CYCLE}'') & Shows the review period you're looking at. Click it to switch to a different cycle; each entry shows how many days are left (or how long ago it ended). \\
+\addlinespace
+\textbf{View tabs} & Only appear if you have more than one role. Lets you jump between \ghost{Associate view}, \ghost{Manager view}, \ghost{Access}, and (Admins only) \ghost{Users}. Super Users also get \ghost{Admin Dashboard}. \\
+\addlinespace
+\textbf{Search box} & Filters what's on the current screen --- your tools, your team members, or departments, depending on the view. \\
+\addlinespace
+\textbf{Light / dark toggle} (\faMoon\,/\,\faSun) & Switches the screen between light and dark appearance. Purely visual. \\
+\addlinespace
+\textbf{Profile menu} & Your initials in a circle. Click for your name, role, and \ghost{Sign out}. \\
+\bottomrule
+\end{longtable}
+
+\begin{tipbox}
+\faLightbulb\; \textbf{Switching roles:} if you're a Manager or Super User, use the
+view tabs in the top bar to move between your Associate, Manager, Access, and Admin
+screens. Switching never loses your work --- everything saves as you go.
+\end{tipbox}
+
+% =====================================================================
+\section{Role 1 --- Associate (everyone)}
+
+This is the main screen and the one everyone uses. It lists the clients you work
+with and, under each, the tools you have access to. Your job is to say whether you
+used each tool this cycle.
+
+\shotph{The Associate dashboard: greeting, progress card, and a client with its tools expanded.}
+
+\subsection{The top of the screen}
+\begin{itemize}[leftmargin=1.4em]
+  \item A friendly greeting and a line such as \emph{``You have 4 tools left to
+        attest before <due date>.''}
+  \item Four quick numbers: \textbf{Attested} (done), \textbf{Remaining} (still to
+        do), \textbf{Clients}, and \textbf{Days left}.
+  \item A \textbf{Cycle progress} card showing how many of your tools are done out
+        of the total, a percentage, a progress bar, and the
+        \btn{Submit attestation} button.
+\end{itemize}
+
+\subsection{Your clients and tools}
+Each client is a coloured card. Click a card's header (or the chevron \faChevronDown
+on the right) to open or close it. The header shows the tool count, how many you've
+marked as used, and how many are still pending.
+
+When open, you see a table with four columns:
+
+\begin{longtable}{>{\raggedright}p{3.2cm} p{11.3cm}}
+\toprule
+\textbf{Column} & \textbf{What to do with it} \\
+\midrule
+\endhead
+\textbf{Tool} & The name of the tool. Nothing to click. \\
+\addlinespace
+\textbf{Had access?} & A \ghost{Yes}\,/\,\ghost{No} switch. Leave it on \textbf{Yes} if you really had access to this tool. Choose \textbf{No} if you should \emph{not} have had access --- this flags a possible access dispute for your manager. \\
+\addlinespace
+\textbf{Did you use?} & A \ghost{Yes}\,/\,\ghost{No} switch --- did you actually use this tool this cycle? This is greyed out if you set \emph{Had access?} to \textbf{No} (you can't ``use'' a tool you shouldn't have). \\
+\addlinespace
+\textbf{Remark} & A small \ghost{\faCommentDots\ Add remark} button. Use it to leave a note --- for example, why a tool was or wasn't used. If a note already exists, its text shows on the button. \\
+\bottomrule
+\end{longtable}
+
+\begin{notebox}
+\faInfoCircle\; \textbf{Everything saves instantly.} Each time you flip a switch it
+is saved straight away --- there's no separate ``save'' step for individual tools.
+A tool counts as done once you've answered \emph{Did you use?} \textbf{or} marked
+\emph{Had access? = No}.
+\end{notebox}
+
+\subsection{Adding a remark}
+Clicking \ghost{\faCommentDots\ Add remark} opens a small window for that one tool.
+
+\shotph{The remark window with a text box, character counter, Cancel and Save remark buttons.}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Type your note (up to 500 characters).
+  \item \btn{Save remark} stores it; \ghost{Cancel} closes without changes.
+  \item Leaving the box empty and saving \textbf{clears} the remark.
+  \item Remarks are visible to your manager and to audit.
+\end{itemize}
+
+\subsection{Submitting}
+When you've gone through your tools, press \btn{Submit attestation} in the progress
+card. You'll get a short confirmation message. You can keep updating and submit
+again if something changes before the due date.
+
+\begin{warnbox}
+\faExclamationTriangle\; If you press \textbf{Submit} without marking anything, the
+dashboard reminds you to mark at least one tool first.
+\end{warnbox}
+
+\begin{tipbox}
+\faLightbulb\; \textbf{Search tip:} use the top-bar search to jump to a tool by
+name --- handy if you have many clients.
+\end{tipbox}
+
+% =====================================================================
+\section{Role 2 --- Manager}
+
+If you have direct reports, the \ghost{Manager view} tab appears in the top bar.
+This view is about \emph{watching your team's progress} --- you don't attest on
+their behalf.
+
+\shotph{Manager view: summary cards, the team list on the left, and a selected member on the right.}
+
+\subsection{What you see}
+\begin{itemize}[leftmargin=1.4em]
+  \item A short \textbf{Manager view} banner naming the current cycle.
+  \item Four summary cards: \textbf{Direct reports}, \textbf{Submitted},
+        \textbf{In progress}, \textbf{Not started}.
+  \item \textbf{Team completion} (left) --- a list of your people with a progress
+        bar and a status badge each.
+  \item \textbf{Selected member} (right) --- details for whoever you click.
+\end{itemize}
+
+\subsection{The team list (left panel)}
+\begin{longtable}{>{\raggedright}p{4.0cm} p{10.5cm}}
+\toprule
+\textbf{Control} & \textbf{What it does} \\
+\midrule
+\endhead
+Filter pills & \ghost{Everyone}, \ghost{Not started}, \ghost{In progress}, \ghost{Submitted} --- show only people in that state. \\
+\addlinespace
+A team-member row & Shows their photo initials, name, ID, progress (e.g. ``6/8''), and a status badge. Click a row to load their detail on the right. \\
+\addlinespace
+Top-bar search & Filter the list by name or associate ID. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Member detail (right panel)}
+For the selected person you'll see their completion percentage, status, and a
+\textbf{per-client progress} breakdown. If they reported any access problems, an
+\textbf{Access disputes} list appears in red with the tool, client, and their remark.
+
+\subsection{Exporting disputes}
+If anyone on your team flagged an access dispute (a \emph{Had access? = No}), a red
+banner appears at the top with an \btn{\faDownload\ Export disputes} button. Click
+it to download a file of those records to follow up on.
+
+\shotph{The red ``access disputes this cycle'' banner with the Export disputes button.}
+
+% =====================================================================
+\section{Role 3 --- Access Management}
+
+The \ghost{Access} tab is where managers \textbf{grant, time-box, or remove} tool
+access for their direct reports.
+
+\shotph{Access management: team list on the left, grant form and active-access table on the right.}
+
+\subsection{Choosing a person}
+The left sidebar lists your direct reports with a search box at the top. Click a
+name to manage that person's access on the right.
+
+\subsection{Granting new access}
+The \textbf{Grant new access} form has four fields:
+
+\begin{longtable}{>{\raggedright}p{3.6cm} p{10.9cm}}
+\toprule
+\textbf{Field} & \textbf{What to enter} \\
+\midrule
+\endhead
+\textbf{Client} & Pick the client from the drop-down. \\
+\addlinespace
+\textbf{Tool} & Pick the tool. (Available only after a client is chosen.) \\
+\addlinespace
+\textbf{Access from} & The start date. Defaults to today. \\
+\addlinespace
+\textbf{Access to (optional)} & An end date. Leave blank for open-ended access. \\
+\bottomrule
+\end{longtable}
+
+Press \btn{\faPlus\ Grant access} to save. The new access appears in the table below.
+
+\subsection{Managing existing access}
+The \textbf{Active access} table lists everything the person currently has:
+
+\begin{longtable}{>{\raggedright}p{3.0cm} p{11.5cm}}
+\toprule
+\textbf{Column} & \textbf{What it does} \\
+\midrule
+\endhead
+\textbf{Client} / \textbf{Tool} & Which access this row is for. \\
+\addlinespace
+\textbf{From} & The date access started. \\
+\addlinespace
+\textbf{To} & An editable end date --- change it to time-box the access. \\
+\addlinespace
+\textbf{Actions} & \ghost{Clear} removes the end date (makes it open-ended); \ghost{Revoke now} ends the access today. \\
+\bottomrule
+\end{longtable}
+
+\begin{warnbox}
+\faExclamationTriangle\; \textbf{Revoke now} takes effect immediately. Use it when
+someone should lose access to a tool right away.
+\end{warnbox}
+
+% =====================================================================
+\section{Role 4 --- User Directory (Admins only)}
+
+Admins get a \ghost{Users} tab: a \textbf{read-only} directory of everyone in the
+system. There are no edit buttons here --- it's for looking people up.
+
+\shotph{The User Directory: a searchable table of ID, Full Name, User Name, Department, Manager.}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item A \textbf{search box} filters by name, ID, user name, department, or manager.
+  \item The table columns are \textbf{ID}, \textbf{Full Name}, \textbf{User Name},
+        \textbf{Department}, and \textbf{Manager}.
+  \item Clicking a row simply highlights it.
+\end{itemize}
+
+% =====================================================================
+\section{Role 5 --- Admin Dashboard (Super Users)}
+
+Super Users (roles \role{Admin}, \role{GFH}, \role{GFH Delegate}, \role{IFH}) get
+the \ghost{Admin Dashboard} --- a department-wide overview of how attestation is
+going.
+
+\shotph{Admin Dashboard: sidebar, KPI band across the top, and a grid of department cards with donut charts.}
+
+\subsection{What's on screen}
+\begin{itemize}[leftmargin=1.4em]
+  \item A \textbf{sidebar} on the left with the \ghost{Overview} item, your
+        ``Logged in as'' badge, \ghost{Sign Out}, and (if you're also a manager) a
+        \ghost{Team View} shortcut back to the manager screen.
+  \item A \textbf{top header} with the page title, a \textbf{Search departments}
+        box, the \textbf{Cycle picker}, a \textbf{notifications} bell, the
+        light/dark toggle, and your profile menu.
+  \item A \textbf{KPI band} of five numbers: \textbf{Associates},
+        \textbf{Associate-Tools}, \textbf{Submitted} (with \%),
+        \textbf{Pending}, and \textbf{At Risk Depts}.
+  \item A grid of \textbf{department cards}, each with a donut chart, the
+        department's GFH, a status badge, and a submitted-of-total count.
+\end{itemize}
+
+\subsection{Department cards}
+\begin{itemize}[leftmargin=1.4em]
+  \item The \faInfoCircle\ icon next to ``GFH'' opens a small card with the Global
+        Functional Head's name, email, and office.
+  \item Click anywhere else on a card to \textbf{drill into} that department.
+  \item Some cards show a per-client breakdown with mini progress bars underneath.
+\end{itemize}
+
+\subsection{Drilling into a department}
+\shotph{Department drill-down: back button, client filter pills, the department header, the Exception Exports card, and manager cards.}
+
+\begin{longtable}{>{\raggedright}p{4.2cm} p{10.3cm}}
+\toprule
+\textbf{Control} & \textbf{What it does} \\
+\midrule
+\endhead
+\ghost{\faArrowLeft\ All Departments} & Goes back to the department grid. \\
+\addlinespace
+\textbf{Filter by client} pills & Narrow the figures to a single client, or \ghost{All clients}. \\
+\addlinespace
+\textbf{Completion breakdown} bar & Shows Submitted / In Progress / Not Started for the department. \\
+\addlinespace
+\textbf{Exception Exports} & Two download buttons: \ghost{Export} next to \emph{Incomplete submissions} (people who haven't finished) and \ghost{Export} next to \emph{Access disputes} (flagged access). \\
+\addlinespace
+\textbf{Manager cards} & One per manager in the department, each with a donut and a quick info popover (\faInfoCircle) for their email. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Adding a tool}
+Admins, GFH, and GFH Delegates see an \btn{\faPlus\ Add Tool} button in the header.
+
+\shotph{The Add Tool window with Client, Department, and Tool Name fields.}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Choose the \textbf{Client}, choose the \textbf{Department}, and type the
+        \textbf{Tool Name}.
+  \item \btn{Add Tool} creates it; \ghost{Cancel} closes without saving.
+  \item Once added, the tool is available for that department's managers to assign.
+\end{itemize}
+
+\subsection{Notifications}
+The bell (\faBell) in the header lists departments that are behind as the due date
+approaches, plus a cycle reminder. A small number badge shows how many need
+attention; \ghost{Mark all read} clears it.
+
+\subsection{How the view differs by role}
+The Admin Dashboard adjusts to who you are:
+
+\begin{longtable}{>{\raggedright}p{3.2cm} p{4.8cm} p{5.7cm}}
+\toprule
+\textbf{Role} & \textbf{Which departments} & \textbf{Extras} \\
+\midrule
+\endhead
+\role{Admin} & All departments & Full overview, \ghost{Add Tool}, \ghost{Users} directory tab \\
+\addlinespace
+\role{GFH Delegate} & All departments & Same wide view as Admin, plus \ghost{Add Tool} \\
+\addlinespace
+\role{GFH} & Only your own department(s) & \ghost{Add Tool}; title shows your name and role \\
+\addlinespace
+\role{IFH} & Only your own department(s) & Read/track focus; no \ghost{Add Tool} \\
+\bottomrule
+\end{longtable}
+
+% =====================================================================
+\section{Quick reference}
+
+\subsection{Who can see what}
+\begin{longtable}{>{\raggedright}p{4.2cm} c c c c c}
+\toprule
+\textbf{View / Action} & \textbf{Assoc.} & \textbf{Mgr} & \textbf{Access} & \textbf{Admin} & \textbf{GFH/IFH} \\
+\midrule
+\endhead
+Attest my own tools        & \faCheck & \faCheck & \faCheck & \faCheck & \faCheck \\
+Add remarks                & \faCheck & \faCheck & \faCheck & \faCheck & \faCheck \\
+See my team's progress     &          & \faCheck &          & \faCheck & \faCheck \\
+Export team disputes       &          & \faCheck &          & \faCheck & \faCheck \\
+Grant / revoke access      &          &          & \faCheck &          &          \\
+User Directory             &          &          &          & \faCheck &          \\
+Department overview        &          &          &          & \faCheck & \faCheck \\
+Add a tool                 &          &          &          & \faCheck & GFH only \\
+\bottomrule
+\end{longtable}
+
+\begin{notebox}
+\faInfoCircle\; The tabs you see depend on your roles. Most people only ever see
+the Associate view. Managers also see Manager and Access. Super Users additionally
+see the Admin Dashboard, and Admins also see the Users directory.
+\end{notebox}
+
+\subsection{Glossary}
+\begin{longtable}{>{\raggedright}p{3.6cm} p{10.9cm}}
+\toprule
+\textbf{Term} & \textbf{Meaning} \\
+\midrule
+\endhead
+\textbf{Attestation} & Your sign-off that says which tools you used this cycle. \\
+\textbf{Cycle} & One review period (about two weeks) with its own due date. \\
+\textbf{Had access?} & Whether you legitimately had access to a tool. ``No'' raises an access dispute. \\
+\textbf{Did you use?} & Whether you actually used the tool during the cycle. \\
+\textbf{Access dispute} & A flag that someone had access they shouldn't have --- surfaced to managers and admins. \\
+\textbf{Remark} & A free-text note attached to one tool, visible to your manager and audit. \\
+\textbf{GFH} & Global Functional Head --- senior owner of a department. \\
+\textbf{IFH} & Functional head with a department-scoped view. \\
+\textbf{Super User} & An Admin, GFH, GFH Delegate, or IFH with the Admin Dashboard. \\
+\bottomrule
+\end{longtable}
+
+\vspace{8pt}
+\begin{tipbox}
+\faLifeRing\; \textbf{Need help?} If something doesn't look right --- a missing tool,
+access you don't recognise, or a screen that won't load --- use the
+\emph{Had access? = No} flag and a remark where relevant, and contact your manager
+or the dashboard administrator.
+\end{tipbox}
+
+\end{document}

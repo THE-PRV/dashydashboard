@@ -10,12 +10,18 @@ public class AdminService
     private readonly AppDbContext _db;
     public AdminService(AppDbContext db) { _db = db; }
 
-    public async Task<List<DeptSummaryDto>> GetDepartmentsAsync(int cycleId, string? scopeDept)
+    public Task<string?> GetUserDepartmentAsync(string associateId) =>
+        _db.Users.AsNoTracking()
+            .Where(u => u.AssociateId == associateId)
+            .Select(u => u.Department)
+            .FirstOrDefaultAsync();
+
+    public async Task<List<DeptSummaryDto>> GetDepartmentsAsync(int cycleId, List<string>? scopeDepts)
     {
         var today = DateOnly.FromDateTime(DateTime.Today);
 
         var users = await _db.Users.AsNoTracking()
-            .Where(u => scopeDept == null || u.Department == scopeDept)
+            .Where(u => scopeDepts == null || scopeDepts.Contains(u.Department))
             .ToListAsync();
 
         var depts = users
@@ -39,7 +45,7 @@ public class AdminService
         var attestCounts = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => allUserIds.Contains(tca.AssociateId)
                        && tca.CycleID == cycleId
-                       && tca.UsedThisCycle.HasValue)
+                       && (tca.UsedThisCycle.HasValue || tca.HadAccess == false))
             .GroupBy(tca => tca.AssociateId)
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
             .ToListAsync();
@@ -66,7 +72,7 @@ public class AdminService
         var clientAttestedRows = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => allUserIds.Contains(tca.AssociateId)
                        && tca.CycleID == cycleId
-                       && tca.UsedThisCycle.HasValue)
+                       && (tca.UsedThisCycle.HasValue || tca.HadAccess == false))
             .Select(tca => new { tca.AssociateId, tca.ClientID })
             .ToListAsync();
 
@@ -77,9 +83,11 @@ public class AdminService
 
         var deptIdMap = await _db.Departments.AsNoTracking().ToDictionaryAsync(d => d.DepartmentName, d => d.DepartmentID);
 
+        var toolCountMap = toolCounts.ToDictionary(t => t.AssociateId, t => t.Count);
+
         var result = depts.Select(d =>
         {
-            var total = d.UserIds.Sum(id => toolCounts.FirstOrDefault(t => t.AssociateId == id)?.Count ?? 0);
+            var total = d.UserIds.Sum(id => toolCountMap.GetValueOrDefault(id, 0));
             var submitted = d.UserIds.Sum(id => attestCounts.FirstOrDefault(a => a.AssociateId == id)?.Count ?? 0);
 
             var gfhRow = gfhRows.FirstOrDefault(g => g.Department?.DepartmentName == d.Dept);
@@ -108,7 +116,7 @@ public class AdminService
                 .OrderBy(c => c.ClientName)
                 .ToList();
 
-            return new DeptSummaryDto(deptIdMap.GetValueOrDefault(d.Dept ?? "", 0), d.Dept ?? "", gfhName, gfhEmail, "HQ", total, submitted, clientBreakdown);
+            return new DeptSummaryDto(deptIdMap.GetValueOrDefault(d.Dept ?? "", 0), d.Dept ?? "", gfhName, gfhEmail, "HQ", d.UserIds.Count(id => toolCountMap.ContainsKey(id)), total, submitted, clientBreakdown);
         }).OrderBy(d => d.DepartmentName).ToList();
 
         return result;
@@ -125,7 +133,10 @@ public class AdminService
         var deptUserIds = allInDept.Select(u => u.AssociateId).ToList();
 
         var clientsInDept = await _db.UserToolAccess.AsNoTracking()
-            .Where(uta => deptUserIds.Contains(uta.AssociateId))
+            .Where(uta => deptUserIds.Contains(uta.AssociateId)
+                       && uta.Access
+                       && uta.GivenDate <= today
+                       && (uta.ToDate == null || uta.ToDate >= today))
             .Select(uta => new { uta.ClientID })
             .Distinct()
             .ToListAsync();
@@ -175,7 +186,7 @@ public class AdminService
         var submittedCountsByReport = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => allReportIds.Contains(tca.AssociateId)
                        && tca.CycleID == cycleId
-                       && tca.UsedThisCycle.HasValue
+                       && (tca.UsedThisCycle.HasValue || tca.HadAccess == false)
                        && (clientId == null || tca.ClientID == clientId))
             .GroupBy(tca => tca.AssociateId)
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
@@ -185,7 +196,9 @@ public class AdminService
 
         var managerSummaries = managers.Select(mgr =>
         {
-            var reportIds = reportsByMgr.GetValueOrDefault(mgr.AssociateId) ?? new List<string>();
+            var reportIds = (reportsByMgr.GetValueOrDefault(mgr.AssociateId) ?? new List<string>())
+                .Where(id => toolCountMap.ContainsKey(id))
+                .ToList();
             var totalTools     = reportIds.Sum(id => toolCountMap.GetValueOrDefault(id, 0));
             var submittedTools = reportIds.Sum(id => submittedCountMap.GetValueOrDefault(id, 0));
             var email = mgr.EmailAddr ?? "";
@@ -193,6 +206,7 @@ public class AdminService
                 mgr.AssociateId,
                 $"{mgr.FirstName} {mgr.LastName}".Trim(),
                 email,
+                reportIds.Count,
                 totalTools,
                 submittedTools
             );
@@ -208,7 +222,7 @@ public class AdminService
         var deptSubmitted = await _db.ToolCycleAttestations.AsNoTracking()
             .CountAsync(tca => deptUserIds.Contains(tca.AssociateId)
                            && tca.CycleID == cycleId
-                           && tca.UsedThisCycle.HasValue
+                           && (tca.UsedThisCycle.HasValue || tca.HadAccess == false)
                            && (clientId == null || tca.ClientID == clientId));
 
         var gfhRow = await _db.SuperUsers.AsNoTracking()
@@ -219,7 +233,20 @@ public class AdminService
             : null;
         var gfhName = gfhUser != null ? $"{gfhUser.FirstName} {gfhUser.LastName}".Trim() : "—";
 
-        return new DeptManagersDto(deptName, gfhName, deptToolTotal, deptSubmitted, managerSummaries, availableClients);
+        var incompleteCount = (await GetNonSubmittedAsync(deptName, cycleId)).Count;
+        var disputeCount    = (await GetDisputesAsync(deptName, cycleId)).Count;
+
+        var deptUsersWithTools = await _db.UserToolAccess.AsNoTracking()
+            .Where(uta => deptUserIds.Contains(uta.AssociateId)
+                       && uta.Access
+                       && uta.GivenDate <= today
+                       && (uta.ToDate == null || uta.ToDate >= today)
+                       && (clientId == null || uta.ClientID == clientId))
+            .Select(uta => uta.AssociateId)
+            .Distinct()
+            .CountAsync();
+
+        return new DeptManagersDto(deptName, gfhName, deptUsersWithTools, deptToolTotal, deptSubmitted, managerSummaries, availableClients, incompleteCount, disputeCount);
     }
 
     public async Task<AddToolResponse> AddToolAsync(string clientId, string toolName, int departmentId, string actorId)
@@ -238,5 +265,152 @@ public class AdminService
         await _db.SaveChangesAsync();
 
         return new AddToolResponse(clientId, tool.ToolID, toolName);
+    }
+
+    public async Task<AddClientResponse> AddClientAsync(string clientId, string clientName, string actorId)
+    {
+        clientId = (clientId ?? "").Trim();
+        clientName = (clientName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(clientId))
+            throw new InvalidOperationException("Client ID is required.");
+        if (string.IsNullOrWhiteSpace(clientName))
+            throw new InvalidOperationException("Client name is required.");
+
+        var exists = await _db.Clients.AsNoTracking().AnyAsync(c => c.ClientID == clientId);
+        if (exists)
+            throw new InvalidOperationException($"Client '{clientId}' already exists.");
+
+        var client = new Client
+        {
+            ClientID = clientId,
+            ClientName = clientName,
+            IsActive = true,
+            CurrentState = "Active",
+        };
+        _db.Clients.Add(client);
+        await _db.SaveChangesAsync();
+
+        return new AddClientResponse(clientId, clientName);
+    }
+
+    public async Task UpdateUserAsync(string associateId, UpdateUserRequest req)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.AssociateId == associateId);
+        if (user is null)
+            throw new KeyNotFoundException("User not found.");
+
+        if (req.FirstName  != null) user.FirstName  = req.FirstName;
+        if (req.LastName   != null) user.LastName    = req.LastName;
+        if (req.UserName   != null) user.UserName    = req.UserName;
+        if (req.Department != null) user.Department  = req.Department;
+        if (req.ManagerId  != null) user.ManagerId   = req.ManagerId;
+        if (req.Email      != null) user.EmailAddr   = req.Email;
+
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<List<DisputeExportDto>> GetDisputesAsync(string deptName, int cycleId)
+    {
+        var users = await _db.Users.AsNoTracking()
+            .Where(u => u.Department == deptName)
+            .ToListAsync();
+
+        var userIds = users.Select(u => u.AssociateId).ToList();
+
+        var disputes = await _db.ToolCycleAttestations.AsNoTracking()
+            .Where(tca => userIds.Contains(tca.AssociateId) && tca.CycleID == cycleId && !tca.HadAccess)
+            .ToListAsync();
+
+        if (!disputes.Any()) return new List<DisputeExportDto>();
+
+        var disputedToolIds = disputes.Select(d => d.ToolID).Distinct().ToList();
+        var disputedClientIds = disputes.Select(d => d.ClientID).Distinct().ToList();
+
+        var clientTools = await _db.ClientTools.AsNoTracking()
+            .Where(ct => disputedToolIds.Contains(ct.ToolID))
+            .ToListAsync();
+        var toolNameMap = clientTools
+            .ToDictionary(ct => $"{ct.ClientID}|{ct.ToolID}", ct => ct.ToolName ?? ct.ToolID.ToString());
+
+        var clientNameMap = await _db.Clients.AsNoTracking()
+            .Where(c => disputedClientIds.Contains(c.ClientID))
+            .ToDictionaryAsync(c => c.ClientID, c => c.ClientName ?? c.ClientID);
+
+        var userMap = users.ToDictionary(u => u.AssociateId);
+
+        var managerIds = users.Where(u => u.ManagerId != null).Select(u => u.ManagerId!).Distinct().ToList();
+        var managers = await _db.Users.AsNoTracking()
+            .Where(u => managerIds.Contains(u.AssociateId))
+            .ToDictionaryAsync(u => u.AssociateId, u => $"{u.FirstName} {u.LastName}".Trim());
+
+        return disputes
+            .Select(tca =>
+            {
+                var user = userMap.GetValueOrDefault(tca.AssociateId);
+                var toolKey = $"{tca.ClientID}|{tca.ToolID}";
+                var toolName = toolNameMap.GetValueOrDefault(toolKey, tca.ToolID.ToString());
+                var clientName = clientNameMap.GetValueOrDefault(tca.ClientID, tca.ClientID);
+                var mgrName = user?.ManagerId != null ? managers.GetValueOrDefault(user.ManagerId, "—") : "—";
+                return new DisputeExportDto(
+                    tca.AssociateId,
+                    user != null ? $"{user.FirstName} {user.LastName}".Trim() : tca.AssociateId,
+                    toolName,
+                    clientName,
+                    tca.ClientID,
+                    tca.Remarks ?? "",
+                    user?.EmailAddr ?? "",
+                    mgrName
+                );
+            })
+            .OrderBy(r => r.Name)
+            .ThenBy(r => r.ToolName)
+            .ToList();
+    }
+
+    public async Task<List<NonSubmittedDto>> GetNonSubmittedAsync(string deptName, int cycleId)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+
+        var users = await _db.Users.AsNoTracking()
+            .Where(u => u.Department == deptName)
+            .ToListAsync();
+
+        var userIds = users.Select(u => u.AssociateId).ToList();
+
+        var toolCounts = await _db.UserToolAccess.AsNoTracking()
+            .Where(uta => userIds.Contains(uta.AssociateId) && uta.Access
+                       && uta.GivenDate <= today && (uta.ToDate == null || uta.ToDate >= today))
+            .GroupBy(uta => uta.AssociateId)
+            .Select(g => new { AssociateId = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var submittedCounts = await _db.ToolCycleAttestations.AsNoTracking()
+            .Where(tca => userIds.Contains(tca.AssociateId)
+                       && tca.CycleID == cycleId && (tca.UsedThisCycle.HasValue || tca.HadAccess == false))
+            .GroupBy(tca => tca.AssociateId)
+            .Select(g => new { AssociateId = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var toolCountMap = toolCounts.ToDictionary(x => x.AssociateId, x => x.Count);
+        var submittedCountMap = submittedCounts.ToDictionary(x => x.AssociateId, x => x.Count);
+
+        var managerIds = users.Where(u => u.ManagerId != null).Select(u => u.ManagerId!).Distinct().ToList();
+        var managers = await _db.Users.AsNoTracking()
+            .Where(u => managerIds.Contains(u.AssociateId))
+            .ToDictionaryAsync(u => u.AssociateId, u => $"{u.FirstName} {u.LastName}".Trim());
+
+        return users
+            .Where(u => toolCountMap.ContainsKey(u.AssociateId))
+            .Select(u =>
+            {
+                var total = toolCountMap.GetValueOrDefault(u.AssociateId, 0);
+                var submitted = submittedCountMap.GetValueOrDefault(u.AssociateId, 0);
+                var pct = total > 0 ? (int)Math.Round(submitted * 100.0 / total) : 0;
+                var mgrName = u.ManagerId != null ? managers.GetValueOrDefault(u.ManagerId, "—") : "—";
+                return new NonSubmittedDto(u.AssociateId, $"{u.FirstName} {u.LastName}".Trim(), pct, u.EmailAddr ?? "", mgrName);
+            })
+            .Where(r => r.CompletionPct < 100)
+            .OrderBy(r => r.CompletionPct)
+            .ToList();
     }
 }

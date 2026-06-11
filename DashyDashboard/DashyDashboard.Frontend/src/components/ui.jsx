@@ -1,5 +1,6 @@
 // Shared atoms — ported from the prototype's ui.jsx
 import React, { useEffect, useRef, useState } from 'react';
+import brandLogo from '../assets/broadridge-logo.svg';
 
 const ICONS = {
   search:   <path d="M11 3a8 8 0 1 0 5.2 14.1l3.85 3.85 1.4-1.4-3.85-3.85A8 8 0 0 0 11 3Zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z" />,
@@ -288,7 +289,7 @@ function ProfileMenu({ user, isManager, onLogout }) {
   const initials = fullName.slice(0, 2).toUpperCase();
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} style={{ position: 'relative', flex: 'none' }}>
       <button
         onClick={() => setOpen((v) => !v)}
         style={{
@@ -299,8 +300,8 @@ function ProfileMenu({ user, isManager, onLogout }) {
       >
         <Avatar initials={initials} size={24} />
         <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1, textAlign: 'left' }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{fullName}</span>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>ID · {user.associateId}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap' }}>{fullName}</span>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>ID · {user.associateId}</span>
         </div>
         <Icon name="chevdown" size={12}
           style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }} />
@@ -352,20 +353,13 @@ export function TopBar({ user, cycle, cycles, onCycle, onLogout, search, onSearc
     <div style={{
       display: 'flex', alignItems: 'center', gap: 16,
       padding: '14px 24px',
-      borderBottom: '1px solid var(--border)', background: 'var(--surface)',
+      borderBottom: '1px solid var(--side-border)', background: 'var(--side-bg)',
       flex: 'none',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
-        <div style={{
-          width: 28, height: 28, borderRadius: 7,
-          background: 'linear-gradient(135deg, var(--accent), color-mix(in oklab, var(--accent), black 25%))',
-          color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 700, fontSize: 13, letterSpacing: '-0.02em',
-        }}>B</div>
-        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
-          <span style={{ fontWeight: 600, fontSize: 13, letterSpacing: '-0.01em', color: 'var(--text)' }}>Broadridge</span>
-          <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Access Review</span>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 'none' }}>
+        <img src={brandLogo} alt="Broadridge" style={{ height: 19, display: 'block', filter: 'brightness(0) invert(1)' }} />
+        <span style={{ width: 1, height: 20, background: 'var(--side-border)' }} />
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--side-faint)', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Access Review</span>
       </div>
 
       {cycle && <CycleMenu cycle={cycle} cycles={cycles} onCycle={onCycle} />}
@@ -374,12 +368,12 @@ export function TopBar({ user, cycle, cycles, onCycle, onLogout, search, onSearc
       {isManager && onRole && (
         <div style={{
           display: 'inline-flex', padding: 2,
-          background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8,
+          background: 'var(--side-pill-bg)', border: '1px solid var(--side-pill-border)', borderRadius: 8,
           gap: 2,
         }}>
           {[
             ...(isSuperAdmin ? [{ id: 'superadmin', label: 'Admin Dashboard' }] : []),
-            { id: 'agent',   label: 'Agent view' },
+            { id: 'agent',   label: 'Associate view' },
             { id: 'manager', label: 'Manager view' },
             { id: 'access',  label: 'Access' },
             ...(canOpenUserDirectory ? [{ id: 'admin', label: 'Users' }] : []),
@@ -392,8 +386,8 @@ export function TopBar({ user, cycle, cycles, onCycle, onLogout, search, onSearc
                 style={{
                   height: 28, padding: '0 12px',
                   border: 0, borderRadius: 6, cursor: 'pointer',
-                  background: active ? 'var(--text)' : 'transparent',
-                  color: active ? 'var(--bg)' : 'var(--text-muted)',
+                  background: active ? 'var(--side-pill-active-bg)' : 'transparent',
+                  color: active ? 'var(--side-pill-active-fg)' : 'var(--side-pill-fg)',
                   fontFamily: 'inherit', fontSize: 12, fontWeight: active ? 600 : 500,
                   letterSpacing: '-0.01em',
                   transition: 'background .12s, color .12s',

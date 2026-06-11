@@ -40,10 +40,6 @@ public class AppDbContext : DbContext
             e.Property(u => u.ManagerId).HasColumnType("varchar(50)");
             e.Property(u => u.Department).HasMaxLength(150);
             e.Property(u => u.IsActive).HasDefaultValue(true);
-            e.HasOne(u => u.Manager)
-                .WithMany(u => u.DirectReports)
-                .HasForeignKey(u => u.ManagerId)
-                .IsRequired(false);
         });
 
         // ── Clients ──────────────────────────────────────────────────────────
@@ -54,7 +50,6 @@ public class AppDbContext : DbContext
             e.Property(c => c.ClientID).HasColumnType("varchar(50)");
             e.Property(c => c.ID).ValueGeneratedOnAdd();
             e.HasIndex(c => c.ID).IsUnique();
-            e.HasOne(c => c.Department).WithMany(d => d.Clients).HasForeignKey(c => c.DepartmentID).IsRequired(false);
             e.Property(c => c.IsActive).HasDefaultValue(true);
         });
 
@@ -124,7 +119,9 @@ public class AppDbContext : DbContext
                 .HasMaxLength(50)
                 .HasDefaultValue("Pending");
             e.Property(tca => tca.Remarks).HasMaxLength(500);
-            e.Property(t => t.HadAccess).HasDefaultValue(true);
+            // HadAccess: intentionally NO store default. HasDefaultValue(true) on a non-nullable
+            // bool makes EF drop an explicit "false" on INSERT (warning 20601), silently losing a
+            // first-touch "no access" declaration. The domain initializer (= true) keeps new rows true.
             e.HasOne(tca => tca.Cycle)
                 .WithMany(c => c.Attestations)
                 .HasForeignKey(tca => tca.CycleID);

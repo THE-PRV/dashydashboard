@@ -2,7 +2,6 @@ using System.Threading.RateLimiting;
 using DashyDashboard.Api.Data;
 using DashyDashboard.Api.Middleware;
 using DashyDashboard.Api.Services;
-using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
@@ -27,10 +26,10 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Windows Authentication (IIS passes identity via Negotiate/NTLM).
-// Dev: falls back to X-User-Id header in UserIdentityMiddleware.
-builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
-    .AddNegotiate();
+// Windows Authentication is handled by IIS (both dev and prod).
+// IIS passes the Windows identity; the app just accepts it via IISDefaults.
+// Under Kestrel (dotnet run), identity is null and dev falls back to X-User-Id header.
+builder.Services.AddAuthentication("Windows");
 builder.Services.AddAuthorization();
 
 // CORS — dev only, restricted to Vite dev server.
@@ -63,6 +62,19 @@ builder.Services.AddRateLimiter(opt =>
 
 var app = builder.Build();
 
+// Redirect the sub-application root without a trailing slash (e.g. /dashydashboard) to
+// /dashydashboard/ so the SPA's relative asset URLs (Vite base './') resolve under the
+// sub-path instead of the site root. IIS does not add the slash itself for an in-process app.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.PathBase.HasValue && !ctx.Request.Path.HasValue)
+    {
+        ctx.Response.Redirect(ctx.Request.PathBase + "/" + ctx.Request.QueryString, permanent: false);
+        return;
+    }
+    await next();
+});
+
 // Global exception handler — never leak stack traces.
 app.UseExceptionHandler(err => err.Run(async ctx =>
 {
@@ -91,7 +103,8 @@ app.UseExceptionHandler(err => err.Run(async ctx =>
 if (!app.Environment.IsDevelopment())
     app.UseHsts();
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+    app.UseHttpsRedirection();
 
 // Security response headers.
 app.Use(async (ctx, next) =>

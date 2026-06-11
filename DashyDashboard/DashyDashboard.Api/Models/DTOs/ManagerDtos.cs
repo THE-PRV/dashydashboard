@@ -16,6 +16,7 @@ public record TeamDto(
 public record TeamMemberDto(
     string AssociateId,
     string FullName,
+    string Email,
     string AttestationStatus,
     int TotalTools,
     int AttestedTools,
@@ -46,10 +47,13 @@ public record GrantAccessRequest(
     [Required][MaxLength(50)] string ClientID,
     [Required] int ToolID,
     DateOnly? GivenDate = null,
-    DateOnly? AccessTo = null
+    DateOnly? AccessTo = null,
+    bool Open = false
 );
 
 public record UpdateAccessEndDateRequest(DateOnly? AccessTo);
+
+public record SetOpenAccessRequest(bool Open);
 
 public record MemberAccessDto(
     string ClientID,
@@ -61,7 +65,8 @@ public record AccessRowDto(
     int ToolID,
     string ToolName,
     DateOnly GivenDate,
-    DateOnly? AccessTo
+    DateOnly? AccessTo,
+    bool IsOpen
 );
 
 public record UserListItem(
@@ -72,5 +77,6 @@ public record UserListItem(
     string? UserName,
     string? Department,
     string? ManagerId,
-    string? ManagerName
+    string? ManagerName,
+    string? Email
 );

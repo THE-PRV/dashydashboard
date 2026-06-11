@@ -10,6 +10,5 @@ public class Department
     [Column(TypeName = "varchar(150)")]
     [MaxLength(150)]
     public string DepartmentName { get; set; } = string.Empty;
-    public ICollection<Client> Clients { get; set; } = new List<Client>();
     public ICollection<SuperUser> SuperUsers { get; set; } = new List<SuperUser>();
 }

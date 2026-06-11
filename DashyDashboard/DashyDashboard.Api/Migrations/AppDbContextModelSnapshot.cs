@@ -80,6 +80,11 @@ namespace DashyDashboard.Api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("ID"));
 
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
                     b.Property<string>("Tier")
                         .HasMaxLength(50)
                         .HasColumnType("varchar(50)");
@@ -97,22 +102,27 @@ namespace DashyDashboard.Api.Migrations
                     b.Property<int>("ToolID")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int")
-                        .HasColumnName("UserID");
+                        .HasColumnName("ToolID");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("ToolID"));
 
                     b.Property<string>("ClientID")
-                        .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("varchar(50)");
 
+                    b.Property<int?>("DepartmentID")
+                        .HasColumnType("int");
+
                     b.Property<string>("ToolName")
-                        .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("varchar(255)")
-                        .HasColumnName("Application Name");
+                        .HasColumnName("ToolName");
 
                     b.HasKey("ToolID");
+
+                    b.HasIndex("ClientID");
+
+                    b.HasIndex("DepartmentID");
 
                     b.ToTable("ClientTools", (string)null);
                 });
@@ -144,32 +154,22 @@ namespace DashyDashboard.Api.Migrations
                     b.ToTable("Cycles", (string)null);
                 });
 
-            modelBuilder.Entity("DashyDashboard.Api.Models.Domain.IFHGFHMapping", b =>
+            modelBuilder.Entity("DashyDashboard.Api.Models.Domain.Department", b =>
                 {
-                    b.Property<int>("ID")
+                    b.Property<int>("DepartmentID")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int");
 
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("ID"));
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("DepartmentID"));
 
-                    b.Property<string>("Area")
+                    b.Property<string>("DepartmentName")
                         .IsRequired()
                         .HasMaxLength(150)
-                        .HasColumnType("nvarchar(150)");
+                        .HasColumnType("varchar(150)");
 
-                    b.Property<string>("GFH")
-                        .IsRequired()
-                        .HasMaxLength(150)
-                        .HasColumnType("nvarchar(150)");
+                    b.HasKey("DepartmentID");
 
-                    b.Property<string>("IFH")
-                        .IsRequired()
-                        .HasMaxLength(150)
-                        .HasColumnType("nvarchar(150)");
-
-                    b.HasKey("ID");
-
-                    b.ToTable("IFHGFHMapping", (string)null);
+                    b.ToTable("Departments", (string)null);
                 });
 
             modelBuilder.Entity("DashyDashboard.Api.Models.Domain.LoginLog", b =>
@@ -223,17 +223,13 @@ namespace DashyDashboard.Api.Migrations
                     b.Property<DateTime>("CreatedOn")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("Department")
-                        .IsRequired()
-                        .HasMaxLength(150)
-                        .HasColumnType("nvarchar(150)");
+                    b.Property<int?>("DepartmentID")
+                        .HasColumnType("int");
 
-                    b.Property<string>("IsActive")
-                        .IsRequired()
+                    b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("varchar(10)")
-                        .HasDefaultValue("TRUE");
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
 
                     b.Property<string>("RoleName")
                         .IsRequired()
@@ -242,8 +238,11 @@ namespace DashyDashboard.Api.Migrations
 
                     b.HasKey("SuperUserID");
 
-                    b.HasIndex("AssociateId", "RoleName", "Department")
-                        .IsUnique();
+                    b.HasIndex("DepartmentID");
+
+                    b.HasIndex("AssociateId", "RoleName", "DepartmentID")
+                        .IsUnique()
+                        .HasFilter("[DepartmentID] IS NOT NULL");
 
                     b.ToTable("SuperUsers", (string)null);
                 });
@@ -271,6 +270,11 @@ namespace DashyDashboard.Api.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)")
                         .HasDefaultValue("Pending");
+
+                    b.Property<bool>("HadAccess")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
 
                     b.Property<string>("Remarks")
                         .HasMaxLength(500)
@@ -315,6 +319,11 @@ namespace DashyDashboard.Api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("ID"));
 
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
                     b.Property<string>("LastName")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
@@ -336,29 +345,11 @@ namespace DashyDashboard.Api.Migrations
                     b.HasIndex("ID")
                         .IsUnique();
 
-                    b.HasIndex("ManagerId");
-
                     b.ToTable("Users", (string)null);
                 });
 
             modelBuilder.Entity("DashyDashboard.Api.Models.Domain.UserToolAccess", b =>
                 {
-                    b.Property<int>("UserID")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasColumnName("UserID");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("UserID"));
-
-                    b.Property<string>("Access")
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)");
-
-                    b.Property<string>("ApplicationName")
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)")
-                        .HasColumnName("Application Name");
-
                     b.Property<string>("AssociateId")
                         .HasMaxLength(50)
                         .HasColumnType("varchar(50)")
@@ -368,31 +359,27 @@ namespace DashyDashboard.Api.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("varchar(50)");
 
-                    b.Property<int?>("ClientToolToolID")
+                    b.Property<int>("ToolID")
                         .HasColumnType("int");
 
-                    b.Property<string>("FromDate")
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("FromDate");
+                    b.Property<bool>("Access")
+                        .HasColumnType("bit");
 
-                    b.Property<string>("ToDate")
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("ToDate");
+                    b.Property<int?>("DepartmentID")
+                        .HasColumnType("int");
 
-                    b.Property<string>("UserAssociateId")
-                        .HasColumnType("varchar(50)");
+                    b.Property<DateTime>("GivenDate")
+                        .HasColumnType("date")
+                        .HasColumnName("GivenDate");
 
-                    b.HasKey("UserID");
+                    b.Property<DateTime?>("ToDate")
+                        .HasColumnType("date");
 
-                    b.HasIndex("AssociateId");
+                    b.HasKey("AssociateId", "ClientID", "ToolID");
 
-                    b.HasIndex("ClientToolToolID");
+                    b.HasIndex("DepartmentID");
 
-                    b.HasIndex("UserAssociateId");
-
-                    b.HasIndex("ClientID", "ApplicationName");
+                    b.HasIndex("ToolID");
 
                     b.ToTable("UsersToolAccess", (string)null);
                 });
@@ -414,7 +401,22 @@ namespace DashyDashboard.Api.Migrations
                         .WithMany("Tools")
                         .HasForeignKey("ClientID");
 
+                    b.HasOne("DashyDashboard.Api.Models.Domain.Department", "Department")
+                        .WithMany()
+                        .HasForeignKey("DepartmentID");
+
                     b.Navigation("Client");
+
+                    b.Navigation("Department");
+                });
+
+            modelBuilder.Entity("DashyDashboard.Api.Models.Domain.SuperUser", b =>
+                {
+                    b.HasOne("DashyDashboard.Api.Models.Domain.Department", "Department")
+                        .WithMany("SuperUsers")
+                        .HasForeignKey("DepartmentID");
+
+                    b.Navigation("Department");
                 });
 
             modelBuilder.Entity("DashyDashboard.Api.Models.Domain.ToolCycleAttestation", b =>
@@ -434,35 +436,25 @@ namespace DashyDashboard.Api.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("DashyDashboard.Api.Models.Domain.User", b =>
-                {
-                    b.HasOne("DashyDashboard.Api.Models.Domain.User", "Manager")
-                        .WithMany("DirectReports")
-                        .HasForeignKey("ManagerId");
-
-                    b.Navigation("Manager");
-                });
-
             modelBuilder.Entity("DashyDashboard.Api.Models.Domain.UserToolAccess", b =>
                 {
                     b.HasOne("DashyDashboard.Api.Models.Domain.User", "User")
-                        .WithMany()
+                        .WithMany("ToolAccess")
                         .HasForeignKey("AssociateId");
 
-                    b.HasOne("DashyDashboard.Api.Models.Domain.ClientTool", null)
-                        .WithMany("UserAccess")
-                        .HasForeignKey("ClientToolToolID");
-
-                    b.HasOne("DashyDashboard.Api.Models.Domain.User", null)
-                        .WithMany("ToolAccess")
-                        .HasForeignKey("UserAssociateId");
+                    b.HasOne("DashyDashboard.Api.Models.Domain.Department", "Department")
+                        .WithMany()
+                        .HasForeignKey("DepartmentID");
 
                     b.HasOne("DashyDashboard.Api.Models.Domain.ClientTool", "ClientTool")
-                        .WithMany()
-                        .HasForeignKey("ClientID", "ApplicationName")
-                        .HasPrincipalKey("ClientID", "ToolName");
+                        .WithMany("UserAccess")
+                        .HasForeignKey("ToolID")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("ClientTool");
+
+                    b.Navigation("Department");
 
                     b.Navigation("User");
                 });
@@ -482,10 +474,13 @@ namespace DashyDashboard.Api.Migrations
                     b.Navigation("Attestations");
                 });
 
+            modelBuilder.Entity("DashyDashboard.Api.Models.Domain.Department", b =>
+                {
+                    b.Navigation("SuperUsers");
+                });
+
             modelBuilder.Entity("DashyDashboard.Api.Models.Domain.User", b =>
                 {
-                    b.Navigation("DirectReports");
-
                     b.Navigation("ToolAccess");
                 });
 #pragma warning restore 612, 618

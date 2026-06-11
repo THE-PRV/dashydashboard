@@ -1,6 +1,6 @@
 import { asAssociateId } from '../lib/contracts.js';
+import { API_BASE } from './base.js';
 
-const BASE = import.meta.env.VITE_API_URL ?? '';
 const DEV_SESSION_KEY = 'dashy.devUserId';
 const DEV_LOGIN_ENABLED = import.meta.env.DEV;
 
@@ -39,7 +39,7 @@ async function readProblemTitle(res) {
 }
 
 export async function getCurrentUser() {
-  const res = await fetch(`${BASE}/api/auth/me`, {
+  const res = await fetch(`${API_BASE}/api/auth/me`, {
     credentials: 'include',
     headers: getAuthHeaders(),
   });
@@ -66,7 +66,7 @@ export async function getCurrentUser() {
 }
 
 export async function login(username, password) {
-  const res = await fetch(`${BASE}/api/auth/login`, {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
