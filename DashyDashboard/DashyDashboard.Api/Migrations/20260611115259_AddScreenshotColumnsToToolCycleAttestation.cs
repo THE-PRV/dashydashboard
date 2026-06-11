@@ -38,10 +38,11 @@ namespace DashyDashboard.Api.Migrations
                 type: "datetime2",
                 nullable: true);
 
-            migrationBuilder.AddColumn<int>(
+            migrationBuilder.AddColumn<string>(
                 name: "ScreenshotReviewedBy",
                 table: "ToolCycleAttestation",
-                type: "int",
+                type: "varchar(50)",
+                maxLength: 50,
                 nullable: true);
 
             migrationBuilder.AddColumn<string>(

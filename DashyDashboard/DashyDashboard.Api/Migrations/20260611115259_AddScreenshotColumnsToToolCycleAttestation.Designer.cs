@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DashyDashboard.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260611114247_AddScreenshotColumnsToToolCycleAttestation")]
+    [Migration("20260611115259_AddScreenshotColumnsToToolCycleAttestation")]
     partial class AddScreenshotColumnsToToolCycleAttestation
     {
         /// <inheritdoc />
@@ -296,8 +296,9 @@ namespace DashyDashboard.Api.Migrations
                     b.Property<DateTime?>("ScreenshotReviewedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<int?>("ScreenshotReviewedBy")
-                        .HasColumnType("int");
+                    b.Property<string>("ScreenshotReviewedBy")
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)");
 
                     b.Property<string>("ScreenshotStatus")
                         .HasMaxLength(20)

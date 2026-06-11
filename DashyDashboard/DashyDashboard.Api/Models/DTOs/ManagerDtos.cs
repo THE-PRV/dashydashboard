@@ -86,6 +86,10 @@ public record AccessExportRowDto(
     string? ToolUserId
 );
 
+// ── Screenshot review (Feature 2) ─────────────────────────────────────────
+
+public record ReviewScreenshotRequest(bool Approve, [MaxLength(500)] string? Reason = null);
+
 public record UserListItem(
     string AssociateId,
     string FirstName,

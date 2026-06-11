@@ -66,7 +66,9 @@ public record NonSubmittedDto(
     string Name,
     int CompletionPct,
     string Email,
-    string ManagerName
+    string ManagerName,
+    // §7: "Not submitted" / "Awaiting approval" / "Has rejected screenshots"
+    string Status
 );
 
 public record DisputeExportDto(

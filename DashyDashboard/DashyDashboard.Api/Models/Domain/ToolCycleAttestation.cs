@@ -47,8 +47,10 @@ public class ToolCycleAttestation
     [MaxLength(20)]
     public string? ScreenshotStatus { get; set; }
 
-    /// <summary>AssociateId of the reviewer (per spec, stored as int).</summary>
-    public int? ScreenshotReviewedBy { get; set; }
+    /// <summary>AssociateId of the reviewer (varchar(50) — AssociateIds can be alphanumeric, e.g. PRV001).</summary>
+    [Column(TypeName = "varchar(50)")]
+    [MaxLength(50)]
+    public string? ScreenshotReviewedBy { get; set; }
 
     public DateTime? ScreenshotReviewedAt { get; set; }
 

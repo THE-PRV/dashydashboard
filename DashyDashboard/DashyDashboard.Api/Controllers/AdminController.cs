@@ -210,9 +210,9 @@ public class AdminController : ControllerBase
         }
 
         var rows = await _admin.GetNonSubmittedAsync(deptName, cycleId);
-        var headers = new[] { "Associate ID", "Name", "Completion %", "Email", "Reports To" };
+        var headers = new[] { "Associate ID", "Name", "Completion %", "Status", "Email", "Reports To" };
         var bytes = XlsxExporter.Build("Not Fully Submitted", headers,
-            rows.Select(d => new object?[] { d.AssociateId, d.Name, d.CompletionPct, d.Email, d.ManagerName }));
+            rows.Select(d => new object?[] { d.AssociateId, d.Name, d.CompletionPct, d.Status, d.Email, d.ManagerName }));
         Response.Headers["X-Content-Type-Options"] = "nosniff";
         return File(bytes, XlsxMime, $"not-fully-submitted-{deptName}-cycle{cycleId}.xlsx");
     }

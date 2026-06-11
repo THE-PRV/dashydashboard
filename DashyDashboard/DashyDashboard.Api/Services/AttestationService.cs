@@ -8,7 +8,15 @@ namespace DashyDashboard.Api.Services;
 public class AttestationService
 {
     private readonly AppDbContext _db;
-    public AttestationService(AppDbContext db) { _db = db; }
+    private readonly ScreenshotStorageService _screenshots;
+    public AttestationService(AppDbContext db, ScreenshotStorageService screenshots)
+    {
+        _db = db;
+        _screenshots = screenshots;
+    }
+
+    // Screenshot statuses that satisfy submit gating (§7). Rejected / NULL block submission.
+    private static readonly string[] SubmittableScreenshotStatuses = { "Pending", "Approved" };
 
     private async Task AssertToolAccessAsync(string associateId, string clientId, int toolId)
     {
@@ -226,6 +234,21 @@ public class AttestationService
         if (missingRemark)
             throw new InvalidOperationException("Add a remark for each tool you marked as 'No access' before submitting.");
 
+        // Screenshot gate (§7): every non-exempt row (HadAccess != false) that is being submitted
+        // must have a screenshot in Pending or Approved state. Rejected or NULL blocks submission.
+        // No-access rows (HadAccess == false) are exempt.
+        var screenshotBlocking = await _db.ToolCycleAttestations.AsNoTracking()
+            .Where(tca => tca.CycleID == cycleId
+                       && tca.AssociateId == associateId
+                       && tca.HadAccess
+                       && tca.UsedThisCycle.HasValue
+                       && (tca.ScreenshotStatus == null
+                           || !SubmittableScreenshotStatuses.Contains(tca.ScreenshotStatus)))
+            .Select(tca => new ScreenshotGateRow(tca.ClientID, tca.ToolID))
+            .ToListAsync();
+        if (screenshotBlocking.Count > 0)
+            throw new ScreenshotGateException(screenshotBlocking);
+
         var today = DateOnly.FromDateTime(DateTime.Today);
         var accessKeys = await _db.UserToolAccess.AsNoTracking()
             .Where(uta => uta.AssociateId == associateId
@@ -312,5 +335,191 @@ public class AttestationService
         }
 
         await _db.SaveChangesAsync();
+    }
+
+    // ── Screenshots (§4) ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Uploads (or re-uploads) the single screenshot for one attestation row. Validates the row
+    /// exists and the upload is allowed per §7, persists via the storage service, sets status to
+    /// Pending and clears any prior review, then writes an upload log row.
+    /// Last write wins on re-upload.
+    /// </summary>
+    public async Task UploadScreenshotAsync(string associateId, int cycleId, string clientId, int toolId, byte[] bytes)
+    {
+        var att = await PrepareScreenshotRowAsync(associateId, cycleId, clientId, toolId);
+        ApplyUpload(att, associateId, cycleId, clientId, toolId, bytes);
+
+        LogScreenshotEvent(cycleId, associateId, 1,
+            $"Screenshot uploaded for {clientId}/{toolId} (Pending review).");
+
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Batch upload. Each file is named <c>{clientId}_{toolId}.ext</c> (split on the FIRST underscore;
+    /// clientIds never contain '_'). The tool part is matched against the caller's OWN attestation
+    /// rows in this cycle (by int ToolID string-form, then ToolName) BEFORE any disk path is composed.
+    /// Matched files flow through the same single-upload pipeline. Unmatched / disallowed / invalid
+    /// files are reported per-file; partial success is fine. Writes ONE log row with the saved count.
+    /// </summary>
+    public async Task<BatchScreenshotResult> UploadBatchAsync(
+        string associateId, int cycleId, IReadOnlyList<(string FileName, byte[] Bytes)> files)
+    {
+        await AssertCycleExistsAsync(cycleId);
+
+        // The caller's attestation rows for this cycle: the only legitimate upload targets.
+        var rows = await _db.ToolCycleAttestations
+            .Where(a => a.AssociateId == associateId && a.CycleID == cycleId)
+            .ToListAsync();
+
+        // Tool names for matching the filename's tool part against a human-readable name.
+        var toolNames = await _db.ClientTools.AsNoTracking()
+            .Where(ct => rows.Select(r => r.ToolID).Distinct().Contains(ct.ToolID))
+            .ToDictionaryAsync(ct => ct.ToolID, ct => ct.ToolName ?? "");
+
+        var results = new List<BatchScreenshotItemResult>();
+        var saved = 0;
+
+        foreach (var (fileName, bytes) in files)
+        {
+            var (clientId, toolPart) = SplitBatchFileName(fileName);
+            if (clientId is null)
+            {
+                results.Add(new BatchScreenshotItemResult(fileName, "unmatched",
+                    "Name must be {clientId}_{toolId}.ext"));
+                continue;
+            }
+
+            // Match against the caller's own rows: clientId exact, tool part = ToolID (string form)
+            // or the tool's name (case-insensitive). This binds to a validated DB row before any
+            // disk path is built.
+            var match = rows.FirstOrDefault(r =>
+                string.Equals(r.ClientID, clientId, StringComparison.OrdinalIgnoreCase)
+                && (string.Equals(r.ToolID.ToString(), toolPart, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(toolNames.GetValueOrDefault(r.ToolID, ""), toolPart, StringComparison.OrdinalIgnoreCase)));
+
+            if (match is null)
+            {
+                results.Add(new BatchScreenshotItemResult(fileName, "unmatched",
+                    "No matching tool access for this cycle."));
+                continue;
+            }
+
+            try
+            {
+                EnsureUploadAllowed(match);
+            }
+            catch (InvalidOperationException ex)
+            {
+                results.Add(new BatchScreenshotItemResult(fileName, "notAllowed", ex.Message));
+                continue;
+            }
+
+            try
+            {
+                ApplyUpload(match, associateId, cycleId, match.ClientID, match.ToolID, bytes);
+                saved++;
+                results.Add(new BatchScreenshotItemResult(fileName, "saved", null));
+            }
+            catch (ArgumentException)
+            {
+                results.Add(new BatchScreenshotItemResult(fileName, "invalidImage",
+                    "File is not a valid image."));
+            }
+        }
+
+        if (saved > 0)
+        {
+            LogScreenshotEvent(cycleId, associateId, saved,
+                $"Batch screenshot upload: {saved} of {files.Count} saved (Pending review).");
+        }
+
+        await _db.SaveChangesAsync();
+        return new BatchScreenshotResult(results);
+    }
+
+    /// <summary>
+    /// Loads (or creates) the attestation row for an upload, asserting access and the §7 upload rule.
+    /// Throws KeyNotFoundException (tool/cycle missing) / UnauthorizedAccessException (no access) /
+    /// InvalidOperationException (upload not allowed).
+    /// </summary>
+    private async Task<ToolCycleAttestation> PrepareScreenshotRowAsync(
+        string associateId, int cycleId, string clientId, int toolId)
+    {
+        await AssertCycleExistsAsync(cycleId);
+        await AssertToolAccessAsync(associateId, clientId, toolId);
+
+        var att = await _db.ToolCycleAttestations
+            .FirstOrDefaultAsync(a =>
+                a.AssociateId == associateId && a.CycleID == cycleId
+                && a.ClientID == clientId && a.ToolID == toolId);
+
+        if (att is null)
+        {
+            att = new ToolCycleAttestation
+            {
+                CycleID = cycleId, AssociateId = associateId,
+                ClientID = clientId, ToolID = toolId,
+                AttestationStatus = "Pending"
+            };
+            _db.ToolCycleAttestations.Add(att);
+        }
+
+        EnsureUploadAllowed(att);
+        return att;
+    }
+
+    /// <summary>
+    /// §7 upload rules: no-access rows (HadAccess == false) are exempt and never carry a screenshot.
+    /// After the cycle due date the ONLY allowed upload is re-uploading a currently-Rejected screenshot.
+    /// </summary>
+    private void EnsureUploadAllowed(ToolCycleAttestation att)
+    {
+        if (!att.HadAccess)
+            throw new InvalidOperationException("This tool is marked as no access and does not require a screenshot.");
+
+        var cycle = _db.Cycles.AsNoTracking().First(c => c.CycleID == att.CycleID);
+        var pastDue = DateOnly.FromDateTime(DateTime.Today) > cycle.DueDate;
+        if (pastDue && att.ScreenshotStatus != "Rejected")
+            throw new InvalidOperationException(
+                "The cycle due date has passed; only rejected screenshots may be re-uploaded.");
+    }
+
+    /// <summary>Saves the bytes, stamps the row Pending and clears any prior review.</summary>
+    private void ApplyUpload(ToolCycleAttestation att, string associateId, int cycleId,
+        string clientId, int toolId, byte[] bytes)
+    {
+        var save = _screenshots.Save(bytes, cycleId, associateId, clientId, toolId);
+
+        att.ScreenshotPath = save.RelativePath;
+        att.ScreenshotHash = save.Sha256Hash;
+        att.ScreenshotUploadedAt = DateTime.UtcNow;
+        att.ScreenshotStatus = "Pending";
+        att.ScreenshotReviewedBy = null;
+        att.ScreenshotReviewedAt = null;
+        att.ScreenshotRejectReason = null;
+    }
+
+    /// <summary>Splits a batch filename on the FIRST underscore into (clientId, toolPart).</summary>
+    private static (string? ClientId, string ToolPart) SplitBatchFileName(string fileName)
+    {
+        var name = Path.GetFileNameWithoutExtension(fileName ?? "");
+        var us = name.IndexOf('_');
+        if (us <= 0 || us == name.Length - 1) return (null, "");
+        return (name[..us], name[(us + 1)..]);
+    }
+
+    /// <summary>Adds an AttestationLogs row for a screenshot event. Summary is truncated to fit (100).</summary>
+    private void LogScreenshotEvent(int cycleId, string associateId, int count, string summary)
+    {
+        _db.AttestationLogs.Add(new AttestationLog
+        {
+            CycleID = cycleId,
+            AssociateId = associateId,
+            SubmittedAt = DateTime.UtcNow,
+            ToolCount = count,
+            Summary = summary.Length > 100 ? summary[..100] : summary
+        });
     }
 }

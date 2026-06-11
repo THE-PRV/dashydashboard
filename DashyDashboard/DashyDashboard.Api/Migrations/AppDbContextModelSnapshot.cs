@@ -293,8 +293,9 @@ namespace DashyDashboard.Api.Migrations
                     b.Property<DateTime?>("ScreenshotReviewedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<int?>("ScreenshotReviewedBy")
-                        .HasColumnType("int");
+                    b.Property<string>("ScreenshotReviewedBy")
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)");
 
                     b.Property<string>("ScreenshotStatus")
                         .HasMaxLength(20)
