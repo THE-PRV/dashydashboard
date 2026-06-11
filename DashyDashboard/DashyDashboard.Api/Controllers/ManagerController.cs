@@ -107,6 +107,58 @@ public class ManagerController : ControllerBase
         catch (UnauthorizedAccessException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
     }
 
+    [HttpPut("team/{memberId}/access/{clientId}/{toolId}/user-id")]
+    public async Task<IActionResult> UpdateAccessUserId(string memberId, string clientId, int toolId,
+        [FromBody] UpdateToolUserIdRequest req)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        if (!await IsManagerAsync()) return Forbid();
+        try
+        {
+            await _svc.UpdateToolUserIdAsync(CurrentUser.AssociateId, memberId, clientId, toolId, req.ToolUserId);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { status = 404, title = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
+    }
+
+    // Export all visible accesses as .xlsx. Honours the Access page's on-screen filters
+    // (member / client) and the caller's visibility: managers see their direct reports,
+    // an Admin SuperUser sees everyone. Built with the shared XlsxExporter helper.
+    [HttpGet("access/export")]
+    public async Task<IActionResult> ExportAccesses([FromQuery] int cycleId,
+        [FromQuery] string? memberId = null, [FromQuery] string? clientId = null)
+    {
+        if (CurrentUser is null) return Unauthorized();
+
+        var isAdmin = IsAdminSuperUser();
+        if (!isAdmin && !await IsManagerAsync()) return Forbid();
+
+        var rows = await _svc.GetAccessExportAsync(CurrentUser.AssociateId, isAdmin, memberId, clientId);
+
+        var headers = new[]
+        {
+            "Associate Name", "Associate ID", "Client", "Tool ID", "Tool Name",
+            "Tier", "Access From", "Access To", "User ID"
+        };
+        var bytes = XlsxExporter.Build("Accesses", headers, rows.Select(r => new object?[]
+        {
+            r.AssociateName,
+            r.AssociateId,
+            $"{r.ClientName} ({r.ClientId})",
+            r.ToolID,
+            r.ToolName,
+            r.Tier,
+            r.GivenDate.ToString("yyyy-MM-dd"),
+            r.AccessTo?.ToString("yyyy-MM-dd"),
+            r.ToolUserId
+        }));
+
+        const string xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return File(bytes, xlsxMime, $"accesses-cycle{cycleId}.xlsx");
+    }
+
     [HttpPut("team/{memberId}/access/{clientId}/{toolId}/open")]
     public async Task<IActionResult> SetOpenAccess(string memberId, string clientId, int toolId,
         [FromBody] SetOpenAccessRequest req)

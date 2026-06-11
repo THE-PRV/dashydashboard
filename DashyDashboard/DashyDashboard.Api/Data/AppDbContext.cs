@@ -84,6 +84,7 @@ public class AppDbContext : DbContext
             e.Property(uta => uta.Access).HasColumnType("bit");
             e.Property(uta => uta.GivenDate).HasConversion(dateOnlyConverter).HasColumnType("date").HasColumnName("GivenDate");
             e.Property(uta => uta.ToDate).HasConversion(nullableDateOnlyConverter).HasColumnType("date");
+            e.Property(uta => uta.ToolUserId).HasColumnType("nvarchar(100)");
             e.HasOne(uta => uta.User)
                 .WithMany(u => u.ToolAccess)
                 .HasForeignKey(uta => uta.AssociateId)

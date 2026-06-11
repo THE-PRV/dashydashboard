@@ -22,6 +22,12 @@ public class UserToolAccess
 
     public DateOnly? ToDate { get; set; }
 
+    /// <summary>
+    /// Optional login the associate uses inside the client's tool. Displayed in the UI as "User ID".
+    /// </summary>
+    [MaxLength(100)]
+    public string? ToolUserId { get; set; }
+
     public int? DepartmentID { get; set; }
 
     [ForeignKey(nameof(DepartmentID))]
