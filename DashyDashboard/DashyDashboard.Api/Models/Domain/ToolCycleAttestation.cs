@@ -30,6 +30,31 @@ public class ToolCycleAttestation
 
     public DateTime? SubmittedAt { get; set; }
 
+    // ── Screenshot evidence (Feature 2) ──────────────────────────────────────
+    // All nullable: an attestation may have no screenshot. No-access rows are exempt.
+
+    /// <summary>Path RELATIVE to the configured Screenshots root (never an absolute path).</summary>
+    [MaxLength(500)]
+    public string? ScreenshotPath { get; set; }
+
+    /// <summary>SHA-256 (hex) of the stored screenshot bytes. Used as an ETag for caching.</summary>
+    [MaxLength(64)]
+    public string? ScreenshotHash { get; set; }
+
+    public DateTime? ScreenshotUploadedAt { get; set; }
+
+    /// <summary>NULL (none) / Pending / Approved / Rejected.</summary>
+    [MaxLength(20)]
+    public string? ScreenshotStatus { get; set; }
+
+    /// <summary>AssociateId of the reviewer (per spec, stored as int).</summary>
+    public int? ScreenshotReviewedBy { get; set; }
+
+    public DateTime? ScreenshotReviewedAt { get; set; }
+
+    [MaxLength(500)]
+    public string? ScreenshotRejectReason { get; set; }
+
     public Cycle Cycle { get; set; } = null!;
     public User User { get; set; } = null!;
 }

@@ -21,6 +21,8 @@ builder.Services.AddScoped<AttestationService>();
 builder.Services.AddScoped<ManagerService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<AdminService>();
+// Stateless, config-only owner of screenshot disk I/O.
+builder.Services.AddSingleton<ScreenshotStorageService>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
