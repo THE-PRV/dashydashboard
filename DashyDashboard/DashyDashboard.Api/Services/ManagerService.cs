@@ -493,7 +493,7 @@ public class ManagerService
         return clients.Select(c => new ClientAttestationDto(
             c.ClientID, c.ClientName ?? c.ClientID,
             c.Tools.Count, 0, 0,
-            c.Tools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null)).ToList()
+            c.Tools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null, null, null, null)).ToList()
         )).ToList();
     }
 
@@ -519,7 +519,7 @@ public class ManagerService
                 return new ClientAttestationDto(
                     c.ClientID, c.ClientName ?? c.ClientID,
                     matchingTools.Count, 0, 0,
-                    matchingTools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null)).ToList()
+                    matchingTools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null, null, null, null)).ToList()
                 );
             })
             .Where(c => c.TotalTools > 0)

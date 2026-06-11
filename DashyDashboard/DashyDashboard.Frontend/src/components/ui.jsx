@@ -30,6 +30,10 @@ const ICONS = {
   more:     <path d="M5 12h.01M12 12h.01M19 12h.01" />,
   arrow_up_right: <path d="M7 17 17 7M9 7h8v8" />,
   logout:   <path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l-5-5 5-5M5 12h12" />,
+  camera:   <path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />,
+  upload:   <path d="M12 16V4M7 9l5-5 5 5M4 18v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" />,
+  image:    <path d="M4 4h16v16H4z M9 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M5 18l5-6 4 4 2-2 4 5" />,
+  refresh:  <path d="M3 12a9 9 0 0 1 15.3-6.4L21 8M21 3v5h-5 M21 12a9 9 0 0 1-15.3 6.4L3 16M3 21v-5h5" />,
 };
 
 // Small hook: closes a popover when the user clicks outside it.
@@ -78,6 +82,7 @@ export function Badge({ children, variant = 'neutral', size = 'md' }) {
     used:      { fg: 'var(--badge-used-fg)',      bg: 'var(--badge-used-bg)',      dot: 'var(--badge-used-dot)' },
     notused:   { fg: 'var(--badge-notused-fg)',   bg: 'var(--badge-notused-bg)',   dot: 'var(--badge-notused-dot)' },
     pending:   { fg: 'var(--badge-pending-fg)',   bg: 'var(--badge-pending-bg)',   dot: 'var(--badge-pending-dot)' },
+    danger:    { fg: 'var(--danger-fg)', bg: 'var(--danger-bg)', dot: 'var(--danger-fg)' },
     neutral:   { fg: 'var(--text-muted)', bg: 'var(--surface-2)', dot: 'var(--text-muted)' },
   }[variant] ?? { fg: 'var(--text-muted)', bg: 'var(--surface-2)', dot: 'var(--text-muted)' };
   return (

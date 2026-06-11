@@ -17,7 +17,10 @@ public record ToolAttestationDto(
     bool? UsedThisCycle,
     bool HadAccess,
     string AttestationStatus,
-    string? Remarks
+    string? Remarks,
+    string? ScreenshotStatus,
+    string? ScreenshotRejectReason,
+    DateTime? ScreenshotUploadedAt
 );
 
 public record ToggleUsedRequest(bool? Used);

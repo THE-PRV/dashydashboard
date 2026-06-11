@@ -1,8 +1,35 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, TriToggle, Progress, Button, TopBar } from '../components/ui.jsx';
 import { getMyAttestations, toggleUsed, toggleHadAccess, submitAll } from '../api/attestations.js';
 import RemarksModal from '../components/RemarksModal.jsx';
+import ScreenshotCell from '../components/ScreenshotCell.jsx';
+import ScreenshotBatchModal from '../components/ScreenshotBatchModal.jsx';
 import { asToolIdKey } from '../lib/contracts.js';
+
+// Screenshot statuses that satisfy submit gating — mirrors AttestationService's
+// SubmittableScreenshotStatuses. Rejected / missing block submission.
+const SUBMITTABLE_SCREENSHOT_STATUSES = ['Pending', 'Approved'];
+
+function rowKey(clientId, toolId) {
+  return `${clientId}/${asToolIdKey(toolId)}`;
+}
+
+// True once the cycle's due date has passed (date-only comparison, matches the server's
+// DateOnly.Today vs Cycle.DueDate check).
+function isPastDue(cycle) {
+  if (!cycle?.dueDate) return false;
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return todayKey > String(cycle.dueDate).slice(0, 10);
+}
+
+// A non-exempt, decided tool (used or explicitly not-used) needs a Pending/Approved
+// screenshot to be submittable — mirrors the server's screenshot gate (§7).
+function needsScreenshot(tool) {
+  return tool.hadAccess !== false
+    && (tool.usedThisCycle !== null && tool.usedThisCycle !== undefined)
+    && !SUBMITTABLE_SCREENSHOT_STATUSES.includes(tool.screenshotStatus);
+}
 
 const CLIENT_ACCENTS = {
   marex: '#2563eb',
@@ -37,6 +64,10 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
   const [remarkPane, setRemarkPane] = useState(null);
+  const [focusedRow, setFocusedRow] = useState(null); // `${clientId}/${toolId}` of the paste target
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [gateOffending, setGateOffending] = useState(null); // Set of `${clientId}/${toolId}` from the API's offendingRows (fallback truth)
+  const pasteTargetsRef = useRef(new Map()); // rowKey -> (file) => void, registered by ScreenshotCell
 
   const loadAttestations = async ({ preserveExpansion = false } = {}) => {
     if (!cycle) {
@@ -72,6 +103,37 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
     loadAttestations();
   }, [cycle]);
 
+  // Each visible ScreenshotCell registers a (file) => void handler for its row key.
+  const registerPasteTarget = useCallback((key, handler) => {
+    if (handler) pasteTargetsRef.current.set(key, handler);
+    else pasteTargetsRef.current.delete(key);
+  }, []);
+
+  // Clipboard paste (§A3): with a row focused, Ctrl+V with image data attaches the
+  // pasted image to that row through the same compress+upload pipeline.
+  useEffect(() => {
+    const onPaste = (e) => {
+      if (!focusedRow) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            const handler = pasteTargetsRef.current.get(focusedRow);
+            if (handler) {
+              e.preventDefault();
+              handler(file);
+            }
+          }
+          break;
+        }
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [focusedRow]);
+
   const totals = useMemo(() => {
     let total = 0;
     let attested = 0;
@@ -86,6 +148,26 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
     clients.length > 0 &&
     clients.every((c) => c.tools.every((t) => t.attestationStatus === 'Submitted')),
   [clients]);
+
+  const pastDue = useMemo(() => isPastDue(cycle), [cycle]);
+
+  // §A5: rows that block submission because they're missing a Pending/Approved screenshot.
+  // Computed client-side as the primary truth; gateOffending (from a 400 response) is kept
+  // as a fallback in case a row's local state is briefly stale.
+  const blockedRows = useMemo(() => {
+    const blocked = new Set();
+    clients.forEach((client) => {
+      client.tools.forEach((tool) => {
+        if (needsScreenshot(tool)) blocked.add(rowKey(client.clientID, tool.toolID));
+      });
+    });
+    if (gateOffending) {
+      gateOffending.forEach((key) => blocked.add(key));
+    }
+    return blocked;
+  }, [clients, gateOffending]);
+
+  const screenshotGateBlocked = blockedRows.size > 0;
 
   const visible = useMemo(() => {
     if (!search) return clients;
@@ -124,13 +206,25 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
       return;
     }
 
+    if (screenshotGateBlocked) {
+      flashToast('warn', `Upload a screenshot for every tool you used before submitting (${blockedRows.size} still need one).`);
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await submitAll(cycle.cycleID, null);
+      setGateOffending(null);
       await loadAttestations({ preserveExpansion: true });
       flashToast('ok', result?.summary ?? 'Attestation submitted and saved.');
     } catch (error) {
-      flashToast('err', error.message || 'Submission failed.');
+      const offending = error.body?.offendingRows;
+      if (Array.isArray(offending) && offending.length > 0) {
+        setGateOffending(new Set(offending.map((row) => rowKey(row.clientID ?? row.ClientID, row.toolID ?? row.ToolID))));
+        flashToast('err', error.message || 'Upload a screenshot for every tool you used before submitting.');
+      } else {
+        flashToast('err', error.message || 'Submission failed.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -364,14 +458,29 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
           </div>
           <Progress value={totals.attested} max={totals.total} height={8} />
           <Button
+            variant="outline"
+            size="sm"
+            icon="upload"
+            onClick={() => setBatchOpen(true)}
+            disabled={isSubmitted || pastDue}
+            style={{ justifyContent: 'center', opacity: (isSubmitted || pastDue) ? 0.6 : 1, cursor: (isSubmitted || pastDue) ? 'not-allowed' : 'pointer' }}
+          >
+            Batch upload screenshots
+          </Button>
+          <Button
             variant="primary"
             size="sm"
             icon="check"
             onClick={handleSubmitAll}
-            disabled={isSubmitted}
-            style={{ justifyContent: 'center', opacity: (submitting || isSubmitted) ? 0.7 : 1, cursor: submitting ? 'wait' : isSubmitted ? 'default' : 'pointer' }}
+            disabled={isSubmitted || screenshotGateBlocked}
+            title={screenshotGateBlocked ? `Upload a screenshot for every used tool first (${blockedRows.size} remaining)` : undefined}
+            style={{
+              justifyContent: 'center',
+              opacity: (submitting || isSubmitted || screenshotGateBlocked) ? 0.7 : 1,
+              cursor: submitting ? 'wait' : (isSubmitted || screenshotGateBlocked) ? 'not-allowed' : 'pointer',
+            }}
           >
-            {submitting ? 'Submitting...' : isSubmitted ? 'Submitted' : 'Submit attestation'}
+            {submitting ? 'Submitting...' : isSubmitted ? 'Submitted' : screenshotGateBlocked ? `Submit attestation (${blockedRows.size} screenshots needed)` : 'Submit attestation'}
           </Button>
         </div>
       </div>
@@ -504,7 +613,7 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
                       <tr style={{ background: 'var(--surface-2)' }}>
-                        {['Tool', 'Confirm Access', 'Did you use?', 'Remark'].map((heading) => (
+                        {['Tool', 'Confirm Access', 'Did you use?', 'Remark', 'Screenshot'].map((heading) => (
                           <th key={heading} style={{
                             textAlign: 'left',
                             padding: '9px 16px',
@@ -524,12 +633,16 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                     <tbody>
                       {client.tools.map((tool, index) => {
                         const pending = !isDecided(tool);
+                        const blocked = blockedRows.has(rowKey(client.clientID, tool.toolID));
                         return (
                           <tr key={tool.toolID} style={{
-                            background: pending
+                            background: blocked
+                              ? 'color-mix(in oklab, var(--danger-bg), transparent 30%)'
+                              : pending
                               ? 'color-mix(in oklab, var(--warning-bg), transparent 50%)'
                               : index % 2 === 0 ? 'var(--surface)' : 'var(--surface-2)',
                             borderBottom: '1px solid var(--border-subtle)',
+                            boxShadow: blocked ? 'inset 3px 0 0 var(--danger-fg)' : 'none',
                           }}>
                             <td style={{ padding: '10px 16px', fontWeight: 500, color: 'var(--text)', whiteSpace: 'nowrap' }}>
                               {tool.toolName}
@@ -595,6 +708,27 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                                 );
                               })()}
                             </td>
+                            <td style={{ padding: '10px 16px' }}>
+                              {tool.hadAccess === false ? (
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Not required</span>
+                              ) : (
+                                <ScreenshotCell
+                                  cycleId={cycle.cycleID}
+                                  associateId={user.associateId}
+                                  clientId={client.clientID}
+                                  toolId={tool.toolID}
+                                  screenshotStatus={tool.screenshotStatus}
+                                  screenshotRejectReason={tool.screenshotRejectReason}
+                                  screenshotUploadedAt={tool.screenshotUploadedAt}
+                                  readOnly={isSubmitted || pastDue}
+                                  isFocused={focusedRow === rowKey(client.clientID, tool.toolID)}
+                                  onFocus={() => setFocusedRow(rowKey(client.clientID, tool.toolID))}
+                                  onUploaded={() => loadAttestations({ preserveExpansion: true })}
+                                  onError={(message) => flashToast('err', message)}
+                                  registerPasteTarget={registerPasteTarget}
+                                />
+                              )}
+                            </td>
                           </tr>
                         );
                       })}
@@ -616,6 +750,15 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
             applyRemark(remarkPane.clientId, remarkPane.toolId, text);
             flashToast('ok', text ? 'Remark saved.' : 'Remark cleared.');
           }}
+        />
+      )}
+
+      {batchOpen && (
+        <ScreenshotBatchModal
+          cycleId={cycle.cycleID}
+          clients={clients}
+          onClose={() => setBatchOpen(false)}
+          onUploaded={() => loadAttestations({ preserveExpansion: true })}
         />
       )}
     </div>

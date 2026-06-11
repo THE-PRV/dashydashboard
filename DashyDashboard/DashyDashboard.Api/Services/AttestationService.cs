@@ -106,7 +106,10 @@ public class AttestationService
                         att?.UsedThisCycle,
                         att?.HadAccess ?? true,
                         att?.AttestationStatus ?? "Pending",
-                        att?.Remarks
+                        att?.Remarks,
+                        att?.ScreenshotStatus,
+                        att?.ScreenshotRejectReason,
+                        att?.ScreenshotUploadedAt
                     );
                 }).ToList();
 
