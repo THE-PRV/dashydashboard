@@ -1,179 +1,200 @@
-/* Slate + Broadridge blue — calm enterprise palette.
-   Neutrals do the heavy lifting; Broadridge blue is the accent,
-   used sparingly for primary actions and chrome.                              */
+/* ════════════════════════════════════════════════════════════════════════════
+   "The Ledger" — DashyDashboard design tokens. See DESIGN.md (binding contract).
+   Warm paper surfaces, ink-navy text, hairline rules, mono data, ink stamps.
+   Light = :root ("paper") · Dark = :root[data-theme="dark"] ("night ledger").
+
+   Compat note (Phase 1): every legacy var name consumed by the not-yet-redesigned
+   views (badge-*, toggle-*, st-*, side-*, shadow-lift*, gradient-hero, hairline,
+   surface-elev, mono) is kept alive below, re-tinted to the ledger palette.
+   Phase 2 view agents should migrate off the legacy aliases and then they can be
+   deleted (they are grouped and labelled "LEGACY ALIASES").
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 :root {
-  --mono: "Geist Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
-  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  /* ── Typography ─────────────────────────────────────────────────────────── */
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-sans:    "Schibsted Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:    "Spline Sans Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  --mono:         var(--font-mono); /* LEGACY ALIAS */
 
-  --accent:       #2662FC;            /* Broadridge blue */
-  --accent-2:     #1a55e0;            /* Broadridge blue — darker */
-  --accent-fg:    #ffffff;
-  --accent-glow:  rgba(38,98,252,0.14);
+  /* ── Paper ──────────────────────────────────────────────────────────────── */
+  --bg:            #F6F5F1;
+  --surface:       #FFFFFF;
+  --surface-2:     #EFEDE6;
+  --text:          #161D2E;
+  --text-muted:    #5D6473;
+  --text-faint:    #8B909B;
+  --border:        #E2DFD6;
+  --border-subtle: color-mix(in oklab, var(--border), transparent 45%);
+  --border-hover:  #C8C3B3;
+  --rule:          #D6D2C6;
 
-  --bg:           #f8fafc;            /* slate-50 */
-  --surface:      #ffffff;
-  --surface-2:    #f1f5f9;            /* slate-100 */
-  --surface-elev: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
-  --border:       #e2e8f0;            /* slate-200 */
-  --border-subtle:#eef0f3;
-  --text:         #0f172a;            /* slate-900 */
-  --text-muted:   #64748b;            /* slate-500 */
+  /* ── Ink ────────────────────────────────────────────────────────────────── */
+  --accent:      #24418F;
+  --accent-2:    #1A3170;
+  --accent-fg:   #FFFFFF;
+  --accent-glow: rgba(36, 65, 143, .12);
 
-  --warning-bg:   #fef3c7;
-  --warning-border:#fde68a;
-  --warning-fg:   #92400e;
-  --danger-bg:    #fff1f1;
-  --danger-border:#fecaca;
-  --danger-fg:    #b91c1c;
-  --success:      #059669;
+  --success:        #1E7B4D;
+  --success-bg:     #E4F2E9;
+  --success-border: #BFE0CC;
+  --warning:        #95661D;
+  --warning-bg:     #FAF0DC;
+  --warning-border: #EAD9B4;
+  --danger:         #A02C3B;  /* oxblood — sealing wax */
+  --danger-bg:      #FAEAEC;
+  --danger-border:  #EFC4CA;
+  --info:           var(--accent);
+  --info-bg:        var(--accent-glow);
 
-  --shadow-sm: 0 1px 2px rgba(15,23,42,.05);
-  --shadow-md: 0 4px 16px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
-  --shadow-lg: 0 14px 40px rgba(15,23,42,.08), 0 2px 8px rgba(15,23,42,.05);
+  /* Legacy "-fg" names some views read directly. */
+  --success-fg: var(--success);
+  --warning-fg: var(--warning);
+  --danger-fg:  var(--danger);
 
-  /* Tier badges are slate-only — Primary slightly darker than Secondary. */
-  --badge-primary-fg:   #334155;      /* slate-700 */
-  --badge-primary-bg:   #e2e8f0;      /* slate-200 */
-  --badge-primary-dot:  #475569;      /* slate-600 */
-  --badge-secondary-fg: #64748b;      /* slate-500 */
-  --badge-secondary-bg: #f1f5f9;      /* slate-100 */
-  --badge-secondary-dot:#94a3b8;      /* slate-400 */
+  /* ── Shape & depth ──────────────────────────────────────────────────────── */
+  --radius:      6px;
+  --radius-card: 10px;
+  --shadow-sm:  0 1px 2px rgba(22, 29, 46, .05);
+  --shadow-md:  0 2px 8px rgba(22, 29, 46, .07), 0 1px 2px rgba(22, 29, 46, .05);
+  --shadow-pop: 0 8px 28px rgba(22, 29, 46, .14), 0 2px 8px rgba(22, 29, 46, .08);
+  --shadow-lg:  var(--shadow-pop);
 
-  /* Status — emerald for done, slate for in-progress, amber for not-started. */
-  --badge-used-fg:    #065f46;        /* emerald-800 */
-  --badge-used-bg:    #d1fae5;        /* emerald-100 */
-  --badge-used-dot:   #059669;        /* emerald-600 */
-  --badge-notused-fg: #92400e;
-  --badge-notused-bg: #fef3c7;
-  --badge-notused-dot:#d97706;
-  --badge-pending-fg: #475569;        /* slate-600 — neutral, no colour */
-  --badge-pending-bg: #f1f5f9;
-  --badge-pending-dot:#94a3b8;
+  /* ── Paper grain (body::after overlay) ──────────────────────────────────── */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+  --grain-opacity: .03;
 
-  --toggle-used-bg:    #d1fae5;
-  --toggle-used-fg:    #065f46;
-  --toggle-notused-bg: #fef3c7;
-  --toggle-notused-fg: #92400e;
+  /* ── Avatar warm tints (hashed by initials in ui.jsx) ───────────────────── */
+  --avatar-1-bg: #EAE3D1;  --avatar-1-fg: #6E5C32;
+  --avatar-2-bg: #DDE7DD;  --avatar-2-fg: #36604A;
+  --avatar-3-bg: #DEE4F1;  --avatar-3-fg: #2F4A99;
+  --avatar-4-bg: #F0E0DC;  --avatar-4-fg: #87463B;
+  --avatar-5-bg: #E8E0EC;  --avatar-5-fg: #644A7C;
+  --avatar-6-bg: #DCE7E8;  --avatar-6-fg: #38636C;
 
-  /* Hero wash — slate tint with a hint of emerald. Subdued, not splashy. */
+  /* ════════════════ LEGACY ALIASES (delete after Phase 2) ════════════════ */
+  --surface-elev: var(--surface);
+
+  /* Tier badges — warm neutrals, Primary darker than Secondary. */
+  --badge-primary-fg:   #3A4151;  --badge-primary-bg:   #E7E4D9;  --badge-primary-dot:  #5D6473;
+  --badge-secondary-fg: #6B7180;  --badge-secondary-bg: #F0EEE7;  --badge-secondary-dot:#9AA0AB;
+  /* Status badges — used=success, notused/pending=warning per DESIGN §3. */
+  --badge-used-fg:    var(--success);  --badge-used-bg:    var(--success-bg);  --badge-used-dot:   var(--success);
+  --badge-notused-fg: var(--warning);  --badge-notused-bg: var(--warning-bg);  --badge-notused-dot:var(--warning);
+  --badge-pending-fg: var(--warning);  --badge-pending-bg: var(--warning-bg);  --badge-pending-dot:var(--warning);
+
+  --toggle-used-bg:    var(--success-bg);  --toggle-used-fg:    var(--success);
+  --toggle-notused-bg: var(--warning-bg);  --toggle-notused-fg: var(--warning);
+
   --gradient-hero:
-    radial-gradient(1200px 480px at 0% 0%, rgba(15,23,42,0.04), transparent 60%),
-    radial-gradient(900px 360px at 100% 100%, rgba(38,98,252,0.06), transparent 60%);
+    radial-gradient(1100px 440px at 0% 0%, rgba(22, 29, 46, .035), transparent 60%),
+    radial-gradient(900px 360px at 100% 100%, rgba(36, 65, 143, .05), transparent 60%);
 
-  /* Admin dashboard — status instrument lights */
-  --st-completed:       #10b981;
-  --st-completed-bg:    rgba(16,185,129,.14);
-  --st-ontrack:         #eab308;
-  --st-ontrack-bg:      rgba(234,179,8,.14);
-  --st-below:           #f97316;
-  --st-below-bg:        rgba(249,115,22,.14);
-  --st-risk:            #f43f5e;
-  --st-risk-bg:         rgba(244,63,94,.14);
-  --text-faint:         #5b6678;
-  --radius:             0.5rem;
-  --radius-card:        0.875rem;
-  --shadow-lift:        0 8px 24px rgba(0,0,0,0.28);
-  --shadow-lift-h:      0 12px 32px rgba(0,0,0,0.36);
-  --hairline:           rgba(255,255,255,0.06);
+  /* Admin status instrument lights, re-inked. */
+  --st-completed:    #1E7B4D;  --st-completed-bg: rgba(30, 123, 77, .13);
+  --st-ontrack:      #A87E22;  --st-ontrack-bg:   rgba(168, 126, 34, .13);
+  --st-below:        #B35A1F;  --st-below-bg:     rgba(179, 90, 31, .13);
+  --st-risk:         #A02C3B;  --st-risk-bg:      rgba(160, 44, 59, .13);
 
-  /* Admin sidebar — Broadridge navy rail (LIGHT mode only; dark mode overrides below). */
-  --side-bg:          linear-gradient(180deg, #0e2455 0%, #0a1c44 100%);
-  --side-edge:        rgba(15,23,42,0.10);
-  --side-border:      rgba(255,255,255,0.10);
-  --side-text:        #ffffff;
-  --side-text-muted:  rgba(255,255,255,0.74);
-  --side-faint:       rgba(255,255,255,0.48);
-  --side-logo:        linear-gradient(135deg, #3b82f6, #2563eb);
-  --side-active-bg:   var(--accent);
-  --side-active-text: #ffffff;
-  --side-role:        #9cc0ff;
-  /* Segmented view-toggle on the navy bar */
-  --side-pill-bg:        rgba(255,255,255,0.10);
-  --side-pill-border:    rgba(255,255,255,0.16);
-  --side-pill-active-bg: #ffffff;
-  --side-pill-active-fg: #0e2455;
-  --side-pill-fg:        rgba(255,255,255,0.78);
+  --shadow-lift:   var(--shadow-md);
+  --shadow-lift-h: var(--shadow-pop);
+  --hairline:      rgba(246, 245, 241, .10);
+
+  /* AdminView's bespoke sidebar (Phase 2 removes it for the shared AppShell rail).
+     Kept as a deep-ink rail so its white-inverted logo still reads. */
+  --side-bg:          linear-gradient(180deg, #1B2545 0%, #141C36 100%);
+  --side-edge:        rgba(22, 29, 46, .14);
+  --side-border:      rgba(246, 245, 241, .10);
+  --side-text:        #F3F1EA;
+  --side-text-muted:  rgba(243, 241, 234, .72);
+  --side-faint:       rgba(243, 241, 234, .46);
+  --side-logo:        linear-gradient(135deg, #3C5BB5, #24418F);
+  --side-active-bg:   #2E4C9C;
+  --side-active-text: #FFFFFF;
+  --side-role:        #A8BCEE;
+  --side-pill-bg:        rgba(246, 245, 241, .10);
+  --side-pill-border:    rgba(246, 245, 241, .16);
+  --side-pill-active-bg: #F6F5F1;
+  --side-pill-active-fg: #161D2E;
+  --side-pill-fg:        rgba(243, 241, 234, .78);
 }
 
 :root[data-theme="dark"] {
-  --accent:       #5b8df8;            /* Broadridge blue — dark mode */
-  --accent-2:     #4275f5;            /* Broadridge blue — darker */
-  --accent-fg:    #ffffff;
-  --accent-glow:  rgba(91,141,248,0.16);
+  /* ── Night ledger ───────────────────────────────────────────────────────── */
+  --bg:            #13161D;
+  --surface:       #1B1F28;
+  --surface-2:     #242936;
+  --text:          #E8E6DF;  /* paper-toned */
+  --text-muted:    #9CA1AC;
+  --text-faint:    #6E7480;
+  --border:        #2B3140;
+  --border-subtle: color-mix(in oklab, var(--border), transparent 45%);
+  --border-hover:  #3E4658;
+  --rule:          #353C4D;
 
-  --bg:           #1a1a1a;
-  --surface:      #242424;
-  --surface-2:    #2e2e2e;
-  --surface-elev: linear-gradient(180deg, #2a2a2a 0%, #242424 100%);
-  --border:       #3d3d3d;
-  --border-subtle:#2e2e2e;
-  --text:         #e8e8e8;
-  --text-muted:   #a0a0a0;
+  --accent:      #8FA7EE;
+  --accent-2:    #A9BCF4;
+  --accent-fg:   #10131A;
+  --accent-glow: rgba(143, 167, 238, .16);
 
-  --warning-bg:   rgba(245,158,11,.16);
-  --warning-fg:   #fcd34d;
-  --danger-bg:    rgba(248,113,113,.12);
-  --danger-border:rgba(248,113,113,.30);
-  --danger-fg:    #f87171;
-  --success:      #34d399;
+  --success:        #5CC58C;
+  --success-bg:     rgba(92, 197, 140, .13);
+  --success-border: rgba(92, 197, 140, .35);
+  --warning:        #D9A84E;
+  --warning-bg:     rgba(217, 168, 78, .13);
+  --warning-border: rgba(217, 168, 78, .35);
+  --danger:         #E27684;
+  --danger-bg:      rgba(226, 118, 132, .13);
+  --danger-border:  rgba(226, 118, 132, .35);
 
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
-  --shadow-md: 0 6px 20px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.3);
-  --shadow-lg: 0 18px 48px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, .35);
+  --shadow-md:  0 2px 10px rgba(0, 0, 0, .40), 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow-pop: 0 10px 32px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .35);
 
-  --badge-primary-fg:   #cbd5e1;
-  --badge-primary-bg:   rgba(148,163,184,.14);
-  --badge-primary-dot:  #94a3b8;
-  --badge-secondary-fg: #94a3b8;
-  --badge-secondary-bg: rgba(148,163,184,.08);
-  --badge-secondary-dot:#64748b;
+  --grain-opacity: .02;
 
-  --badge-used-fg:    #6ee7b7;
-  --badge-used-bg:    rgba(16,185,129,.16);
-  --badge-used-dot:   #34d399;
-  --badge-notused-fg: #fcd34d;
-  --badge-notused-bg: rgba(245,158,11,.16);
-  --badge-notused-dot:#f59e0b;
-  --badge-pending-fg: #cbd5e1;
-  --badge-pending-bg: rgba(148,163,184,.10);
-  --badge-pending-dot:#94a3b8;
+  --avatar-1-bg: rgba(214, 190, 130, .16);  --avatar-1-fg: #D9C490;
+  --avatar-2-bg: rgba(120, 196, 152, .14);  --avatar-2-fg: #9DD3B4;
+  --avatar-3-bg: rgba(143, 167, 238, .16);  --avatar-3-fg: #AFC1F2;
+  --avatar-4-bg: rgba(224, 152, 138, .14);  --avatar-4-fg: #E2AFA4;
+  --avatar-5-bg: rgba(186, 152, 216, .14);  --avatar-5-fg: #C9AEDD;
+  --avatar-6-bg: rgba(126, 192, 200, .14);  --avatar-6-fg: #A4CFD5;
 
-  --toggle-used-bg:    rgba(16,185,129,.22);
-  --toggle-used-fg:    #6ee7b7;
-  --toggle-notused-bg: rgba(245,158,11,.22);
-  --toggle-notused-fg: #fcd34d;
+  /* ════════════════ LEGACY ALIASES (delete after Phase 2) ════════════════ */
+  --surface-elev: var(--surface);
+
+  --badge-primary-fg:   #C6CBD6;  --badge-primary-bg:   rgba(156, 161, 172, .14);  --badge-primary-dot:  #9CA1AC;
+  --badge-secondary-fg: #9CA1AC;  --badge-secondary-bg: rgba(156, 161, 172, .08);  --badge-secondary-dot:#6E7480;
+  --badge-used-fg:    var(--success);  --badge-used-bg:    var(--success-bg);  --badge-used-dot:   var(--success);
+  --badge-notused-fg: var(--warning);  --badge-notused-bg: var(--warning-bg);  --badge-notused-dot:var(--warning);
+  --badge-pending-fg: var(--warning);  --badge-pending-bg: var(--warning-bg);  --badge-pending-dot:var(--warning);
+
+  --toggle-used-bg:    rgba(92, 197, 140, .18);  --toggle-used-fg:    #8AD7AC;
+  --toggle-notused-bg: rgba(217, 168, 78, .18);  --toggle-notused-fg: #E3BC72;
 
   --gradient-hero:
-    radial-gradient(1200px 480px at 0% 0%, rgba(91,141,248,0.06), transparent 60%),
-    radial-gradient(900px 360px at 100% 100%, rgba(91,141,248,0.04), transparent 60%);
+    radial-gradient(1100px 440px at 0% 0%, rgba(143, 167, 238, .05), transparent 60%),
+    radial-gradient(900px 360px at 100% 100%, rgba(143, 167, 238, .04), transparent 60%);
 
-  /* Admin dashboard status — dark mode */
-  --st-completed:    #34d399;          /* emerald-400 — softer green */
-  --st-completed-bg: rgba(52,211,153,.14);
-  --st-ontrack:      #fbbf24;          /* amber-400 */
-  --st-ontrack-bg:   rgba(251,191,36,.14);
-  --st-below:        #fb923c;          /* orange-400 — NOT neon */
-  --st-below-bg:     rgba(251,146,60,.14);
-  --st-risk:         #f87171;          /* red-400 */
-  --st-risk-bg:      rgba(248,113,113,.14);
-  --text-faint:      #8b949e;
-  --shadow-lift:     0 2px 8px rgba(0,0,0,.40), 0 1px 2px rgba(0,0,0,.30);
-  --shadow-lift-h:   0 10px 28px rgba(0,0,0,.50);
-  --hairline:        rgba(255,255,255,0.07);
+  --st-completed:    #5CC58C;  --st-completed-bg: rgba(92, 197, 140, .14);
+  --st-ontrack:      #D9A84E;  --st-ontrack-bg:   rgba(217, 168, 78, .14);
+  --st-below:        #DD8A4E;  --st-below-bg:     rgba(221, 138, 78, .14);
+  --st-risk:         #E27684;  --st-risk-bg:      rgba(226, 118, 132, .14);
 
-  /* Admin sidebar — dark mode keeps the existing surface look (unchanged). */
+  --shadow-lift:   var(--shadow-md);
+  --shadow-lift-h: var(--shadow-pop);
+  --hairline:      rgba(255, 255, 255, .07);
+
   --side-bg:          var(--surface);
   --side-edge:        var(--border);
   --side-border:      var(--border-subtle);
   --side-text:        var(--text);
   --side-text-muted:  var(--text-muted);
   --side-faint:       var(--text-faint);
-  --side-logo:        linear-gradient(135deg, #10b981, #059669);
-  --side-active-bg:   color-mix(in oklab, var(--accent) 12%, transparent);
+  --side-logo:        linear-gradient(135deg, #8FA7EE, #5F7BD6);
+  --side-active-bg:   color-mix(in oklab, var(--accent) 14%, transparent);
   --side-active-text: var(--accent);
   --side-role:        var(--accent);
-  /* Dark mode keeps the original segmented-toggle look. */
   --side-pill-bg:        var(--surface-2);
   --side-pill-border:    var(--border);
   --side-pill-active-bg: var(--text);
@@ -181,31 +202,132 @@
   --side-pill-fg:        var(--text-muted);
 }
 
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+html { background: var(--bg); }
 body {
-  font-family: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
   color: var(--text);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
-* { box-sizing: border-box; }
-::selection { background: color-mix(in oklab, var(--accent), transparent 70%); }
 
+/* Extremely subtle paper grain over the whole canvas (DESIGN §4). */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  background-image: var(--grain);
+  background-size: 180px 180px;
+  opacity: var(--grain-opacity);
+}
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+::selection { background: color-mix(in oklab, var(--accent), transparent 72%); }
+
+/* Visible focus everywhere (DESIGN §9). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* Themed thin scrollbars. */
+* { scrollbar-width: thin; scrollbar-color: var(--rule) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--border-hover); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Keyframes ────────────────────────────────────────────────────────────── */
+
+/* Stamp settle — scale(1.18) rotate(-3deg) → rest, 260ms (DESIGN §5). */
+@keyframes stamp-in {
+  from { opacity: 0; transform: scale(1.18) rotate(-3deg); }
+  to   { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+.stamp-in { animation: stamp-in 260ms cubic-bezier(.2, 1.4, .5, 1) both; }
+
+/* Small popovers / toasts. */
 @keyframes pop-in {
   from { opacity: 0; transform: translateY(-4px) scale(.98); }
-  to   { opacity: 1; transform: translateY(0)   scale(1); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-.toast { animation: pop-in .18s ease-out; }
+.toast { animation: pop-in .18s ease-out both; }
+.pop-in { animation: pop-in .18s ease-out both; }
 
-/* Subtle hover lift for primary buttons — gentle raise + accent shadow, settles on click. */
-.btn-lift { transition: transform .15s ease, box-shadow .15s ease, filter .15s ease; }
+/* Overlay entrance — fade + 8px rise, 260ms (DESIGN §6). */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.overlay-pop { animation: fade-up .26s cubic-bezier(.2, .8, .3, 1) both; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.overlay-backdrop { animation: fade-in .2s ease-out both; }
+
+@keyframes drawer-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.drawer-pop { animation: drawer-in .26s cubic-bezier(.2, .8, .3, 1) both; }
+
+/* Skeleton shimmer. */
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    color-mix(in oklab, var(--surface-2), var(--surface) 65%) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: var(--radius);
+}
+
+/* Page-mount stagger: apply .stagger to a container; direct children rise in
+   50ms steps, capped at 6 steps (DESIGN §6). */
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.stagger > * { animation: stagger-in .3s ease-out both; }
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 50ms; }
+.stagger > *:nth-child(3) { animation-delay: 100ms; }
+.stagger > *:nth-child(4) { animation-delay: 150ms; }
+.stagger > *:nth-child(5) { animation-delay: 200ms; }
+.stagger > *:nth-child(6) { animation-delay: 250ms; }
+.stagger > *:nth-child(n+7) { animation-delay: 250ms; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin .7s linear infinite; }
+
+/* Legacy hover lift used by a few primary CTAs in the old views. Toned down. */
+.btn-lift { transition: transform .15s ease, box-shadow .15s ease; }
 .btn-lift:not(:disabled):hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px color-mix(in oklab, var(--accent), transparent 66%);
-  filter: brightness(1.04);
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--accent), transparent 72%);
 }
-.btn-lift:not(:disabled):active {
-  transform: translateY(0);
-  box-shadow: 0 2px 6px color-mix(in oklab, var(--accent), transparent 72%);
+.btn-lift:not(:disabled):active { transform: translateY(0); box-shadow: none; }
+
+/* ── Reduced motion: kill transforms/animations entirely (DESIGN §6) ──────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
