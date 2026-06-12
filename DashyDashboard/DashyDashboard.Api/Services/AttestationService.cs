@@ -229,22 +229,34 @@ public class AttestationService
         if (alreadySubmitted)
             throw new InvalidOperationException("Attestation for this cycle has already been submitted.");
 
-        var missingRemark = await _db.ToolCycleAttestations.AsNoTracking()
+        var missingNoAccessRemark = await _db.ToolCycleAttestations.AsNoTracking()
             .AnyAsync(tca => tca.CycleID == cycleId
                           && tca.AssociateId == associateId
                           && tca.HadAccess == false
                           && (tca.Remarks == null || tca.Remarks.Trim() == ""));
-        if (missingRemark)
+        if (missingNoAccessRemark)
             throw new InvalidOperationException("Add a remark for each tool you marked as 'No access' before submitting.");
 
-        // Screenshot gate (§7): every non-exempt row (HadAccess != false) that is being submitted
-        // must have a screenshot in Pending or Approved state. Rejected or NULL blocks submission.
-        // No-access rows (HadAccess == false) are exempt.
+        // Not-used remark gate (WI-1): a row the associate marked "Not used"
+        // (HadAccess == true && UsedThisCycle == false) must explain why — require a remark,
+        // mirroring the no-access remark gate above.
+        var missingNotUsedRemark = await _db.ToolCycleAttestations.AsNoTracking()
+            .AnyAsync(tca => tca.CycleID == cycleId
+                          && tca.AssociateId == associateId
+                          && tca.HadAccess
+                          && tca.UsedThisCycle == false
+                          && (tca.Remarks == null || tca.Remarks.Trim() == ""));
+        if (missingNotUsedRemark)
+            throw new InvalidOperationException("Add a remark for each tool you marked as 'Not used' before submitting.");
+
+        // Screenshot gate (§7, WI-1): only USED rows (HadAccess == true && UsedThisCycle == true)
+        // require a screenshot in Pending or Approved state. Rejected or NULL blocks submission.
+        // No-access rows (HadAccess == false) AND not-used rows (UsedThisCycle == false) are exempt.
         var screenshotBlocking = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => tca.CycleID == cycleId
                        && tca.AssociateId == associateId
                        && tca.HadAccess
-                       && tca.UsedThisCycle.HasValue
+                       && tca.UsedThisCycle == true
                        && (tca.ScreenshotStatus == null
                            || !SubmittableScreenshotStatuses.Contains(tca.ScreenshotStatus)))
             .Select(tca => new ScreenshotGateRow(tca.ClientID, tca.ToolID))
@@ -331,10 +343,29 @@ public class AttestationService
                      && a.AttestationStatus == "Submitted")
             .ToListAsync();
 
+        // Soft reopen (WI-7): flip submitted rows back to editable ("Pending" — the only
+        // editable status the rest of the codebase knows) and clear SubmittedAt. KEEP answers,
+        // remarks and all screenshot fields / review states untouched.
         foreach (var row in rows)
         {
-            row.AttestationStatus = "InProgress";
+            row.AttestationStatus = "Pending";
             row.SubmittedAt = null;
+        }
+
+        if (rows.Count > 0)
+        {
+            var actor = await _db.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.AssociateId == actorAssociateId);
+            var actorName = actor is not null ? actor.FullName : actorAssociateId;
+            var summary = $"Reopened {targetAssociateId}'s attestation ({rows.Count} rows) by {actorName}";
+            _db.AttestationLogs.Add(new AttestationLog
+            {
+                CycleID = cycleId,
+                AssociateId = actorAssociateId, // log against the ACTOR (reviewer), like review events
+                SubmittedAt = DateTime.UtcNow,
+                ToolCount = rows.Count,
+                Summary = summary.Length > 100 ? summary[..100] : summary
+            });
         }
 
         await _db.SaveChangesAsync();
@@ -474,13 +505,19 @@ public class AttestationService
     }
 
     /// <summary>
-    /// §7 upload rules: no-access rows (HadAccess == false) are exempt and never carry a screenshot.
+    /// §7 upload rules (WI-1): no-access rows (HadAccess == false) and not-used rows
+    /// (HadAccess == true && UsedThisCycle == false) are exempt and never carry a screenshot.
+    /// Undecided rows (UsedThisCycle == null) STAY uploadable — associates often upload before
+    /// toggling usage, and a fresh row is created with UsedThisCycle null.
     /// After the cycle due date the ONLY allowed upload is re-uploading a currently-Rejected screenshot.
     /// </summary>
     private void EnsureUploadAllowed(ToolCycleAttestation att)
     {
         if (!att.HadAccess)
             throw new InvalidOperationException("This tool is marked as no access and does not require a screenshot.");
+
+        if (att.UsedThisCycle == false)
+            throw new InvalidOperationException("This tool is marked as not used and does not require a screenshot.");
 
         var cycle = _db.Cycles.AsNoTracking().First(c => c.CycleID == att.CycleID);
         var pastDue = DateOnly.FromDateTime(DateTime.Today) > cycle.DueDate;

@@ -40,7 +40,7 @@ public class ManagerService
 
         var attestRows = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => userIds.Contains(tca.AssociateId) && tca.CycleID == cycleId)
-            .Select(tca => new { tca.AssociateId, tca.HadAccess, tca.UsedThisCycle, tca.ScreenshotStatus })
+            .Select(tca => new { tca.AssociateId, tca.HadAccess, tca.UsedThisCycle, tca.ScreenshotStatus, tca.AttestationStatus })
             .ToListAsync();
 
         var attestCounts = attestRows
@@ -48,13 +48,12 @@ public class ManagerService
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        // Per-member screenshot completeness (§7): a member is only "Submitted" (complete) when
-        // fully answered AND all required screenshots are Approved. Also surface the raw
-        // pending/rejected counts (§B1) for the "Awaiting approval (n)" / "Rejected (n)" chips.
-        var ssByMember = attestRows
+        // Per-member five-state status (WI-6): computed in the one shared place from this member's
+        // rows (reads AttestationStatus, usage answers and screenshot states).
+        var statusByMember = attestRows
             .GroupBy(r => r.AssociateId)
-            .ToDictionary(g => g.Key, g => ScreenshotCompletion.Classify(
-                g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus))));
+            .ToDictionary(g => g.Key, g => ScreenshotCompletion.ComputeMemberStatus(
+                g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus))));
 
         var pendingCounts = attestRows
             .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
@@ -74,12 +73,7 @@ public class ManagerService
             var total = toolCounts.FirstOrDefault(t => t.AssociateId == u.AssociateId)?.Count ?? 0;
             var attested = attestCounts.GetValueOrDefault(u.AssociateId, 0);
             var pct = total > 0 ? (double)attested / total : 0;
-            var answeredAll = pct >= 1;
-            var (anyAwaiting, anyRejected) = ssByMember.GetValueOrDefault(u.AssociateId, (false, false));
-            var screenshotsApproved = !anyAwaiting && !anyRejected;
-            var status = answeredAll && screenshotsApproved ? "Submitted"
-                       : attested == 0 ? "NotStarted"
-                       : "InProgress";
+            var status = statusByMember.GetValueOrDefault(u.AssociateId, ScreenshotCompletion.MemberNotStarted);
             var pendingScreenshots = pendingCounts.GetValueOrDefault(u.AssociateId, 0);
             var rejectedScreenshots = rejectedCounts.GetValueOrDefault(u.AssociateId, 0);
             return new TeamMemberDto(u.AssociateId, $"{u.FirstName} {u.LastName}", u.EmailAddr ?? "", status, total, attested, Math.Round(pct, 4), pendingScreenshots, rejectedScreenshots);
@@ -97,9 +91,11 @@ public class ManagerService
             members.Count,
             members.Sum(m => m.TotalTools),
             members.Sum(m => m.AttestedTools),
-            members.Count(m => m.AttestationStatus == "Submitted"),
-            members.Count(m => m.AttestationStatus == "InProgress"),
-            members.Count(m => m.AttestationStatus == "NotStarted"),
+            members.Count(m => m.AttestationStatus == ScreenshotCompletion.MemberNotStarted),
+            members.Count(m => m.AttestationStatus == ScreenshotCompletion.MemberInProgress),
+            members.Count(m => m.AttestationStatus == ScreenshotCompletion.MemberAwaitingApproval),
+            members.Count(m => m.AttestationStatus == ScreenshotCompletion.MemberActionNeeded),
+            members.Count(m => m.AttestationStatus == ScreenshotCompletion.MemberComplete),
             mismatchMembers,
             members);
     }
@@ -141,12 +137,8 @@ public class ManagerService
         var attestationsByKey = allAttestations
             .ToDictionary(a => (a.ClientID, a.ToolID));
 
-        // §7: complete only when fully answered AND all required screenshots are Approved.
-        // §B1: also surface raw pending/rejected counts for the member's status chip.
-        var (anyAwaiting, anyRejected) = ScreenshotCompletion.Classify(
-            allAttestations.Select(a => (a.HadAccess, a.UsedThisCycle, a.ScreenshotStatus)));
-        var screenshotsApproved = !anyAwaiting && !anyRejected;
-
+        // §B1: surface raw pending/rejected screenshot counts for the member's status chip.
+        // (The overall five-state status is computed from allAttestations below via the shared helper.)
         var pendingScreenshots = allAttestations.Count(a =>
             ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
             && a.ScreenshotStatus != ScreenshotCompletion.StatusApproved
@@ -201,15 +193,15 @@ public class ManagerService
         var mismatchDtos = mismatches.Select(m => {
             var toolInfo = clientToolNames.GetValueOrDefault(m.ToolID);
             var clientName = mismatchClientNames.GetValueOrDefault(m.ClientID, m.ClientID);
-            return new MismatchDto(clientName, toolInfo?.ToolName ?? m.ToolID.ToString(), m.Remarks);
+            return new MismatchDto(m.ClientID, clientName, toolInfo?.ToolName ?? m.ToolID.ToString(), m.Remarks, m.SubmittedAt);
         }).ToList();
 
         var totalTools = byClient.Sum(c => c.TotalTools);
         var totalAttested = byClient.Sum(c => c.AttestedTools);
         var pct = totalTools > 0 ? (double)totalAttested / totalTools : 0;
-        var status = pct >= 1 && screenshotsApproved ? "Submitted"
-                   : totalAttested == 0 ? "NotStarted"
-                   : "InProgress";
+        // WI-6: same shared five-state computation as the team list.
+        var status = ScreenshotCompletion.ComputeMemberStatus(
+            allAttestations.Select(a => (a.HadAccess, a.UsedThisCycle, a.ScreenshotStatus, a.AttestationStatus)));
 
         return new MemberDetailDto(member.AssociateId, $"{member.FirstName} {member.LastName}",
                                    status, totalTools, totalAttested, Math.Round(pct, 4), byClient, mismatchDtos,

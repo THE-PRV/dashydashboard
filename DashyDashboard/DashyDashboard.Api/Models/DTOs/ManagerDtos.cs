@@ -6,9 +6,12 @@ public record TeamDto(
     int TotalMembers,
     int TotalTools,
     int TotalAttested,
-    int Submitted,
-    int InProgress,
+    // ── Five-state status counts (WI-6) — one bucket per ScreenshotCompletion member status ──
     int NotStarted,
+    int InProgress,
+    int AwaitingApproval,
+    int ActionNeeded,
+    int Complete,
     int MismatchCount,
     List<TeamMemberDto> Members
 );
@@ -43,7 +46,14 @@ public record MemberDetailDto(
     int RejectedScreenshots
 );
 
-public record MismatchDto(string ClientName, string ToolName, string? Remarks);
+// WI-4: a single access dispute (HadAccess == false) shown in the manager overlay / exports.
+// SubmittedAt is the best-available "date answered" for the dispute row.
+public record MismatchDto(
+    string ClientID,
+    string ClientName,
+    string ToolName,
+    string? Remarks,
+    DateTime? SubmittedAt);
 
 public record ClientProgressDto(
     string ClientID,

@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
 import { Icon, Badge, Button } from './ui.jsx';
-import { getScreenshotThumbUrl, getScreenshotUrl } from '../api/attestations.js';
+import { getScreenshotThumbUrl } from '../api/attestations.js';
 import { reviewScreenshot, approveAllScreenshots } from '../api/manager.js';
+import Lightbox from './Lightbox.jsx';
 
 const STATUS_BADGE = {
   Pending: { variant: 'pending', label: 'Pending' },
@@ -174,347 +175,6 @@ function GalleryTile({ cycleId, associateId, clientId, tool, onOpen, onReview, b
   );
 }
 
-/** Full-size image lightbox, rendered via portal. */
-function Lightbox({ target, onClose }) {
-  const [url, setUrl] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let createdUrl = null;
-    setUrl(null);
-    setError(null);
-
-    getScreenshotUrl(target.cycleId, target.associateId, target.clientId, target.toolId)
-      .then((u) => {
-        if (cancelled) {
-          if (u) URL.revokeObjectURL(u);
-          return;
-        }
-        if (!u) { setError('Screenshot not found.'); return; }
-        createdUrl = u;
-        setUrl(u);
-      })
-      .catch((err) => { if (!cancelled) setError(err.message || 'Failed to load screenshot.'); });
-
-    return () => {
-      cancelled = true;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
-    };
-  }, [target]);
-
-  return ReactDOM.createPortal(
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 300,
-      background: 'rgba(15, 12, 8, 0.75)', backdropFilter: 'blur(8px)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-    }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: '92vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#fff' }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>{target.toolName}</div>
-          <button onClick={onClose} style={{
-            width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(255,255,255,0.3)',
-            background: 'rgba(255,255,255,0.08)', color: '#fff', cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          }}><Icon name="x" size={15} /></button>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {error ? (
-            <div style={{ color: '#fff', fontSize: 13 }}>{error}</div>
-          ) : url ? (
-            <img src={url} alt={`${target.toolName} full screenshot`} style={{ maxWidth: '100%', maxHeight: '85vh', borderRadius: 8, objectFit: 'contain' }} />
-          ) : (
-            <div style={{ color: '#fff', fontSize: 13 }}>Loading…</div>
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-/**
- * Full-screen "Review pending" mode (Feature 2 §B3) — always renders on a DARK backdrop
- * regardless of the app theme (B6: this is the ONLY dark surface in the app).
- *
- * Iterates `items` (the member's Pending screenshots, full-size, auth-blob-fetched).
- * Keyboard: Enter = approve & advance · R = open reject-reason box (Enter inside it
- * submits the rejection & advances) · ←/→ = prev/next · Esc = exit.
- * On-screen Approve / Reject / Prev / Next buttons mirror every key for mouse users.
- * Auto-skips items already decided this session; exits (calling onClose with the
- * approved/rejected counts) once nothing is left to review.
- */
-function ReviewLightbox({ cycleId, associateId, items, onDecide, onClose }) {
-  const [index, setIndex] = useState(0);
-  const [decided, setDecided] = useState({}); // key -> 'approved' | 'rejected'
-  const [url, setUrl] = useState(null);
-  const [imgError, setImgError] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const [showReject, setShowReject] = useState(false);
-  const [reason, setReason] = useState('');
-  const reasonInputRef = useRef(null);
-
-  const keyOf = (item) => `${item.clientID}/${item.toolID}`;
-
-  // Find the next not-yet-decided item at or after `from` (wrapping once). Returns -1 if
-  // every item has been decided — i.e. the session is complete.
-  const nextPending = (from, decidedMap, dir = 1) => {
-    const n = items.length;
-    if (n === 0) return -1;
-    for (let i = 0; i < n; i++) {
-      const idx = ((from + dir * i) % n + n) % n;
-      if (!decidedMap[keyOf(items[idx])]) return idx;
-    }
-    return -1;
-  };
-
-  const current = index >= 0 && index < items.length ? items[index] : null;
-  const allDone = current == null || !!decided[keyOf(current)] && nextPending(index, decided) === -1;
-
-  // Load the full-size image for the current item.
-  useEffect(() => {
-    if (!current) return undefined;
-    let cancelled = false;
-    let createdUrl = null;
-    setUrl(null);
-    setImgError(null);
-
-    getScreenshotUrl(cycleId, associateId, current.clientID, current.toolID)
-      .then((u) => {
-        if (cancelled) {
-          if (u) URL.revokeObjectURL(u);
-          return;
-        }
-        if (!u) { setImgError('Screenshot not found.'); return; }
-        createdUrl = u;
-        setUrl(u);
-      })
-      .catch((err) => { if (!cancelled) setImgError(err.message || 'Failed to load screenshot.'); });
-
-    return () => {
-      cancelled = true;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current?.clientID, current?.toolID]);
-
-  // Focus the reason textbox when it opens.
-  useEffect(() => {
-    if (showReject) reasonInputRef.current?.focus();
-  }, [showReject]);
-
-  const advance = (dir, decidedMap) => {
-    const next = nextPending(index + dir, decidedMap ?? decided, dir);
-    if (next === -1) {
-      onClose();
-      return;
-    }
-    setIndex(next);
-    setShowReject(false);
-    setReason('');
-  };
-
-  const goPrev = () => {
-    if (busy) return;
-    const next = nextPending(index - 1, decided, -1);
-    if (next === -1) return; // nothing else to review — stay put
-    setIndex(next);
-    setShowReject(false);
-    setReason('');
-  };
-
-  const goNext = () => {
-    if (busy) return;
-    const next = nextPending(index + 1, decided, 1);
-    if (next === -1) {
-      onClose();
-      return;
-    }
-    setIndex(next);
-    setShowReject(false);
-    setReason('');
-  };
-
-  const doApprove = async () => {
-    if (!current || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onDecide(current, true, null);
-      const updated = { ...decided, [keyOf(current)]: 'approved' };
-      setDecided(updated);
-      advance(1, updated);
-    } catch (err) {
-      setError(err.message || 'Approve failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const doReject = async (reasonText) => {
-    if (!current || busy) return;
-    const trimmed = (reasonText ?? '').trim();
-    if (!trimmed) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onDecide(current, false, trimmed);
-      const updated = { ...decided, [keyOf(current)]: 'rejected' };
-      setDecided(updated);
-      advance(1, updated);
-    } catch (err) {
-      setError(err.message || 'Reject failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Keyboard handling. While the reject-reason box is open, Enter submits the rejection
-  // (not approve) and R types into the textbox like any other character.
-  useEffect(() => {
-    function onKeyDown(e) {
-      if (busy) return;
-
-      if (showReject) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setShowReject(false);
-          setReason('');
-          return;
-        }
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          doReject(reason);
-        }
-        // Any other key (including 'r'/'R') is left to the textbox itself.
-        return;
-      }
-
-      switch (e.key) {
-        case 'Enter':
-          e.preventDefault();
-          doApprove();
-          break;
-        case 'r':
-        case 'R':
-          e.preventDefault();
-          setShowReject(true);
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          goPrev();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          goNext();
-          break;
-        case 'Escape':
-          e.preventDefault();
-          onClose();
-          break;
-        default:
-          break;
-      }
-    }
-
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, showReject, reason, current, decided, index]);
-
-  return ReactDOM.createPortal(
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 400,
-      background: '#0b0c0f', color: '#fff',
-      display: 'flex', flexDirection: 'column',
-    }}>
-      {/* Header / caption */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>
-          {current ? (
-            <>Review pending screenshot — <span style={{ opacity: 0.75 }}>{current.clientName} ({current.clientID})</span> · {current.toolName}</>
-          ) : (
-            <>Review pending screenshots</>
-          )}
-        </div>
-        <button onClick={onClose} style={{
-          width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(255,255,255,0.3)',
-          background: 'rgba(255,255,255,0.08)', color: '#fff', cursor: 'pointer',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        }} title="Exit (Esc)"><Icon name="x" size={15} /></button>
-      </div>
-
-      {/* Image */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-        {allDone ? (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.85)' }}>
-            <Icon name="check" size={32} stroke={1.6} />
-            <div style={{ marginTop: 10, fontSize: 14, fontWeight: 600 }}>All pending screenshots reviewed</div>
-          </div>
-        ) : imgError ? (
-          <div style={{ fontSize: 13 }}>{imgError}</div>
-        ) : url ? (
-          <img src={url} alt={`${current.toolName} full screenshot`} style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8, objectFit: 'contain' }} />
-        ) : (
-          <div style={{ fontSize: 13 }}>Loading…</div>
-        )}
-      </div>
-
-      {error && (
-        <div style={{ padding: '0 20px 8px', fontSize: 12.5, color: '#ff8a8a', textAlign: 'center' }}>{error}</div>
-      )}
-
-      {/* Controls */}
-      <div style={{ padding: '14px 20px 20px', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
-        {showReject && !allDone ? (
-          <div style={{ display: 'flex', gap: 8, width: '100%', maxWidth: 480 }}>
-            <input
-              ref={reasonInputRef}
-              type="text"
-              placeholder="Reason for rejection… (required)"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              disabled={busy}
-              style={{
-                flex: 1, padding: '8px 10px', fontSize: 13, borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.06)',
-                color: '#fff', fontFamily: 'inherit',
-              }}
-            />
-            <Button
-              variant="primary" size="sm" icon="x"
-              disabled={busy || !reason.trim()}
-              onClick={() => doReject(reason)}
-              style={{ opacity: (busy || !reason.trim()) ? 0.6 : 1, cursor: (busy || !reason.trim()) ? 'not-allowed' : 'pointer' }}
-            >
-              Confirm reject
-            </Button>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => { setShowReject(false); setReason(''); }}>
-              Cancel
-            </Button>
-          </div>
-        ) : !allDone ? (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <Button variant="outline" size="sm" icon="chevleft" disabled={busy} onClick={goPrev} title="Previous (←)">Prev</Button>
-            <Button variant="outline" size="sm" icon="x" disabled={busy} onClick={() => setShowReject(true)} title="Reject (R)">Reject</Button>
-            <Button variant="primary" size="sm" icon="check" disabled={busy} onClick={doApprove} title="Approve & advance (Enter)">
-              {busy ? 'Working…' : 'Approve'}
-            </Button>
-            <Button variant="outline" size="sm" icon="chevright" disabled={busy} onClick={goNext} title="Next (→)">Next</Button>
-          </div>
-        ) : (
-          <Button variant="primary" size="sm" onClick={onClose}>Done</Button>
-        )}
-        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
-          Enter = Approve &amp; advance · R = Reject · ←/→ = Prev/Next · Esc = Exit
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 /**
  * Reviewer screenshot gallery (Feature 2 §B2). Renders one section per client, with a
  * grid of per-tool tiles (thumbnail + status + approve/reject). Exempt (no-access) tools
@@ -528,8 +188,8 @@ function ReviewLightbox({ cycleId, associateId, items, onDecide, onClose }) {
  *  - onReviewed(): called after a successful approve/reject/approve-all so the parent can refresh
  */
 export default function ScreenshotGallery({ cycleId, associateId, memberName, byClient, pendingScreenshots = 0, rejectedScreenshots = 0, onReviewed }) {
+  // `lightbox` holds { items, startIndex, review } for the shared Lightbox, or null when closed.
   const [lightbox, setLightbox] = useState(null);
-  const [reviewMode, setReviewMode] = useState(false);
   const [busyKey, setBusyKey] = useState(null);
   const [approvingAll, setApprovingAll] = useState(false);
   const [error, setError] = useState(null);
@@ -547,17 +207,37 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
 
   if (!hasAnyScreenshotRows) return null;
 
-  // Flatten every Pending screenshot across clients for review mode (§B3).
-  const pendingItems = groups.flatMap((client) =>
+  // Every row that actually has a screenshot, in the shared Lightbox item shape. The
+  // tile-click viewer navigates across this full set (not just the clicked tile); review is
+  // offered on whichever items are Pending.
+  const allItems = groups.flatMap((client) =>
     (client.tools ?? [])
-      .filter((t) => t.screenshotStatus === 'Pending')
+      .filter((t) => !!t.screenshotStatus)
       .map((t) => ({
-        clientID: client.clientID,
+        cycleId,
+        associateId,
+        clientId: client.clientID,
         clientName: client.clientName,
-        toolID: t.toolID,
+        toolId: t.toolID,
         toolName: t.toolName,
+        screenshotStatus: t.screenshotStatus,
+        screenshotRejectReason: t.screenshotRejectReason,
+        screenshotUploadedAt: t.screenshotUploadedAt,
       }))
   );
+
+  // The Pending subset, in the same shape, for the "Review pending" entry point (§B3).
+  const pendingItems = allItems.filter((it) => it.screenshotStatus === 'Pending');
+
+  // One approve/reject decision against the server; tallied so the lightbox-close toast can
+  // report what happened. Shared by tile-controls, tile-viewer review, and review mode.
+  const reviewTallyRef = useRef({ approved: 0, rejected: 0 });
+
+  const decide = async (item, approve, reason) => {
+    await reviewScreenshot(cycleId, associateId, item.clientId, item.toolId, approve, reason);
+    if (approve) reviewTallyRef.current.approved += 1;
+    else reviewTallyRef.current.rejected += 1;
+  };
 
   const handleReview = async (clientId, tool, approve, reason) => {
     const key = `${clientId}/${tool.toolID}`;
@@ -589,22 +269,28 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
     }
   };
 
-  // Review mode (§B3): one approve/reject decision per call, tallied for the exit toast.
-  const reviewTallyRef = useRef({ approved: 0, rejected: 0 });
-
-  const handleReviewModeOpen = () => {
+  // Open the shared lightbox. `review` enables in-lightbox approve/reject on Pending items.
+  const openLightbox = (items, startIndex, { review = true } = {}) => {
+    if (!items.length) return;
     reviewTallyRef.current = { approved: 0, rejected: 0 };
-    setReviewMode(true);
+    setLightbox({
+      items,
+      startIndex,
+      review: review ? { onDecide: decide } : undefined,
+    });
   };
 
-  const handleReviewModeDecide = async (item, approve, reason) => {
-    await reviewScreenshot(cycleId, associateId, item.clientID, item.toolID, approve, reason);
-    if (approve) reviewTallyRef.current.approved += 1;
-    else reviewTallyRef.current.rejected += 1;
+  // Tile click → open the viewer at that item, navigating across ALL screenshots, review enabled.
+  const handleTileOpen = (target) => {
+    const idx = allItems.findIndex((it) => it.clientId === target.clientId && it.toolId === target.toolId);
+    openLightbox(allItems, idx < 0 ? 0 : idx, { review: true });
   };
 
-  const handleReviewModeClose = () => {
-    setReviewMode(false);
+  // "Review pending" → open the viewer over just the Pending set, review enabled.
+  const handleReviewPending = () => openLightbox(pendingItems, 0, { review: true });
+
+  const handleLightboxClose = () => {
+    setLightbox(null);
     const { approved, rejected } = reviewTallyRef.current;
     if (approved > 0 || rejected > 0) {
       setToast(`${approved} approved, ${rejected} rejected`);
@@ -624,7 +310,7 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {pendingItems.length > 0 && (
-            <Button variant="outline" size="sm" icon="image" onClick={handleReviewModeOpen}>
+            <Button variant="outline" size="sm" icon="image" onClick={handleReviewPending}>
               Review pending ({pendingItems.length})
             </Button>
           )}
@@ -655,7 +341,7 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
                   associateId={associateId}
                   clientId={client.clientID}
                   tool={tool}
-                  onOpen={setLightbox}
+                  onOpen={handleTileOpen}
                   onReview={(t, approve, reason) => handleReview(client.clientID, t, approve, reason)}
                   busy={busyKey === `${client.clientID}/${tool.toolID}`}
                 />
@@ -665,15 +351,12 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
         );
       })}
 
-      {lightbox && <Lightbox target={lightbox} onClose={() => setLightbox(null)} />}
-
-      {reviewMode && (
-        <ReviewLightbox
-          cycleId={cycleId}
-          associateId={associateId}
-          items={pendingItems}
-          onDecide={handleReviewModeDecide}
-          onClose={handleReviewModeClose}
+      {lightbox && (
+        <Lightbox
+          items={lightbox.items}
+          startIndex={lightbox.startIndex}
+          review={lightbox.review}
+          onClose={handleLightboxClose}
         />
       )}
 

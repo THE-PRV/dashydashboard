@@ -84,6 +84,7 @@ export function Badge({ children, variant = 'neutral', size = 'md' }) {
     notused:   { fg: 'var(--badge-notused-fg)',   bg: 'var(--badge-notused-bg)',   dot: 'var(--badge-notused-dot)' },
     pending:   { fg: 'var(--badge-pending-fg)',   bg: 'var(--badge-pending-bg)',   dot: 'var(--badge-pending-dot)' },
     danger:    { fg: 'var(--danger-fg)', bg: 'var(--danger-bg)', dot: 'var(--danger-fg)' },
+    info:      { fg: 'var(--accent)', bg: 'var(--accent-glow)', dot: 'var(--accent)' },
     neutral:   { fg: 'var(--text-muted)', bg: 'var(--surface-2)', dot: 'var(--text-muted)' },
   }[variant] ?? { fg: 'var(--text-muted)', bg: 'var(--surface-2)', dot: 'var(--text-muted)' };
   return (
@@ -96,6 +97,77 @@ export function Badge({ children, variant = 'neutral', size = 'md' }) {
       <span style={{ width: 6, height: 6, borderRadius: 999, background: tones.dot, flex: 'none' }} />
       {children}
     </span>
+  );
+}
+
+// ── WI-6 status taxonomy (server-computed enum) ─────────────────────────────
+// Maps each of the five member states to a label + a Badge tone. The string keys
+// are the verbatim values the API emits on the team/detail/admin DTOs; the frontend
+// only maps state → chip, it never re-derives the logic. Unknown values fall back to
+// NotStarted styling but keep the raw value as their label.
+export const STATUS_META = {
+  NotStarted:       { label: 'Not started',       variant: 'neutral' },
+  InProgress:       { label: 'In progress',        variant: 'info'    },
+  AwaitingApproval: { label: 'Awaiting approval',  variant: 'pending' },
+  ActionNeeded:     { label: 'Action needed',      variant: 'danger'  },
+  Complete:         { label: 'Complete',           variant: 'used'    },
+};
+
+// Resolve a raw status string to its { label, variant }. Unknown → NotStarted tone,
+// raw value as label (so a new server state degrades gracefully instead of vanishing).
+export function statusMeta(status) {
+  const meta = STATUS_META[status];
+  if (meta) return meta;
+  return { label: status || STATUS_META.NotStarted.label, variant: STATUS_META.NotStarted.variant };
+}
+
+// Renders one of the five WI-6 member states as a Badge. Pass the raw API status string.
+export function StatusChip({ status, size = 'md' }) {
+  const { label, variant } = statusMeta(status);
+  return <Badge variant={variant} size={size}>{label}</Badge>;
+}
+
+// The uppercase 11px letter-spaced label pattern repeated across every view.
+// Optional `right` slot renders inline at the end of the row (counts, actions).
+export function SectionHeader({ children, right, style }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 10, ...style,
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: '0.05em',
+        textTransform: 'uppercase', color: 'var(--text-muted)',
+      }}>
+        {children}
+      </div>
+      {right != null && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>{right}</div>}
+    </div>
+  );
+}
+
+// The surface+border+radius+shadow box pattern. `pad` controls inner padding (number → px),
+// `interactive` adds a pointer cursor + hover lift hint. Extra style overrides win.
+export function Card({ children, pad = 14, radius = 12, interactive = false, onClick, style }) {
+  const [hovered, setHovered] = React.useState(false);
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={interactive ? () => setHovered(true) : undefined}
+      onMouseLeave={interactive ? () => setHovered(false) : undefined}
+      style={{
+        background: 'var(--surface)',
+        border: `1px solid ${interactive && hovered ? 'var(--border-hover, var(--text-muted))' : 'var(--border)'}`,
+        borderRadius: radius,
+        boxShadow: 'var(--shadow-sm)',
+        padding: typeof pad === 'number' ? pad : pad,
+        cursor: interactive ? 'pointer' : undefined,
+        transition: 'border-color .12s, box-shadow .12s',
+        ...style,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 

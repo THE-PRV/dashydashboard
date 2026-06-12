@@ -67,7 +67,8 @@ public record NonSubmittedDto(
     int CompletionPct,
     string Email,
     string ManagerName,
-    // §7: "Not submitted" / "Awaiting approval" / "Has rejected screenshots"
+    // WI-6 human label for the five-state status (Complete excluded from this list):
+    // "Not started" / "In progress" / "Awaiting approval" / "Action needed".
     string Status
 );
 
