@@ -1,18 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Avatar, Badge, Button, Icon, Progress, TopBar } from '../components/ui.jsx';
+import { Avatar, Badge, Button, Card, Icon, Progress, SectionHeader, StatusChip, TopBar, statusMeta } from '../components/ui.jsx';
 import { getMemberDetail, getTeam, exportDisputes, downloadScreenshotsZip } from '../api/manager.js';
 import { reopenAttestation } from '../api/attestations.js';
 import { asAssociateId } from '../lib/contracts.js';
 import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
+import FullScreenOverlay from '../components/FullScreenOverlay.jsx';
 
-const STATUS_META = {
-  Submitted: { label: 'Submitted', variant: 'used' },
-  InProgress: { label: 'In progress', variant: 'pending' },
-  NotStarted: { label: 'Not started', variant: 'notused' },
-};
+// The five WI-6 member states, in display order, with the human labels from STATUS_META.
+// Used for the summary cards row and the filter pills over the team table.
+const STATE_ORDER = ['NotStarted', 'InProgress', 'AwaitingApproval', 'ActionNeeded', 'Complete'];
 
-function statusMeta(status) {
-  return STATUS_META[status] ?? STATUS_META.NotStarted;
+// A member is "submitted" (reopen-able) once they are in one of these states.
+const SUBMITTED_STATES = new Set(['AwaitingApproval', 'ActionNeeded', 'Complete']);
+
+// Render a nullable ISO date string as a short local date, or an em-dash when missing.
+function formatDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function Panel({ title, subtitle, children, action }) {
@@ -70,6 +76,44 @@ function EmptyState({ icon, title, body }) {
   );
 }
 
+// A small labelled count row used in the compact member card and the overlay. `tone`
+// pulls accent colors for the value when > 0 (danger for disputes, etc.).
+function CountRow({ label, value, tone }) {
+  const accent = value > 0 && tone === 'danger';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+      <span style={{ fontSize: 12.5, color: accent ? 'var(--danger-fg)' : 'var(--text-muted)' }}>{label}</span>
+      <span style={{
+        fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+        color: accent ? 'var(--danger-fg)' : 'var(--text)',
+      }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// Per-client completion row (client name + n/m + small progress bar). `showId` adds the
+// client id parenthetical (used in the richer overlay listing).
+function ClientProgressRow({ client, showId = false }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ minWidth: 0, fontSize: 12.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {client.clientName}
+          {showId && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> ({client.clientID})</span>}
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+          {client.attestedTools}/{client.totalTools}
+        </div>
+      </div>
+      <div style={{ marginTop: 6 }}>
+        <Progress value={client.attestedTools} max={client.totalTools || 1} height={4} />
+      </div>
+    </div>
+  );
+}
+
 export default function ManagerView({
   user,
   cycle,
@@ -94,6 +138,7 @@ export default function ManagerView({
   const [exportingDisputes, setExportingDisputes] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [overlayOpen, setOverlayOpen] = useState(false);
 
   const loadTeam = async () => {
     if (!cycle) {
@@ -161,9 +206,9 @@ export default function ManagerView({
     setReopening(true);
     try {
       await reopenAttestation(cycle.cycleID, selectedId);
-      // Refresh both the member detail and the team list
+      // Refresh both the member detail and the team list.
       getMemberDetail(selectedId, cycle.cycleID)
-        .then((response) => setDetail({ ...response, associateId: response.associateId }))
+        .then((response) => setDetail({ ...response, associateId: asAssociateId(response.associateId) }))
         .catch(() => {});
       loadTeam();
     } catch (e) {
@@ -212,17 +257,17 @@ export default function ManagerView({
     };
   }, [cycle, selectedId]);
 
+  // Close the overlay whenever the selected member or cycle changes out from under it.
+  useEffect(() => {
+    setOverlayOpen(false);
+  }, [selectedId, cycle]);
+
   const visibleMembers = useMemo(() => {
     const members = team?.members ?? [];
     const query = search.trim().toLowerCase();
 
     return members
-      .filter((member) => {
-        if (filter === 'done') return member.attestationStatus === 'Submitted';
-        if (filter === 'pending') return member.attestationStatus === 'InProgress';
-        if (filter === 'not-started') return member.attestationStatus === 'NotStarted';
-        return true;
-      })
+      .filter((member) => (filter === 'all' ? true : member.attestationStatus === filter))
       .filter((member) => {
         if (!query) return true;
         return (
@@ -232,23 +277,34 @@ export default function ManagerView({
       });
   }, [filter, search, team]);
 
+  // Six compact summary cards: Direct reports + the five WI-6 state counts straight off TeamDto.
   const summary = useMemo(() => {
-    if (!team) {
-      return [
-        { label: 'Direct reports', value: 0 },
-        { label: 'Submitted', value: 0 },
-        { label: 'In progress', value: 0 },
-        { label: 'Not started', value: 0 },
-      ];
-    }
-
+    const t = team ?? {};
     return [
-      { label: 'Direct reports', value: team.totalMembers },
-      { label: 'Submitted', value: team.submitted },
-      { label: 'In progress', value: team.inProgress },
-      { label: 'Not started', value: team.notStarted },
+      { key: 'all', label: 'Direct reports', value: t.totalMembers ?? 0 },
+      { key: 'NotStarted', label: statusMeta('NotStarted').label, value: t.notStarted ?? 0 },
+      { key: 'InProgress', label: statusMeta('InProgress').label, value: t.inProgress ?? 0 },
+      { key: 'AwaitingApproval', label: statusMeta('AwaitingApproval').label, value: t.awaitingApproval ?? 0 },
+      { key: 'ActionNeeded', label: statusMeta('ActionNeeded').label, value: t.actionNeeded ?? 0 },
+      { key: 'Complete', label: statusMeta('Complete').label, value: t.complete ?? 0 },
     ];
   }, [team]);
+
+  const canReopen = detail && SUBMITTED_STATES.has(detail.attestationStatus);
+  const disputeCount = detail?.mismatches?.length ?? 0;
+
+  const reopenButton = (compact = false) => (
+    <Button
+      variant="outline"
+      size={compact ? 'sm' : 'md'}
+      icon="refresh"
+      disabled={reopening}
+      onClick={handleReopen}
+      style={{ opacity: reopening ? 0.7 : 1, cursor: reopening ? 'not-allowed' : 'pointer' }}
+    >
+      {reopening ? 'Reopening…' : 'Reopen attestation'}
+    </Button>
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
@@ -286,14 +342,17 @@ export default function ManagerView({
           Review direct-report completion for {cycle?.cycleName ?? 'the selected cycle'}
         </span>
         {cycle?.cycleID && (
-          <Button
-            variant="outline" size="sm" icon="download"
-            disabled={downloadingZip}
-            onClick={handleDownloadZip}
-            style={{ marginLeft: 'auto', opacity: downloadingZip ? 0.6 : 1, cursor: downloadingZip ? 'wait' : 'pointer' }}
-          >
-            {downloadingZip ? 'Preparing…' : `Download all screenshots (cycle ${cycle.cycleID})`}
-          </Button>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* WI-9 mount point: cycle gallery button */}
+            <Button
+              variant="outline" size="sm" icon="download"
+              disabled={downloadingZip}
+              onClick={handleDownloadZip}
+              style={{ opacity: downloadingZip ? 0.6 : 1, cursor: downloadingZip ? 'wait' : 'pointer' }}
+            >
+              {downloadingZip ? 'Preparing…' : `Download all screenshots (cycle ${cycle.cycleID})`}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -326,26 +385,33 @@ export default function ManagerView({
         </div>
       )}
 
-      <div style={{ padding: '20px 24px 0', display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
-        {summary.map((item) => (
-          <div
-            key={item.label}
-            style={{
-              padding: '14px 16px',
-              borderRadius: 12,
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-              boxShadow: 'var(--shadow-sm)',
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-              {item.label}
+      <div style={{ padding: '20px 24px 0', display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 12 }}>
+        {summary.map((item) => {
+          const active = filter === item.key;
+          const clickable = item.key !== 'all';
+          return (
+            <div
+              key={item.key}
+              onClick={clickable ? () => setFilter(active ? 'all' : item.key) : undefined}
+              style={{
+                padding: '12px 14px',
+                borderRadius: 12,
+                background: 'var(--surface)',
+                border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                boxShadow: 'var(--shadow-sm)',
+                cursor: clickable ? 'pointer' : 'default',
+                transition: 'border-color .12s',
+              }}
+            >
+              <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {item.label}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 24, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+                {item.value}
+              </div>
             </div>
-            <div style={{ marginTop: 6, fontSize: 28, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-              {item.value}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div style={{ padding: '16px 24px 24px', flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 0.9fr)', gap: 16 }}>
@@ -354,13 +420,8 @@ export default function ManagerView({
             title="Team completion"
             subtitle={team ? `${team.totalAttested} of ${team.totalTools} tools attested` : 'No team data loaded'}
             action={
-              <div style={{ display: 'inline-flex', gap: 6 }}>
-                {[
-                  ['all', 'Everyone'],
-                  ['not-started', 'Not started'],
-                  ['pending', 'In progress'],
-                  ['done', 'Submitted'],
-                ].map(([key, label]) => {
+              <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {[['all', 'All'], ...STATE_ORDER.map((s) => [s, statusMeta(s).label])].map(([key, label]) => {
                   const active = filter === key;
                   return (
                     <button
@@ -400,8 +461,8 @@ export default function ManagerView({
             ) : visibleMembers.length === 0 ? (
               <EmptyState
                 icon="search"
-                title={search ? 'No matching team members' : 'No direct reports'}
-                body={search ? 'Clear or change the search to see more team members.' : 'This manager does not currently have direct reports in the selected cycle.'}
+                title={search || filter !== 'all' ? 'No matching team members' : 'No direct reports'}
+                body={search || filter !== 'all' ? 'Clear or change the search/filter to see more team members.' : 'This manager does not currently have direct reports in the selected cycle.'}
               />
             ) : (
               <div style={{ maxHeight: '100%', overflow: 'auto' }}>
@@ -430,7 +491,6 @@ export default function ManagerView({
                   <tbody>
                     {visibleMembers.map((member) => {
                       const active = member.associateId === selectedId;
-                      const meta = statusMeta(member.attestationStatus);
                       return (
                         <tr
                           key={member.associateId}
@@ -464,12 +524,12 @@ export default function ManagerView({
                           </td>
                           <td style={{ padding: '12px 14px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <Badge variant={meta.variant}>{meta.label}</Badge>
+                              <StatusChip status={member.attestationStatus} />
                               {member.pendingScreenshots > 0 && (
-                                <Badge variant="pending" size="sm">Awaiting approval ({member.pendingScreenshots})</Badge>
+                                <Badge variant="neutral" size="sm">{member.pendingScreenshots} pending</Badge>
                               )}
                               {member.rejectedScreenshots > 0 && (
-                                <Badge variant="danger" size="sm">Rejected ({member.rejectedScreenshots})</Badge>
+                                <Badge variant="neutral" size="sm">{member.rejectedScreenshots} rejected</Badge>
                               )}
                             </div>
                           </td>
@@ -499,123 +559,153 @@ export default function ManagerView({
                 body="Select a team member from the list to review their per-client progress."
               />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <Avatar initials={(detail.fullName || 'U').slice(0, 2).toUpperCase()} size={44} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>{detail.fullName}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Associate ID · {detail.associateId}</div>
-                    </div>
+              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {/* Identity + overall status */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Avatar initials={(detail.fullName || 'U').slice(0, 2).toUpperCase()} size={44} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail.fullName}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Associate ID · {detail.associateId}</div>
                   </div>
-
-                  <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                    <div style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                        Completion
-                      </div>
-                      <div style={{ marginTop: 6, fontSize: 24, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-                        {Math.round(detail.progressPct * 100)}%
-                      </div>
-                    </div>
-                    <div style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                        Status
-                      </div>
-                      <div style={{ marginTop: 9 }}>
-                        <Badge variant={statusMeta(detail.attestationStatus).variant}>{statusMeta(detail.attestationStatus).label}</Badge>
-                      </div>
-                    </div>
-                  </div>
-                  {detail.attestationStatus === 'Submitted' && (
-                    <div style={{ marginTop: 10 }}>
-                      <button
-                        className="btn-lift"
-                        onClick={handleReopen}
-                        disabled={reopening}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          background: 'transparent', border: '1px solid var(--accent)',
-                          color: 'var(--accent)', borderRadius: 6, padding: '6px 12px',
-                          fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
-                          cursor: reopening ? 'not-allowed' : 'pointer', opacity: reopening ? 0.7 : 1,
-                        }}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="1 4 1 10 7 10" />
-                          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                        </svg>
-                        {reopening ? 'Reopening…' : 'Reopen attestation'}
-                      </button>
-                    </div>
-                  )}
+                  <StatusChip status={detail.attestationStatus} />
                 </div>
 
-                <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflow: 'auto' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                    Per-client progress
+                {/* Overall completion bar */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+                    <SectionHeader>Completion</SectionHeader>
+                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                      {detail.attestedTools}/{detail.totalTools} · {Math.round((detail.progressPct ?? 0) * 100)}%
+                    </span>
                   </div>
+                  <Progress value={detail.attestedTools} max={detail.totalTools || 1} height={6} />
+                </div>
+
+                {/* Per-client completion — compact, no thumbnails, no scroll container */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <SectionHeader>Per-client progress</SectionHeader>
                   {detail.byClient.length === 0 ? (
-                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No client access is active for this user.</div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No client access is active for this user.</div>
                   ) : (
-                    detail.byClient.map((client) => (
-                      <div
-                        key={client.clientID}
-                        style={{
-                          padding: '12px 14px',
-                          borderRadius: 10,
-                          border: '1px solid var(--border-subtle)',
-                          background: 'var(--surface)',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {client.clientName}
-                            </div>
-                          </div>
-                          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                            {client.attestedTools}/{client.totalTools}
-                          </div>
-                        </div>
-                        <div style={{ marginTop: 8 }}>
-                          <Progress value={client.attestedTools} max={client.totalTools || 1} height={4} />
-                        </div>
-                      </div>
-                    ))
-                  )}
-
-                  {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient.some((c) => c.tools?.length)) && (
-                    <div style={{ marginTop: 6 }}>
-                      <ScreenshotGallery
-                        cycleId={cycle.cycleID}
-                        associateId={detail.associateId}
-                        memberName={detail.fullName}
-                        byClient={detail.byClient}
-                        pendingScreenshots={detail.pendingScreenshots}
-                        rejectedScreenshots={detail.rejectedScreenshots}
-                        onReviewed={refreshDetail}
-                      />
-                    </div>
-                  )}
-
-                  {detail?.mismatches?.length > 0 && (
-                    <div style={{ marginTop: 16 }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8, color: 'var(--danger-fg)' }}>Access disputes ({detail.mismatches.length})</div>
-                      {detail.mismatches.map((m, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, marginBottom: 4, fontSize: '0.85rem', color: 'var(--text)' }}>
-                          <span><strong>{m.toolName}</strong><span style={{ color: 'var(--text-muted)' }}> — {m.clientName}</span></span>
-                          {m.remarks && <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: 12 }}>{m.remarks}</span>}
-                        </div>
-                      ))}
-                    </div>
+                    detail.byClient.map((client) => <ClientProgressRow key={client.clientID} client={client} />)
                   )}
                 </div>
+
+                {/* Compact count rows */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4, borderTop: '1px solid var(--border-subtle)' }}>
+                  <CountRow label="Access disputes" value={disputeCount} tone="danger" />
+                  <CountRow label="Screenshots awaiting approval" value={detail.pendingScreenshots ?? 0} />
+                  {(detail.rejectedScreenshots ?? 0) > 0 && (
+                    <CountRow label="Rejected screenshots" value={detail.rejectedScreenshots} tone="danger" />
+                  )}
+                </div>
+
+                {/* Open details affordance */}
+                <Button variant="primary" icon="arrow_up_right" onClick={() => setOverlayOpen(true)} style={{ justifyContent: 'center' }}>
+                  Open details
+                </Button>
               </div>
             )}
           </Panel>
         </div>
       </div>
+
+      {overlayOpen && detail && (
+        <FullScreenOverlay
+          title={`${detail.fullName} · ${detail.associateId}`}
+          subtitle={`${cycle?.cycleName ?? 'Cycle'} · ${detail.attestedTools} of ${detail.totalTools} tools attested`}
+          onClose={() => setOverlayOpen(false)}
+          actions={canReopen ? reopenButton(false) : undefined}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+            {/* Overall status row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <StatusChip status={detail.attestationStatus} />
+              <div style={{ flex: 1, minWidth: 200, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <Progress value={detail.attestedTools} max={detail.totalTools || 1} height={6} />
+                </div>
+                <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  {detail.attestedTools}/{detail.totalTools} · {Math.round((detail.progressPct ?? 0) * 100)}%
+                </span>
+              </div>
+            </div>
+
+            {/* Per-client progress (richer — with ids) */}
+            <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <SectionHeader>Per-client progress</SectionHeader>
+              {detail.byClient.length === 0 ? (
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No client access is active for this user.</div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+                  {detail.byClient.map((client) => (
+                    <Card key={client.clientID} pad={12}>
+                      <ClientProgressRow client={client} showId />
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* Screenshot review grid */}
+            {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient.some((c) => c.tools?.length)) && (
+              <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <SectionHeader>Screenshot review</SectionHeader>
+                <ScreenshotGallery
+                  cycleId={cycle.cycleID}
+                  associateId={detail.associateId}
+                  memberName={detail.fullName}
+                  byClient={detail.byClient}
+                  pendingScreenshots={detail.pendingScreenshots}
+                  rejectedScreenshots={detail.rejectedScreenshots}
+                  onReviewed={refreshDetail}
+                />
+              </section>
+            )}
+
+            {/* Access disputes (WI-4) — full list with tool, client name (id), remark, date answered */}
+            <section style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <SectionHeader>Access disputes ({disputeCount})</SectionHeader>
+              {disputeCount === 0 ? (
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No access disputes reported this cycle.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {detail.mismatches.map((m, i) => (
+                    <div
+                      key={`${m.clientID}-${m.toolName}-${i}`}
+                      style={{
+                        padding: '12px 14px',
+                        borderRadius: 10,
+                        background: 'var(--danger-bg)',
+                        border: '1px solid var(--danger-border)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)' }}>{m.toolName}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          Answered {formatDate(m.submittedAt)}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {m.clientName} ({m.clientID})
+                      </div>
+                      {m.remarks ? (
+                        <div style={{ fontSize: 12.5, color: 'var(--text)', marginTop: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {m.remarks}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, fontStyle: 'italic' }}>
+                          No remark provided.
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        </FullScreenOverlay>
+      )}
     </div>
   );
 }

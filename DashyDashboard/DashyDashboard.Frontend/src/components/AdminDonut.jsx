@@ -135,7 +135,7 @@ export default function AdminDonut({ pct, size = 96, strokeWidth = 10, dark }) {
             marginTop: 2,
           }}
         >
-          done
+          answered
         </span>
       </div>
     </div>

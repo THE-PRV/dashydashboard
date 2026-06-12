@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, TriToggle, Progress, Button, TopBar } from '../components/ui.jsx';
-import { getMyAttestations, toggleUsed, toggleHadAccess, submitAll } from '../api/attestations.js';
+import { getMyAttestations, toggleUsed, toggleHadAccess, submitAll, addRemark } from '../api/attestations.js';
 import RemarksModal from '../components/RemarksModal.jsx';
 import ScreenshotCell from '../components/ScreenshotCell.jsx';
 import ScreenshotBatchModal from '../components/ScreenshotBatchModal.jsx';
+import Lightbox from '../components/Lightbox.jsx';
 import { asToolIdKey } from '../lib/contracts.js';
 
 // Screenshot statuses that satisfy submit gating — mirrors AttestationService's
@@ -23,12 +24,23 @@ function isPastDue(cycle) {
   return todayKey > String(cycle.dueDate).slice(0, 10);
 }
 
-// A non-exempt, decided tool (used or explicitly not-used) needs a Pending/Approved
-// screenshot to be submittable — mirrors the server's screenshot gate (§7).
+// Only rows the associate marked as USED need a Pending/Approved screenshot to be
+// submittable — mirrors the server's screenshot gate (§7, post-WI-1). No-access and
+// not-used rows are exempt.
 function needsScreenshot(tool) {
   return tool.hadAccess !== false
-    && (tool.usedThisCycle !== null && tool.usedThisCycle !== undefined)
+    && tool.usedThisCycle === true
     && !SUBMITTABLE_SCREENSHOT_STATUSES.includes(tool.screenshotStatus);
+}
+
+// A "not used" row (hadAccess true/unset, usedThisCycle explicitly false) must carry a
+// non-empty remark explaining why — mirrors the server's mandatory-remark gate (WI-1).
+function isNotUsed(tool) {
+  return tool.hadAccess !== false && tool.usedThisCycle === false;
+}
+
+function needsNotUsedRemark(tool) {
+  return isNotUsed(tool) && !(tool.remarks && String(tool.remarks).trim());
 }
 
 const CLIENT_ACCENTS = {
@@ -67,6 +79,9 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
   const [focusedRow, setFocusedRow] = useState(null); // `${clientId}/${toolId}` of the paste target
   const [batchOpen, setBatchOpen] = useState(false);
   const [gateOffending, setGateOffending] = useState(null); // Set of `${clientId}/${toolId}` from the API's offendingRows (fallback truth)
+  const [notUsedRemarkDrafts, setNotUsedRemarkDrafts] = useState({}); // rowKey -> in-progress text for the inline required-remark input
+  const [savingRemarkRows, setSavingRemarkRows] = useState(() => new Set()); // rowKeys currently saving an inline remark
+  const [lightboxItems, setLightboxItems] = useState(null); // WI-2 corner-button viewer for not-used rows with a prior screenshot
   const pasteTargetsRef = useRef(new Map()); // rowKey -> (file) => void, registered by ScreenshotCell
 
   const loadAttestations = async ({ preserveExpansion = false } = {}) => {
@@ -169,6 +184,18 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
 
   const screenshotGateBlocked = blockedRows.size > 0;
 
+  // WI-1: "Not used" rows without a remark — blocks submission and drives the inline
+  // required-remark UI + row highlight.
+  const notUsedRemarkRows = useMemo(() => {
+    const blocked = new Set();
+    clients.forEach((client) => {
+      client.tools.forEach((tool) => {
+        if (needsNotUsedRemark(tool)) blocked.add(rowKey(client.clientID, tool.toolID));
+      });
+    });
+    return blocked;
+  }, [clients]);
+
   const visible = useMemo(() => {
     if (!search) return clients;
     const query = search.toLowerCase();
@@ -203,6 +230,11 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
 
     if (missingRemarks > 0) {
       flashToast('warn', `Add a remark for each tool you marked as 'No access' before submitting (${missingRemarks} still need one).`);
+      return;
+    }
+
+    if (notUsedRemarkRows.size > 0) {
+      flashToast('warn', `Add a remark for each tool you marked as 'Not used' before submitting (${notUsedRemarkRows.size} still need one).`);
       return;
     }
 
@@ -280,6 +312,31 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
       ...client,
       tools: client.tools.map((tool) => asToolIdKey(tool.toolID) !== toolKey ? tool : { ...tool, remarks: text || null }),
     }));
+  };
+
+  // WI-1: save the inline "Not used" remark (Enter or blur with non-empty text). Reuses the
+  // same addRemark API + applyRemark local-state update as RemarksModal.
+  const handleSaveNotUsedRemark = async (clientId, toolId, key, text) => {
+    const trimmed = (text ?? '').trim();
+    if (!trimmed) return;
+    setSavingRemarkRows((previous) => new Set(previous).add(key));
+    try {
+      await addRemark(cycle.cycleID, clientId, toolId, trimmed);
+      applyRemark(clientId, toolId, trimmed);
+      setNotUsedRemarkDrafts((previous) => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+    } catch (error) {
+      flashToast('err', error.message || 'Could not save that remark.');
+    } finally {
+      setSavingRemarkRows((previous) => {
+        const next = new Set(previous);
+        next.delete(key);
+        return next;
+      });
+    }
   };
 
   if (loading) {
@@ -632,8 +689,10 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                     </thead>
                     <tbody>
                       {client.tools.map((tool, index) => {
+                        const key = rowKey(client.clientID, tool.toolID);
                         const pending = !isDecided(tool);
-                        const blocked = blockedRows.has(rowKey(client.clientID, tool.toolID));
+                        const needsRemark = notUsedRemarkRows.has(key);
+                        const blocked = blockedRows.has(key) || needsRemark;
                         return (
                           <tr key={tool.toolID} style={{
                             background: blocked
@@ -668,6 +727,49 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                             <td style={{ padding: '10px 16px' }}>
                               {(() => {
                                 const hasRemark = !!tool.remarks;
+
+                                // WI-1: "Not used" rows without a remark get an inline, visibly
+                                // required text input instead of the chip-button.
+                                if (needsRemark && !isSubmitted) {
+                                  const draft = notUsedRemarkDrafts[key] ?? '';
+                                  const saving = savingRemarkRows.has(key);
+                                  const commit = () => handleSaveNotUsedRemark(client.clientID, tool.toolID, key, draft);
+                                  return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 200 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <input
+                                          type="text"
+                                          value={draft}
+                                          placeholder="Explain why this tool wasn't used"
+                                          maxLength={500}
+                                          disabled={saving}
+                                          onChange={(e) => setNotUsedRemarkDrafts((previous) => ({ ...previous, [key]: e.target.value }))}
+                                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
+                                          onBlur={commit}
+                                          style={{
+                                            flex: 1,
+                                            minWidth: 0,
+                                            height: 28,
+                                            padding: '0 8px',
+                                            borderRadius: 6,
+                                            border: '1px solid var(--danger-fg)',
+                                            background: 'var(--surface)',
+                                            color: 'var(--text)',
+                                            fontSize: 12,
+                                            fontFamily: 'inherit',
+                                            outline: 'none',
+                                            opacity: saving ? 0.6 : 1,
+                                          }}
+                                        />
+                                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger-fg)', flex: 'none' }} title="Required">*</span>
+                                      </div>
+                                      <span style={{ fontSize: 10.5, color: 'var(--danger-fg)' }}>
+                                        {saving ? 'Saving…' : 'Required — explain why this tool wasn\'t used'}
+                                      </span>
+                                    </div>
+                                  );
+                                }
+
                                 return (
                                   <button
                                     type="button"
@@ -711,6 +813,41 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                             <td style={{ padding: '10px 16px' }}>
                               {tool.hadAccess === false ? (
                                 <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Not required</span>
+                              ) : isNotUsed(tool) ? (
+                                // WI-2: not-used rows hide the upload strip entirely. If a
+                                // screenshot was previously uploaded (e.g. before flipping to
+                                // "Not used"), show only a small view button -> shared Lightbox.
+                                tool.screenshotStatus ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setLightboxItems([{
+                                      cycleId: cycle.cycleID,
+                                      associateId: user.associateId,
+                                      clientId: client.clientID,
+                                      clientName: client.clientName,
+                                      toolId: tool.toolID,
+                                      toolName: tool.toolName,
+                                      screenshotStatus: tool.screenshotStatus,
+                                      screenshotRejectReason: tool.screenshotRejectReason,
+                                      screenshotUploadedAt: tool.screenshotUploadedAt,
+                                    }])}
+                                    title="View previous screenshot"
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      width: 26,
+                                      height: 26,
+                                      borderRadius: 6,
+                                      border: '1px solid var(--border)',
+                                      background: 'var(--surface-2)',
+                                      color: 'var(--text-muted)',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <Icon name="image" size={13} />
+                                  </button>
+                                ) : null
                               ) : (
                                 <ScreenshotCell
                                   cycleId={cycle.cycleID}
@@ -721,8 +858,8 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
                                   screenshotRejectReason={tool.screenshotRejectReason}
                                   screenshotUploadedAt={tool.screenshotUploadedAt}
                                   readOnly={isSubmitted || pastDue}
-                                  isFocused={focusedRow === rowKey(client.clientID, tool.toolID)}
-                                  onFocus={() => setFocusedRow(rowKey(client.clientID, tool.toolID))}
+                                  isFocused={focusedRow === key}
+                                  onFocus={() => setFocusedRow(key)}
                                   onUploaded={() => loadAttestations({ preserveExpansion: true })}
                                   onError={(message) => flashToast('err', message)}
                                   registerPasteTarget={registerPasteTarget}
@@ -759,6 +896,13 @@ export default function AgentView({ user, cycle, cycles, onCycle, onLogout, isMa
           clients={clients}
           onClose={() => setBatchOpen(false)}
           onUploaded={() => loadAttestations({ preserveExpansion: true })}
+        />
+      )}
+
+      {lightboxItems && (
+        <Lightbox
+          items={lightboxItems}
+          onClose={() => setLightboxItems(null)}
         />
       )}
     </div>

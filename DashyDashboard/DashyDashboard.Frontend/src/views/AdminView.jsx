@@ -4,6 +4,8 @@ import { getAdminDepartments, getDeptManagers, exportNonSubmitted, exportDispute
 import { getClientsAndTools, downloadScreenshotsZip } from '../api/manager.js';
 import { reopenAttestation } from '../api/attestations.js';
 import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
+import FullScreenOverlay from '../components/FullScreenOverlay.jsx';
+import { StatusChip, SectionHeader } from '../components/ui.jsx';
 import brandLogo from '../assets/broadridge-logo.svg';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1833,6 +1835,8 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
               </button>
             </div>
 
+            {/* WI-9 mount point: cycle gallery button */}
+
             {/* Footer caption */}
             <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10 }}>
               Exports include records requiring review or action.
@@ -1998,23 +2002,16 @@ function ManagerCard({ mgr, dark, onInfo, onOpen }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MANAGER TEAM SUB-VIEW — associate list for a single manager (admin drilldown)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Map a TeamMemberDto / MemberDetailDto attestationStatus enum to a badge descriptor.
-const MEMBER_STATUS_META = {
-  Submitted: { label: 'Submitted', varName: '--st-completed' },
-  InProgress: { label: 'In Progress', varName: '--st-ontrack' },
-  NotStarted: { label: 'Not Started', varName: '--st-risk' },
-};
-function memberStatusMeta(status) {
-  return MEMBER_STATUS_META[status] ?? MEMBER_STATUS_META.NotStarted;
-}
+// WI-6: member status uses the shared five-state StatusChip / statusMeta from
+// ui.jsx (NotStarted / InProgress / AwaitingApproval / ActionNeeded / Complete) —
+// the old three-state MEMBER_STATUS_META has been removed.
 
 function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
   const [team, setTeam] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [memberPopover, setMemberPopover] = useState(null);
-  const [drillMember, setDrillMember] = useState(null);  // selected associate -> detail view
+  const [drillMember, setDrillMember] = useState(null);  // selected associate -> detail overlay (WI-8)
 
   useEffect(() => {
     if (!mgr?.associateId || !cycle?.cycleID) return;
@@ -2029,6 +2026,14 @@ function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
     return () => { cancelled = true; };
   }, [mgr?.associateId, cycle?.cycleID]);
 
+  // Reload the team grid (used after a reopen inside the overlay so the card counts/chips refresh).
+  function reloadTeam() {
+    if (!mgr?.associateId || !cycle?.cycleID) return;
+    getManagerTeam(mgr.associateId, cycle.cycleID)
+      .then((data) => setTeam(data))
+      .catch(() => {});
+  }
+
   // Close member popover on outside click
   useEffect(() => {
     if (!memberPopover) return;
@@ -2036,19 +2041,6 @@ function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [memberPopover]);
-
-  if (drillMember) {
-    return (
-      <AssociateDetailSection
-        mgr={mgr}
-        member={drillMember}
-        cycle={cycle}
-        dark={dark}
-        superUserRole={superUserRole}
-        onBack={() => setDrillMember(null)}
-      />
-    );
-  }
 
   return (
     <div>
@@ -2132,6 +2124,20 @@ function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
           )}
         </div>
       )}
+
+      {/* WI-8: associate drill-down is now a full-screen overlay ON TOP of the
+          grid (no page-replacing navigation level). Esc / ✕ / scrim returns here. */}
+      {drillMember && (
+        <AssociateDetailOverlay
+          mgr={mgr}
+          member={drillMember}
+          cycle={cycle}
+          dark={dark}
+          superUserRole={superUserRole}
+          onClose={() => setDrillMember(null)}
+          onReopened={reloadTeam}
+        />
+      )}
     </div>
   );
 }
@@ -2140,7 +2146,6 @@ function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
 function AssociateCard({ member, dark, onInfo, onOpen }) {
   const [hover, setHover] = useState(false);
   const pct = Math.round((member.progressPct ?? 0) * 100);
-  const st = memberStatusMeta(member.attestationStatus);
 
   return (
     <div
@@ -2185,16 +2190,10 @@ function AssociateCard({ member, dark, onInfo, onOpen }) {
         <AdminDonut pct={pct} size={80} strokeWidth={9} dark={dark} />
       </div>
 
-      {/* Status badge + count */}
+      {/* WI-6: five-state status chip ("what's blocking") next to the donut
+          ("how much answered") + the n/m count and pending/rejected badges. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
-          borderRadius: 999, fontSize: 11.5, fontWeight: 600,
-          background: `var(${st.varName}-bg)`, color: `var(${st.varName})`,
-        }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: `var(${st.varName})` }} />
-          {st.label}
-        </span>
+        <StatusChip status={member.attestationStatus} />
         <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
           {member.attestedTools}/{member.totalTools}
         </span>
@@ -2224,11 +2223,23 @@ function AssociateCard({ member, dark, onInfo, onOpen }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ASSOCIATE DETAIL SUB-VIEW — per-client / per-tool breakdown (third drilldown level)
-// Mirrors ManagerView's "Selected member" panel: completion + status + per-client
-// progress + access disputes, rendered with AdminView's visual vocabulary.
+// WI-8 — ASSOCIATE DETAIL OVERLAY — per-client / per-tool breakdown rendered in a
+// full-screen FullScreenOverlay ON TOP of the manager-team grid (no page-replacing
+// navigation level). Same data (getManagerMemberDetail) as before. Carries:
+//   · header row: name / ID / email / WI-6 StatusChip / n-of-m tools / donut / Reopen
+//   · per-client progress bars
+//   · ScreenshotGallery (opens the shared full-screen Lightbox w/ approve/reject)
+//   · access-disputes list (WI-4): tool (bold), client name (id), full remark, date answered
 // ─────────────────────────────────────────────────────────────────────────────
-function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBack }) {
+
+// Format a nullable ISO date string as a local date; em-dash when null/invalid.
+function fmtDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
+}
+
+function AssociateDetailOverlay({ mgr, member, cycle, dark, superUserRole, onClose, onReopened }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -2255,7 +2266,8 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
     setReopening(true);
     try {
       await reopenAttestation(cycle.cycleID, member.associateId);
-      load();
+      load();              // refresh the overlay detail
+      onReopened?.();      // refresh the team grid counts/chips behind the overlay
     } catch (e) {
       alert('Reopen failed: ' + e.message);
     } finally {
@@ -2264,26 +2276,17 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
   }
 
   const pct = Math.round((detail?.progressPct ?? 0) * 100);
-  const st = memberStatusMeta(detail?.attestationStatus);
-  const canReopen = superUserRole === 'Admin' && detail?.attestationStatus === 'Submitted';
+  // WI-7: reopen is admin-only and only meaningful once the member is submitted —
+  // i.e. one of the three "submitted" WI-6 states.
+  const SUBMITTED_STATES = ['AwaitingApproval', 'ActionNeeded', 'Complete'];
+  const canReopen = superUserRole === 'Admin' && SUBMITTED_STATES.includes(detail?.attestationStatus);
 
   return (
-    <div>
-      {/* Breadcrumb back to associates */}
-      <button
-        onClick={onBack}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 7,
-          background: 'transparent', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: '7px 13px 7px 10px',
-          color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 500,
-          fontFamily: 'var(--font-sans)', cursor: 'pointer', marginBottom: 18,
-        }}
-      >
-        <Svg size={15}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></Svg>
-        {mgr.fullName}
-      </button>
-
+    <FullScreenOverlay
+      title={detail?.fullName ?? member.fullName}
+      subtitle={`ID · ${member.associateId}${member.email ? ` · ${member.email}` : ''} · ${mgr.fullName}`}
+      onClose={onClose}
+    >
       {loading ? (
         <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '32px 0', textAlign: 'center' }}>
           Loading details…
@@ -2294,7 +2297,7 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
         <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>No details available.</div>
       ) : (
         <>
-          {/* Header card: associate identity + completion donut + status */}
+          {/* Header card: associate identity + completion donut + status + reopen */}
           <div style={{
             background: 'var(--surface-elev)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius-card)', padding: '24px 28px',
@@ -2312,14 +2315,7 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
                 ID · {detail.associateId}{member.email ? ` · ${member.email}` : ''}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px',
-                  borderRadius: 999, fontSize: 12, fontWeight: 600,
-                  background: `var(${st.varName}-bg)`, color: `var(${st.varName})`,
-                }}>
-                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: `var(${st.varName})` }} />
-                  {st.label}
-                </span>
+                <StatusChip status={detail.attestationStatus} />
                 <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                   {detail.attestedTools}/{detail.totalTools} tools
                 </span>
@@ -2352,9 +2348,7 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
           </div>
 
           {/* Per-client progress */}
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 12 }}>
-            Per-client progress
-          </div>
+          <SectionHeader style={{ marginBottom: 12 }}>Per-client progress</SectionHeader>
           {(!detail.byClient?.length) ? (
             <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '12px 0', marginBottom: 24 }}>
               No client access is active for this associate.
@@ -2390,7 +2384,7 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
             </div>
           )}
 
-          {/* Screenshot review gallery */}
+          {/* Screenshot review gallery — its tiles open the shared full-screen Lightbox */}
           {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient?.some((c) => c.tools?.length)) && (
             <div style={{ marginBottom: 24 }}>
               <ScreenshotGallery
@@ -2405,17 +2399,37 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
             </div>
           )}
 
-          {/* Access disputes */}
+          {/* WI-4: access disputes — tool (bold), client name (id), full remark (wrap), date answered */}
           {detail.mismatches?.length > 0 && (
             <>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--danger-fg)', marginBottom: 12 }}>
-                Access disputes ({detail.mismatches.length})
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <SectionHeader style={{ marginBottom: 12 }}>
+                <span style={{ color: 'var(--danger-fg)' }}>Access disputes ({detail.mismatches.length})</span>
+              </SectionHeader>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {detail.mismatches.map((m, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, fontSize: 13, color: 'var(--text)' }}>
-                    <span style={{ minWidth: 0 }}><strong>{m.toolName}</strong><span style={{ color: 'var(--text-muted)' }}> — {m.clientName}</span></span>
-                    {m.remarks && <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.remarks}</span>}
+                  <div
+                    key={`${m.clientID}-${m.toolName}-${i}`}
+                    style={{
+                      display: 'flex', flexDirection: 'column', gap: 4,
+                      padding: '11px 14px', background: 'var(--danger-bg)',
+                      border: '1px solid var(--danger-border)', borderRadius: 8,
+                      fontSize: 13, color: 'var(--text)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                      <span style={{ minWidth: 0 }}>
+                        <strong>{m.toolName}</strong>
+                        <span style={{ color: 'var(--text-muted)' }}> — {m.clientName} ({m.clientID})</span>
+                      </span>
+                      <span style={{ fontSize: 11.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                        {fmtDate(m.submittedAt)}
+                      </span>
+                    </div>
+                    {m.remarks && (
+                      <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: 12.5, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {m.remarks}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2423,6 +2437,6 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
           )}
         </>
       )}
-    </div>
+    </FullScreenOverlay>
   );
 }
