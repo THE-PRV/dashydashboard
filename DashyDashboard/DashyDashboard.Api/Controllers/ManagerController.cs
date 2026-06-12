@@ -257,6 +257,21 @@ public class ManagerController : ControllerBase
         catch (UnauthorizedAccessException) { return Forbid(); }
     }
 
+    // WI-9: in-app cycle gallery listing — same authorization + scoping as the zip export below,
+    // so the gallery's contents always match the zip for the same caller.
+    [HttpGet("cycles/{cycleId}/screenshots")]
+    public async Task<IActionResult> GetCycleScreenshots(int cycleId)
+    {
+        if (CurrentUser is null) return Unauthorized();
+        if (!await IsManagerAsync()
+            && !CurrentSuperUsers.Any(s => SuperUserRoles.IsAny(s.RoleName,
+                    SuperUserRoles.Admin, SuperUserRoles.GFH, SuperUserRoles.GFHDelegate)))
+            return Forbid();
+
+        var items = await _svc.GetCycleScreenshotsAsync(CurrentUser.AssociateId, CurrentSuperUsers, cycleId);
+        return Ok(items);
+    }
+
     [HttpGet("cycles/{cycleId}/screenshots.zip")]
     public async Task<IActionResult> DownloadScreenshotsZip(int cycleId)
     {

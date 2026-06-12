@@ -5,6 +5,7 @@ import { getClientsAndTools, downloadScreenshotsZip } from '../api/manager.js';
 import { reopenAttestation } from '../api/attestations.js';
 import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
 import FullScreenOverlay from '../components/FullScreenOverlay.jsx';
+import CycleGallery from '../components/CycleGallery.jsx';
 import { StatusChip, SectionHeader } from '../components/ui.jsx';
 import brandLogo from '../assets/broadridge-logo.svg';
 
@@ -1525,6 +1526,7 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
   const [exporting, setExporting] = React.useState(false);
   const [exportingDisputes, setExportingDisputes] = React.useState(false);
   const [downloadingZip, setDownloadingZip] = React.useState(false);
+  const [galleryOpen, setGalleryOpen] = React.useState(false);
 
   async function handleExport() {
     if (!dept?.departmentName || !cycle?.cycleID) return;
@@ -1820,6 +1822,7 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
                 className="btn-lift"
                 onClick={handleDownloadZip}
                 disabled={downloadingZip}
+                title="Download every screenshot for this cycle as a .zip file"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
                   background: 'transparent', border: '1px solid var(--accent)',
@@ -1831,11 +1834,47 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 4v12M7 11l5 5 5-5M4 18v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" />
                 </svg>
-                {downloadingZip ? 'Preparing…' : `Download all (cycle ${cycle?.cycleID ?? ''})`}
+                {downloadingZip ? 'Preparing…' : 'Export screenshots (.zip)'}
               </button>
             </div>
 
             {/* WI-9 mount point: cycle gallery button */}
+            <div title="Browse every screenshot uploaded for this cycle in-app." style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: '50%',
+                  background: 'color-mix(in oklab, var(--accent), transparent 88%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Svg size={16} style={{ color: 'var(--accent)' }}>
+                    <path d="M4 4h16v16H4z M9 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M5 18l5-6 4 4 2-2 4 5" />
+                  </Svg>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>Screenshot gallery</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                    Browse uploaded screenshots for cycle {cycle?.cycleID ?? '—'}
+                  </div>
+                </div>
+              </div>
+              <button
+                className="btn-lift"
+                onClick={() => setGalleryOpen(true)}
+                disabled={!cycle?.cycleID}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  background: 'transparent', border: '1px solid var(--accent)',
+                  color: 'var(--accent)', borderRadius: 6, padding: '7px 12px',
+                  fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
+                  cursor: cycle?.cycleID ? 'pointer' : 'not-allowed', opacity: cycle?.cycleID ? 1 : 0.7,
+                }}
+              >
+                <Svg size={13}>
+                  <path d="M4 4h16v16H4z M9 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M5 18l5-6 4 4 2-2 4 5" />
+                </Svg>
+                View screenshots
+              </button>
+            </div>
 
             {/* Footer caption */}
             <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10 }}>
@@ -1887,6 +1926,14 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
             </div>
           )}
         </div>
+      )}
+
+      {galleryOpen && cycle?.cycleID && (
+        <CycleGallery
+          cycleId={cycle.cycleID}
+          cycleName={cycle.cycleName}
+          onClose={() => setGalleryOpen(false)}
+        />
       )}
     </div>
   );

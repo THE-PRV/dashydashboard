@@ -126,6 +126,20 @@ public record AccessExportRowDto(
 
 public record ReviewScreenshotRequest(bool Approve, [MaxLength(500)] string? Reason = null);
 
+// WI-9: one screenshot row for the in-app cycle gallery listing. Scoped exactly like the
+// screenshots.zip endpoint (ResolveScreenshotScopeOwnerIdsAsync); only rows whose ScreenshotPath
+// resolves to a readable file are included. Sorted by AssociateName, ClientName, ToolName.
+public record CycleScreenshotItemDto(
+    string AssociateId,
+    string AssociateName,
+    string ClientId,
+    string ClientName,
+    int ToolId,
+    string ToolName,
+    string? ScreenshotStatus,
+    DateTime? ScreenshotUploadedAt,
+    string? ScreenshotRejectReason);
+
 public record UserListItem(
     string AssociateId,
     string FirstName,

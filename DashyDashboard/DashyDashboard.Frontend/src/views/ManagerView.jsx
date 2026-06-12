@@ -5,6 +5,7 @@ import { reopenAttestation } from '../api/attestations.js';
 import { asAssociateId } from '../lib/contracts.js';
 import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
 import FullScreenOverlay from '../components/FullScreenOverlay.jsx';
+import CycleGallery from '../components/CycleGallery.jsx';
 
 // The five WI-6 member states, in display order, with the human labels from STATUS_META.
 // Used for the summary cards row and the filter pills over the team table.
@@ -139,6 +140,7 @@ export default function ManagerView({
   const [reopening, setReopening] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
 
   const loadTeam = async () => {
     if (!cycle) {
@@ -345,12 +347,19 @@ export default function ManagerView({
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
             {/* WI-9 mount point: cycle gallery button */}
             <Button
+              variant="outline" size="sm" icon="image"
+              onClick={() => setGalleryOpen(true)}
+            >
+              View screenshots
+            </Button>
+            <Button
               variant="outline" size="sm" icon="download"
               disabled={downloadingZip}
               onClick={handleDownloadZip}
+              title="Download every screenshot for this cycle as a .zip file"
               style={{ opacity: downloadingZip ? 0.6 : 1, cursor: downloadingZip ? 'wait' : 'pointer' }}
             >
-              {downloadingZip ? 'Preparing…' : `Download all screenshots (cycle ${cycle.cycleID})`}
+              {downloadingZip ? 'Preparing…' : 'Export screenshots (.zip)'}
             </Button>
           </div>
         )}
@@ -609,6 +618,14 @@ export default function ManagerView({
           </Panel>
         </div>
       </div>
+
+      {galleryOpen && cycle?.cycleID && (
+        <CycleGallery
+          cycleId={cycle.cycleID}
+          cycleName={cycle.cycleName}
+          onClose={() => setGalleryOpen(false)}
+        />
+      )}
 
       {overlayOpen && detail && (
         <FullScreenOverlay

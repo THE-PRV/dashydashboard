@@ -77,3 +77,8 @@ export const approveAllScreenshots = (cycleId, associateId) =>
 // authorizes via SuperUserRoles, so this is shared by the manager and admin/GFH dashboards.
 export const downloadScreenshotsZip = (cycleId) =>
   downloadFile(`/api/manager/cycles/${routePart(cycleId)}/screenshots.zip`, `screenshots-cycle${cycleId}.zip`);
+
+// WI-9: scoped metadata listing of every screenshot for the cycle (manager -> reports,
+// GFH -> department, admin/GFHDelegate -> all). Backs the in-app cycle gallery and matches
+// the zip's contents.
+export const getCycleScreenshots = (cycleId) => get(`/api/manager/cycles/${routePart(cycleId)}/screenshots`);

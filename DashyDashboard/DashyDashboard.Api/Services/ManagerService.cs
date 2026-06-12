@@ -880,6 +880,78 @@ public class ManagerService
     }
 
     /// <summary>
+    /// WI-9: lists every screenshot the caller may see in the cycle (metadata only — no image
+    /// bytes), scoped EXACTLY like <see cref="WriteScreenshotsZipAsync"/>. Backs the in-app cycle
+    /// gallery so its contents always match the zip export for the same caller.
+    /// </summary>
+    public async Task<List<CycleScreenshotItemDto>> GetCycleScreenshotsAsync(
+        string callerId, IReadOnlyList<SuperUser> callerSuperUsers, int cycleId)
+    {
+        var ownerIds = await ResolveScreenshotScopeOwnerIdsAsync(callerId, callerSuperUsers);
+
+        var rows = await _db.ToolCycleAttestations.AsNoTracking()
+            .Where(a => a.CycleID == cycleId
+                     && a.ScreenshotPath != null
+                     && ownerIds.Contains(a.AssociateId))
+            .Select(a => new
+            {
+                a.AssociateId,
+                a.ClientID,
+                a.ToolID,
+                a.ScreenshotPath,
+                a.ScreenshotStatus,
+                a.ScreenshotUploadedAt,
+                a.ScreenshotRejectReason
+            })
+            .ToListAsync();
+
+        // The zip writer skips missing or unreadable files. Apply the same rule here so the
+        // gallery and zip expose the same screenshot set rather than stale database metadata.
+        rows = rows.Where(r =>
+        {
+            var file = _screenshots.Read(r.ScreenshotPath);
+            if (file is null) return false;
+            file.Content.Dispose();
+            return true;
+        }).ToList();
+
+        if (rows.Count == 0) return new List<CycleScreenshotItemDto>();
+
+        var associateIds = rows.Select(r => r.AssociateId).Distinct().ToList();
+        var clientIds = rows.Select(r => r.ClientID).Distinct().ToList();
+        var toolIds = rows.Select(r => r.ToolID).Distinct().ToList();
+
+        var users = await _db.Users.AsNoTracking()
+            .Where(u => associateIds.Contains(u.AssociateId))
+            .ToDictionaryAsync(u => u.AssociateId, u => u.FullName);
+
+        var clients = await _db.Clients.AsNoTracking()
+            .Where(c => clientIds.Contains(c.ClientID))
+            .ToDictionaryAsync(c => c.ClientID, c => c.ClientName ?? c.ClientID);
+
+        var tools = await _db.ClientTools.AsNoTracking()
+            .Where(t => toolIds.Contains(t.ToolID) && t.ClientID != null && clientIds.Contains(t.ClientID))
+            .ToDictionaryAsync(t => (t.ClientID!, t.ToolID), t => t.ToolName ?? t.ToolID.ToString());
+
+        var items = rows.Select(r => new CycleScreenshotItemDto(
+            r.AssociateId,
+            users.TryGetValue(r.AssociateId, out var name) ? name : r.AssociateId,
+            r.ClientID,
+            clients.TryGetValue(r.ClientID, out var clientName) ? clientName : r.ClientID,
+            r.ToolID,
+            tools.TryGetValue((r.ClientID, r.ToolID), out var toolName) ? toolName : r.ToolID.ToString(),
+            r.ScreenshotStatus,
+            r.ScreenshotUploadedAt,
+            r.ScreenshotRejectReason))
+            .OrderBy(i => i.AssociateName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(i => i.ClientName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(i => i.ToolName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return items;
+    }
+
+    /// <summary>
     /// The associate ids whose screenshots the caller may see: Admin/GFHDelegate → everyone;
     /// otherwise the union of the caller's direct reports and (for a GFH) their department members.
     /// </summary>
