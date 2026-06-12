@@ -11,6 +11,32 @@ const SS_STATUS_BADGE = {
   Rejected: { variant: 'danger',  label: 'Rejected' },
 };
 
+const INTERACTIVE_SELECTOR = [
+  'a[href]',
+  'button',
+  'input',
+  'select',
+  'textarea',
+  'summary',
+  '[contenteditable="true"]',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="checkbox"]',
+  '[role="menuitem"]',
+  '[role="option"]',
+  '[role="radio"]',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+  '[role="switch"]',
+  '[role="tab"]',
+  '[role="textbox"]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function isInteractiveElement(target) {
+  return target instanceof Element && !!target.closest(INTERACTIVE_SELECTOR);
+}
+
 function statusBadge(status) {
   if (!status) return null;
   return SS_STATUS_BADGE[status] ?? { variant: 'neutral', label: status };
@@ -175,10 +201,11 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
 
       if (busy) return;
 
-      if (showReject) {
-        if (e.key === 'Enter')  { e.preventDefault(); doReject(reason); }
-        return; // other keys go to the textbox
-      }
+      // Let focused controls handle Enter, arrows, and typed shortcut letters normally.
+      // Checking activeElement as well covers synthetic key events dispatched on document.
+      if (isInteractiveElement(e.target) || isInteractiveElement(document.activeElement)) return;
+
+      if (showReject) return;
 
       switch (e.key) {
         case 'ArrowLeft':  e.preventDefault(); goPrev(); break;
@@ -310,6 +337,12 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
               placeholder="Reason for rejection… (required)"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  doReject(reason);
+                }
+              }}
               disabled={busy}
               style={{
                 flex: 1, padding: '8px 10px', fontSize: 13, borderRadius: 8,

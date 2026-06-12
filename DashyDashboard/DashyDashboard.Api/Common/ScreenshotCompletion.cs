@@ -4,8 +4,8 @@ namespace DashyDashboard.Api.Common;
 /// Screenshot completion semantics (Feature 2, §7) and the single source of truth for a member's
 /// five-state attestation status (UI-overhaul WI-6).
 ///
-/// A member's attestation is COMPLETE only when it is submitted AND every non-exempt screenshot
-/// is Approved. Exempt rows never require a screenshot:
+/// A member's attestation is COMPLETE only when every currently active tool is answered and
+/// submitted, AND every non-exempt screenshot is Approved. Exempt rows never require a screenshot:
 ///   • no-access rows   (HadAccess == false), and
 ///   • not-used rows    (HadAccess == true && UsedThisCycle == false)   — WI-1.
 /// Only USED rows (HadAccess == true && UsedThisCycle == true) require a screenshot.
@@ -48,6 +48,13 @@ public static class ScreenshotCompletion
         => hadAccess && usedThisCycle == true;
 
     /// <summary>
+    /// A tool is answered when usage was selected, or the associate declared that they did not
+    /// have access. This definition is shared by submission gating and member status computation.
+    /// </summary>
+    public static bool IsAnswered(bool hadAccess, bool? usedThisCycle)
+        => usedThisCycle.HasValue || !hadAccess;
+
+    /// <summary>
     /// Classifies the screenshot state of a member's attestation rows.
     /// Returns whether any required screenshot is still awaiting approval (Pending or NULL),
     /// and whether any required screenshot is Rejected. A member with neither is screenshot-complete.
@@ -75,29 +82,32 @@ public static class ScreenshotCompletion
     }
 
     /// <summary>
-    /// Computes a member's single five-state status for the cycle from their attestation rows
-    /// (UI-overhaul WI-6 — the one place this is decided). Rules:
-    ///   • submitted   = any row AttestationStatus == "Submitted"
-    ///   • answered(r) = UsedThisCycle.HasValue || HadAccess == false
-    ///   • not submitted: no answered rows (or no rows) -> NotStarted; else InProgress
-    ///   • submitted: any required-screenshot row Rejected -> ActionNeeded (Rejected beats Pending);
-    ///                else any required-screenshot row not Approved (Pending/NULL) -> AwaitingApproval;
-    ///                else Complete.
+    /// Computes a member's single five-state status for the cycle from rows belonging to their
+    /// currently active tool accesses (UI-overhaul WI-6 — the one place this is decided). Complete
+    /// requires every active tool to be answered and Submitted. This prevents an older submission
+    /// from remaining Complete when a new active access is granted.
     /// </summary>
     public static string ComputeMemberStatus(
+        int activeToolCount,
         IEnumerable<(bool HadAccess, bool? UsedThisCycle, string? ScreenshotStatus, string AttestationStatus)> rows)
     {
-        var submitted = false;
         var anyAnswered = false;
-        var anyRows = false;
+        var rowCount = 0;
+        var answeredCount = 0;
+        var submittedAnsweredCount = 0;
         var anyAwaiting = false;
         var anyRejected = false;
 
         foreach (var r in rows)
         {
-            anyRows = true;
-            if (r.AttestationStatus == "Submitted") submitted = true;
-            if (r.UsedThisCycle.HasValue || r.HadAccess == false) anyAnswered = true;
+            rowCount++;
+            if (IsAnswered(r.HadAccess, r.UsedThisCycle))
+            {
+                anyAnswered = true;
+                answeredCount++;
+                if (r.AttestationStatus == "Submitted")
+                    submittedAnsweredCount++;
+            }
 
             if (RequiresScreenshot(r.HadAccess, r.UsedThisCycle))
             {
@@ -106,11 +116,27 @@ public static class ScreenshotCompletion
             }
         }
 
-        if (!submitted)
-            return (!anyRows || !anyAnswered) ? MemberNotStarted : MemberInProgress;
+        var fullySubmitted = activeToolCount > 0
+            && rowCount == activeToolCount
+            && answeredCount == activeToolCount
+            && submittedAnsweredCount == activeToolCount;
+
+        if (!fullySubmitted)
+            return anyAnswered ? MemberInProgress : MemberNotStarted;
 
         if (anyRejected) return MemberActionNeeded;   // Rejected beats Pending (spec precedence)
         if (anyAwaiting) return MemberAwaitingApproval;
         return MemberComplete;
+    }
+
+    /// <summary>
+    /// Compatibility overload for callers whose row set itself defines the active tool set.
+    /// Operational views should pass the current active-tool count explicitly.
+    /// </summary>
+    public static string ComputeMemberStatus(
+        IEnumerable<(bool HadAccess, bool? UsedThisCycle, string? ScreenshotStatus, string AttestationStatus)> rows)
+    {
+        var materialized = rows.ToList();
+        return ComputeMemberStatus(materialized.Count, materialized);
     }
 }

@@ -1,3 +1,4 @@
+using DashyDashboard.Api.Common;
 using DashyDashboard.Api.Data;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Models.DTOs;
@@ -222,89 +223,83 @@ public class AttestationService
     {
         await AssertCycleExistsAsync(cycleId);
 
-        var alreadySubmitted = await _db.ToolCycleAttestations.AsNoTracking()
-            .AnyAsync(tca => tca.AssociateId == associateId
-                          && tca.CycleID == cycleId
-                          && tca.AttestationStatus == "Submitted");
-        if (alreadySubmitted)
-            throw new InvalidOperationException("Attestation for this cycle has already been submitted.");
-
-        var missingNoAccessRemark = await _db.ToolCycleAttestations.AsNoTracking()
-            .AnyAsync(tca => tca.CycleID == cycleId
-                          && tca.AssociateId == associateId
-                          && tca.HadAccess == false
-                          && (tca.Remarks == null || tca.Remarks.Trim() == ""));
-        if (missingNoAccessRemark)
-            throw new InvalidOperationException("Add a remark for each tool you marked as 'No access' before submitting.");
-
-        // Not-used remark gate (WI-1): a row the associate marked "Not used"
-        // (HadAccess == true && UsedThisCycle == false) must explain why — require a remark,
-        // mirroring the no-access remark gate above.
-        var missingNotUsedRemark = await _db.ToolCycleAttestations.AsNoTracking()
-            .AnyAsync(tca => tca.CycleID == cycleId
-                          && tca.AssociateId == associateId
-                          && tca.HadAccess
-                          && tca.UsedThisCycle == false
-                          && (tca.Remarks == null || tca.Remarks.Trim() == ""));
-        if (missingNotUsedRemark)
-            throw new InvalidOperationException("Add a remark for each tool you marked as 'Not used' before submitting.");
-
-        // Screenshot gate (§7, WI-1): only USED rows (HadAccess == true && UsedThisCycle == true)
-        // require a screenshot in Pending or Approved state. Rejected or NULL blocks submission.
-        // No-access rows (HadAccess == false) AND not-used rows (UsedThisCycle == false) are exempt.
-        var screenshotBlocking = await _db.ToolCycleAttestations.AsNoTracking()
-            .Where(tca => tca.CycleID == cycleId
-                       && tca.AssociateId == associateId
-                       && tca.HadAccess
-                       && tca.UsedThisCycle == true
-                       && (tca.ScreenshotStatus == null
-                           || !SubmittableScreenshotStatuses.Contains(tca.ScreenshotStatus)))
-            .Select(tca => new ScreenshotGateRow(tca.ClientID, tca.ToolID))
-            .ToListAsync();
-        if (screenshotBlocking.Count > 0)
-            throw new ScreenshotGateException(screenshotBlocking);
-
         var today = DateOnly.FromDateTime(DateTime.Today);
         var accessKeys = await _db.UserToolAccess.AsNoTracking()
             .Where(uta => uta.AssociateId == associateId
                        && uta.Access
                        && uta.GivenDate <= today
                        && (uta.ToDate == null || uta.ToDate >= today))
-            .Select(uta => new { uta.ClientID, uta.ToolID })
+            .Select(uta => new { ClientID = uta.ClientID!, uta.ToolID })
             .ToListAsync();
+
+        var accessKeySet = accessKeys
+            .Select(key => (key.ClientID, key.ToolID))
+            .ToHashSet();
+
+        var allRows = await _db.ToolCycleAttestations
+            .Where(tca => tca.AssociateId == associateId && tca.CycleID == cycleId)
+            .ToListAsync();
+
+        var activeRows = allRows
+            .Where(tca => accessKeySet.Contains((tca.ClientID, tca.ToolID)))
+            .ToList();
+
+        var activeRowsByKey = activeRows
+            .ToDictionary(tca => (tca.ClientID, tca.ToolID));
+
+        var unanswered = accessKeys
+            .Where(key => !activeRowsByKey.TryGetValue((key.ClientID, key.ToolID), out var row)
+                       || !ScreenshotCompletion.IsAnswered(row.HadAccess, row.UsedThisCycle))
+            .ToList();
+        if (unanswered.Count > 0)
+            throw new InvalidOperationException(
+                "Answer every currently active access tool before submitting.");
+
+        if (accessKeys.Count > 0
+            && activeRows.All(tca => tca.AttestationStatus == "Submitted"))
+        {
+            throw new InvalidOperationException("Attestation for this cycle has already been submitted.");
+        }
+
+        var missingNoAccessRemark = activeRows
+            .Any(tca => !tca.HadAccess
+                     && string.IsNullOrWhiteSpace(tca.Remarks));
+        if (missingNoAccessRemark)
+            throw new InvalidOperationException("Add a remark for each tool you marked as 'No access' before submitting.");
+
+        // Not-used remark gate (WI-1): a row the associate marked "Not used"
+        // (HadAccess == true && UsedThisCycle == false) must explain why — require a remark,
+        // mirroring the no-access remark gate above.
+        var missingNotUsedRemark = activeRows
+            .Any(tca => tca.HadAccess
+                     && tca.UsedThisCycle == false
+                     && string.IsNullOrWhiteSpace(tca.Remarks));
+        if (missingNotUsedRemark)
+            throw new InvalidOperationException("Add a remark for each tool you marked as 'Not used' before submitting.");
+
+        // Screenshot gate (§7, WI-1): only USED rows (HadAccess == true && UsedThisCycle == true)
+        // require a screenshot in Pending or Approved state. Rejected or NULL blocks submission.
+        // No-access rows (HadAccess == false) AND not-used rows (UsedThisCycle == false) are exempt.
+        var screenshotBlocking = activeRows
+            .Where(tca => tca.HadAccess
+                       && tca.UsedThisCycle == true
+                       && (tca.ScreenshotStatus == null
+                           || !SubmittableScreenshotStatuses.Contains(tca.ScreenshotStatus)))
+            .Select(tca => new ScreenshotGateRow(tca.ClientID, tca.ToolID))
+            .ToList();
+        if (screenshotBlocking.Count > 0)
+            throw new ScreenshotGateException(screenshotBlocking);
 
         var now = DateTime.UtcNow;
 
-        foreach (var key in accessKeys)
+        foreach (var att in activeRows)
         {
-            var att = await _db.ToolCycleAttestations
-                .FirstOrDefaultAsync(a =>
-                    a.AssociateId == associateId && a.CycleID == cycleId
-                    && a.ClientID == key.ClientID && a.ToolID == key.ToolID);
-
-            if (att is null)
-            {
-                att = new ToolCycleAttestation
-                {
-                    CycleID = cycleId, AssociateId = associateId,
-                    ClientID = key.ClientID, ToolID = key.ToolID
-                };
-                _db.ToolCycleAttestations.Add(att);
-            }
-
-            // Submit tools the user actually decided on: either answered usage, or declared no access.
-            if (att.UsedThisCycle.HasValue || att.HadAccess == false)
-            {
-                att.AttestationStatus = "Submitted";
-                att.SubmittedAt = now;
-                if (remarks != null) att.Remarks = remarks;
-            }
+            att.AttestationStatus = "Submitted";
+            att.SubmittedAt = now;
+            if (remarks != null) att.Remarks = remarks;
         }
 
-        var submittedRows = _db.ToolCycleAttestations.Local
-            .Where(a => a.AssociateId == associateId && a.CycleID == cycleId
-                     && a.AttestationStatus == "Submitted")
-            .ToList();
+        var submittedRows = activeRows;
 
         var user = await _db.Users.AsNoTracking()
             .FirstOrDefaultAsync(u => u.AssociateId == associateId);

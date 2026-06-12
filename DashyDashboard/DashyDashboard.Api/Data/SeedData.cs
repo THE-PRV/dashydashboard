@@ -27,6 +27,8 @@ namespace DashyDashboard.Api.Data;
 ///   - The connected database must match DeveloperMode:DemoSeedDatabaseName, which defaults to
 ///     DashyDashboardDev.
 ///   - Only DEMO-prefixed users and their dependent rows are written.
+///   - DEMO01..DEMO06 access is reconciled to the assignment manifest on every run. Attestation
+///     cleanup is limited to the selected cycle; historical rows in other cycles are preserved.
 ///   - Dates and timestamps are derived from the selected cycle, never from the run time.
 ///   - Fixtures default to Y:\checksum and can be overridden through
 ///     DeveloperMode:SeedFixturesPath (including DeveloperMode__SeedFixturesPath in the environment).
@@ -152,34 +154,23 @@ public static class SeedData
         var granted = cycle.StartDate.AddDays(-30);
         var accessTo = cycle.DueDate.AddDays(120);
         var cycleId = cycle.CycleID;
+        var assignments = BuildAssignmentManifest(usTools, ukTools);
 
-        await GrantAsync(db, "DEMO01", ClientUs, usTools, "Trade Capture", null, granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO01", ClientUs, usTools, "Settlement Gateway", null, granted, accessTo, departmentId.Value);
+        await PruneUnplannedDemoDataAsync(db, screenshots, cycleId, assignments, logger);
+        await db.SaveChangesAsync();
 
-        await GrantAsync(db, "DEMO02", ClientUs, usTools, "Trade Capture", null, granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO02", ClientUs, usTools, "Reconciliation Hub", null, granted, accessTo, departmentId.Value);
-
-        await GrantAsync(db, "DEMO03", ClientUs, usTools, "Trade Capture", "sreyes-tc", granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO03", ClientUs, usTools, "Settlement Gateway", null, granted, accessTo, departmentId.Value);
-
-        await GrantAsync(db, "DEMO04", ClientUs, usTools, "Trade Capture", null, granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO04", ClientUs, usTools, "Settlement Gateway", null, granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO04", ClientUk, ukTools, "Compliance Portal", null, granted, accessTo, departmentId.Value);
-
-        await GrantAsync(db, "DEMO05", ClientUs, usTools, "Trade Capture", "pnair01", granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO05", ClientUs, usTools, "Reporting Suite", "pnair02", granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO05", ClientUk, ukTools, "Compliance Portal", null, granted, accessTo, departmentId.Value);
-
-        await GrantAsync(db, "DEMO06", ClientUs, usTools, "Trade Capture", "cmendez", granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO06", ClientUs, usTools, "Reconciliation Hub", null, granted, accessTo, departmentId.Value);
-        await GrantAsync(db, "DEMO06", ClientUs, usTools, "Reporting Suite", null, granted, accessTo, departmentId.Value);
-        await RemoveGrantAndRowAsync(
-            db,
-            screenshots,
-            cycleId,
-            "DEMO06",
-            ClientUk,
-            Tool(ukTools, "Compliance Portal"));
+        foreach (var assignment in assignments)
+        {
+            await GrantAsync(
+                db,
+                assignment.AssociateId,
+                assignment.ClientId,
+                assignment.ToolId,
+                assignment.ToolUserId,
+                granted,
+                accessTo,
+                departmentId.Value);
+        }
         await db.SaveChangesAsync();
 
         var uploadedAt = CycleTimestamp(cycle.StartDate, dayOffset: 7, hour: 14);
@@ -355,7 +346,7 @@ public static class SeedData
         await UpsertSubmitLogAsync(db, cycleId, "DEMO05", "Priya Nair", 3, submittedAt);
         await db.SaveChangesAsync();
 
-        await ValidateCoverageAsync(db, cycleId, screenshotCoverage, logger);
+        await ValidateCoverageAsync(db, cycleId, assignments, screenshotCoverage, logger);
 
         logger.LogInformation(
             "Demo seed complete: 6 demo members upserted for active cycle {CycleId} ({CycleName}).",
@@ -371,6 +362,7 @@ public static class SeedData
             .ToListAsync();
 
         return tools
+            .OrderBy(tool => tool.ToolID)
             .GroupBy(tool => tool.ToolName!, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().ToolID, StringComparer.OrdinalIgnoreCase);
     }
@@ -395,10 +387,97 @@ public static class SeedData
     private static int Tool(IReadOnlyDictionary<string, int> map, string toolName)
         => map[toolName];
 
+    private static IReadOnlyList<DemoAssignment> BuildAssignmentManifest(
+        IReadOnlyDictionary<string, int> usTools,
+        IReadOnlyDictionary<string, int> ukTools)
+        =>
+        new List<DemoAssignment>
+        {
+            new("DEMO01", ClientUs, Tool(usTools, "Trade Capture"), null, HasCycleRow: false),
+            new("DEMO01", ClientUs, Tool(usTools, "Settlement Gateway"), null, HasCycleRow: false),
+
+            new("DEMO02", ClientUs, Tool(usTools, "Trade Capture"), null, HasCycleRow: true),
+            new("DEMO02", ClientUs, Tool(usTools, "Reconciliation Hub"), null, HasCycleRow: true),
+
+            new("DEMO03", ClientUs, Tool(usTools, "Trade Capture"), "sreyes-tc", HasCycleRow: true),
+            new("DEMO03", ClientUs, Tool(usTools, "Settlement Gateway"), null, HasCycleRow: true),
+
+            new("DEMO04", ClientUs, Tool(usTools, "Trade Capture"), null, HasCycleRow: true),
+            new("DEMO04", ClientUs, Tool(usTools, "Settlement Gateway"), null, HasCycleRow: true),
+            new("DEMO04", ClientUk, Tool(ukTools, "Compliance Portal"), null, HasCycleRow: true),
+
+            new("DEMO05", ClientUs, Tool(usTools, "Trade Capture"), "pnair01", HasCycleRow: true),
+            new("DEMO05", ClientUs, Tool(usTools, "Reporting Suite"), "pnair02", HasCycleRow: true),
+            new("DEMO05", ClientUk, Tool(ukTools, "Compliance Portal"), null, HasCycleRow: true),
+
+            new("DEMO06", ClientUs, Tool(usTools, "Trade Capture"), "cmendez", HasCycleRow: true),
+            new("DEMO06", ClientUs, Tool(usTools, "Reconciliation Hub"), null, HasCycleRow: true),
+            new("DEMO06", ClientUs, Tool(usTools, "Reporting Suite"), null, HasCycleRow: true)
+        };
+
     private static DateTime CycleTimestamp(DateOnly cycleStart, int dayOffset, int hour)
         => DateTime.SpecifyKind(
             cycleStart.AddDays(dayOffset).ToDateTime(new TimeOnly(hour, 0)),
             DateTimeKind.Utc);
+
+    private static async Task PruneUnplannedDemoDataAsync(
+        AppDbContext db,
+        ScreenshotStorageService screenshots,
+        int cycleId,
+        IReadOnlyCollection<DemoAssignment> assignments,
+        ILogger logger)
+    {
+        var demoIds = ExpectedStates.Keys.ToArray();
+        var expectedAccessKeys = assignments
+            .Select(assignment => DemoToolKey.Create(
+                assignment.AssociateId,
+                assignment.ClientId,
+                assignment.ToolId))
+            .ToHashSet();
+        var expectedCycleRowKeys = assignments
+            .Where(assignment => assignment.HasCycleRow)
+            .Select(assignment => DemoToolKey.Create(
+                assignment.AssociateId,
+                assignment.ClientId,
+                assignment.ToolId))
+            .ToHashSet();
+
+        var accessRows = await db.UserToolAccess
+            .Where(access =>
+                access.AssociateId != null
+                && demoIds.Contains(access.AssociateId))
+            .ToListAsync();
+        var unplannedAccessRows = accessRows
+            .Where(access =>
+                access.ClientID is null
+                || !expectedAccessKeys.Contains(DemoToolKey.Create(
+                    access.AssociateId!,
+                    access.ClientID,
+                    access.ToolID)))
+            .ToList();
+        db.UserToolAccess.RemoveRange(unplannedAccessRows);
+
+        var cycleRows = await db.ToolCycleAttestations
+            .Where(row =>
+                row.CycleID == cycleId
+                && demoIds.Contains(row.AssociateId))
+            .ToListAsync();
+        var unplannedCycleRows = cycleRows
+            .Where(row => !expectedCycleRowKeys.Contains(DemoToolKey.Create(
+                row.AssociateId,
+                row.ClientID,
+                row.ToolID)))
+            .ToList();
+        foreach (var row in unplannedCycleRows)
+            screenshots.Delete(row.CycleID, row.AssociateId, row.ClientID, row.ToolID);
+        db.ToolCycleAttestations.RemoveRange(unplannedCycleRows);
+
+        logger.LogInformation(
+            "Demo seed cleanup for cycle {CycleId}: pruned {AccessCount} unplanned access rows and {CycleRowCount} unplanned cycle rows.",
+            cycleId,
+            unplannedAccessRows.Count,
+            unplannedCycleRows.Count);
+    }
 
     private static async Task UpsertUserAsync(
         AppDbContext db,
@@ -428,14 +507,12 @@ public static class SeedData
         AppDbContext db,
         string associateId,
         string clientId,
-        IReadOnlyDictionary<string, int> toolMap,
-        string toolName,
+        int toolId,
         string? toolUserId,
         DateOnly given,
         DateOnly to,
         int departmentId)
     {
-        var toolId = Tool(toolMap, toolName);
         var grant = await db.UserToolAccess.FirstOrDefaultAsync(access =>
             access.AssociateId == associateId
             && access.ClientID == clientId
@@ -505,33 +582,6 @@ public static class SeedData
             .Where(log => log.CycleID == cycleId && log.AssociateId == associateId)
             .ToListAsync();
         db.AttestationLogs.RemoveRange(logs);
-    }
-
-    private static async Task RemoveGrantAndRowAsync(
-        AppDbContext db,
-        ScreenshotStorageService screenshots,
-        int cycleId,
-        string associateId,
-        string clientId,
-        int toolId)
-    {
-        var grant = await db.UserToolAccess.FirstOrDefaultAsync(access =>
-            access.AssociateId == associateId
-            && access.ClientID == clientId
-            && access.ToolID == toolId);
-        if (grant is not null)
-            db.UserToolAccess.Remove(grant);
-
-        var row = await db.ToolCycleAttestations.FirstOrDefaultAsync(item =>
-            item.CycleID == cycleId
-            && item.AssociateId == associateId
-            && item.ClientID == clientId
-            && item.ToolID == toolId);
-        if (row is not null)
-        {
-            screenshots.Delete(row.CycleID, row.AssociateId, row.ClientID, row.ToolID);
-            db.ToolCycleAttestations.Remove(row);
-        }
     }
 
     private static void ClearScreenshot(ToolCycleAttestation row)
@@ -771,9 +821,12 @@ public static class SeedData
     private static async Task ValidateCoverageAsync(
         AppDbContext db,
         int cycleId,
+        IReadOnlyCollection<DemoAssignment> assignments,
         bool screenshotCoverage,
         ILogger logger)
     {
+        await ValidateManifestAsync(db, cycleId, assignments);
+
         var rows = await db.ToolCycleAttestations.AsNoTracking()
             .Where(row =>
                 row.CycleID == cycleId
@@ -862,5 +915,86 @@ public static class SeedData
             cycleId,
             string.Join(", ", actualStates.OrderBy(item => item.Key).Select(item => $"{item.Key}={item.Value}")),
             screenshotCoverage);
+    }
+
+    private static async Task ValidateManifestAsync(
+        AppDbContext db,
+        int cycleId,
+        IReadOnlyCollection<DemoAssignment> assignments)
+    {
+        var demoIds = ExpectedStates.Keys.ToArray();
+        var expectedAccessKeys = assignments
+            .Select(assignment => DemoToolKey.Create(
+                assignment.AssociateId,
+                assignment.ClientId,
+                assignment.ToolId))
+            .ToHashSet();
+        var expectedCycleRowKeys = assignments
+            .Where(assignment => assignment.HasCycleRow)
+            .Select(assignment => DemoToolKey.Create(
+                assignment.AssociateId,
+                assignment.ClientId,
+                assignment.ToolId))
+            .ToHashSet();
+
+        var accessRows = await db.UserToolAccess.AsNoTracking()
+            .Where(access =>
+                access.AssociateId != null
+                && demoIds.Contains(access.AssociateId))
+            .Select(access => new { access.AssociateId, access.ClientID, access.ToolID })
+            .ToListAsync();
+        var actualAccessKeys = accessRows
+            .Select(access => DemoToolKey.Create(
+                access.AssociateId!,
+                access.ClientID ?? "",
+                access.ToolID))
+            .ToHashSet();
+
+        var cycleRows = await db.ToolCycleAttestations.AsNoTracking()
+            .Where(row =>
+                row.CycleID == cycleId
+                && demoIds.Contains(row.AssociateId))
+            .Select(row => new { row.AssociateId, row.ClientID, row.ToolID })
+            .ToListAsync();
+        var actualCycleRowKeys = cycleRows
+            .Select(row => DemoToolKey.Create(row.AssociateId, row.ClientID, row.ToolID))
+            .ToHashSet();
+
+        ValidateExactKeys("access", expectedAccessKeys, actualAccessKeys);
+        ValidateExactKeys("cycle attestation", expectedCycleRowKeys, actualCycleRowKeys);
+    }
+
+    private static void ValidateExactKeys(
+        string rowType,
+        IReadOnlySet<DemoToolKey> expected,
+        IReadOnlySet<DemoToolKey> actual)
+    {
+        var missing = expected.Except(actual).OrderBy(FormatKey).ToList();
+        var unexpected = actual.Except(expected).OrderBy(FormatKey).ToList();
+        if (missing.Count == 0 && unexpected.Count == 0)
+            return;
+
+        throw new InvalidOperationException(
+            $"Demo manifest validation failed for {rowType} rows. "
+            + $"Missing: {FormatKeys(missing)}. Unexpected: {FormatKeys(unexpected)}.");
+    }
+
+    private static string FormatKeys(IReadOnlyCollection<DemoToolKey> keys)
+        => keys.Count == 0 ? "none" : string.Join(", ", keys.Select(FormatKey));
+
+    private static string FormatKey(DemoToolKey key)
+        => $"{key.AssociateId}/{key.ClientId}/{key.ToolId}";
+
+    private sealed record DemoAssignment(
+        string AssociateId,
+        string ClientId,
+        int ToolId,
+        string? ToolUserId,
+        bool HasCycleRow);
+
+    private readonly record struct DemoToolKey(string AssociateId, string ClientId, int ToolId)
+    {
+        public static DemoToolKey Create(string associateId, string clientId, int toolId)
+            => new(associateId.ToUpperInvariant(), clientId.ToUpperInvariant(), toolId);
     }
 }

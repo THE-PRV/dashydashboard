@@ -388,31 +388,55 @@ public class AdminService
 
         var userIds = users.Select(u => u.AssociateId).ToList();
 
-        var toolCounts = await _db.UserToolAccess.AsNoTracking()
-            .Where(uta => userIds.Contains(uta.AssociateId) && uta.Access
+        var activeAccess = await _db.UserToolAccess.AsNoTracking()
+            .Where(uta => uta.AssociateId != null
+                       && userIds.Contains(uta.AssociateId)
+                       && uta.Access
                        && uta.GivenDate <= today && (uta.ToDate == null || uta.ToDate >= today))
+            .Select(uta => new { AssociateId = uta.AssociateId!, ClientID = uta.ClientID!, uta.ToolID })
+            .ToListAsync();
+
+        var toolCounts = activeAccess
             .GroupBy(uta => uta.AssociateId)
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
-            .ToListAsync();
+            .ToList();
+
+        var activeAccessKeySet = activeAccess
+            .Select(uta => (uta.AssociateId, uta.ClientID, uta.ToolID))
+            .ToHashSet();
 
         // All attestation rows for these members this cycle — needed both for the answered ratio
         // (CompletionPct) and the five-state status column (WI-6).
         var attestRows = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => userIds.Contains(tca.AssociateId) && tca.CycleID == cycleId)
-            .Select(tca => new { tca.AssociateId, tca.HadAccess, tca.UsedThisCycle, tca.ScreenshotStatus, tca.AttestationStatus })
+            .Select(tca => new
+            {
+                tca.AssociateId,
+                tca.ClientID,
+                tca.ToolID,
+                tca.HadAccess,
+                tca.UsedThisCycle,
+                tca.ScreenshotStatus,
+                tca.AttestationStatus
+            })
             .ToListAsync();
 
+        var activeAttestRows = attestRows
+            .Where(r => activeAccessKeySet.Contains((r.AssociateId, r.ClientID, r.ToolID)))
+            .ToList();
+
         // "Answered" = decided usage or declared no access (the existing completion proxy).
-        var answeredCountMap = attestRows
-            .Where(r => r.UsedThisCycle.HasValue || r.HadAccess == false)
+        var answeredCountMap = activeAttestRows
+            .Where(r => ScreenshotCompletion.IsAnswered(r.HadAccess, r.UsedThisCycle))
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key, g => g.Count());
 
         // Five-state status per member (WI-6) from the same shared helper used by the manager view.
-        var statusByMember = attestRows
+        var statusByMember = activeAttestRows
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key,
                 g => ScreenshotCompletion.ComputeMemberStatus(
+                    toolCounts.FirstOrDefault(t => t.AssociateId == g.Key)?.Count ?? 0,
                     g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus))));
 
         var toolCountMap = toolCounts.ToDictionary(x => x.AssociateId, x => x.Count);

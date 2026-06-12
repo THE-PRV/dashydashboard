@@ -29,40 +29,63 @@ public class ManagerService
 
         var userIds = reports.Select(u => u.AssociateId).ToList();
 
-        var toolCounts = await _db.UserToolAccess.AsNoTracking()
-            .Where(uta => userIds.Contains(uta.AssociateId)
+        var activeAccess = await _db.UserToolAccess.AsNoTracking()
+            .Where(uta => uta.AssociateId != null
+                       && userIds.Contains(uta.AssociateId)
                        && uta.Access
                        && uta.GivenDate <= today
                        && (uta.ToDate == null || uta.ToDate >= today))
+            .Select(uta => new { AssociateId = uta.AssociateId!, ClientID = uta.ClientID!, uta.ToolID })
+            .ToListAsync();
+
+        var toolCounts = activeAccess
             .GroupBy(uta => uta.AssociateId)
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
-            .ToListAsync();
+            .ToList();
+
+        var activeAccessKeySet = activeAccess
+            .Select(uta => (uta.AssociateId, uta.ClientID, uta.ToolID))
+            .ToHashSet();
 
         var attestRows = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => userIds.Contains(tca.AssociateId) && tca.CycleID == cycleId)
-            .Select(tca => new { tca.AssociateId, tca.HadAccess, tca.UsedThisCycle, tca.ScreenshotStatus, tca.AttestationStatus })
+            .Select(tca => new
+            {
+                tca.AssociateId,
+                tca.ClientID,
+                tca.ToolID,
+                tca.HadAccess,
+                tca.UsedThisCycle,
+                tca.ScreenshotStatus,
+                tca.AttestationStatus
+            })
             .ToListAsync();
 
-        var attestCounts = attestRows
-            .Where(r => r.UsedThisCycle.HasValue || r.HadAccess == false)
+        var activeAttestRows = attestRows
+            .Where(r => activeAccessKeySet.Contains((r.AssociateId, r.ClientID, r.ToolID)))
+            .ToList();
+
+        var attestCounts = activeAttestRows
+            .Where(r => ScreenshotCompletion.IsAnswered(r.HadAccess, r.UsedThisCycle))
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key, g => g.Count());
 
         // Per-member five-state status (WI-6): computed in the one shared place from this member's
         // rows (reads AttestationStatus, usage answers and screenshot states).
-        var statusByMember = attestRows
+        var statusByMember = activeAttestRows
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key, g => ScreenshotCompletion.ComputeMemberStatus(
+                toolCounts.FirstOrDefault(t => t.AssociateId == g.Key)?.Count ?? 0,
                 g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus))));
 
-        var pendingCounts = attestRows
+        var pendingCounts = activeAttestRows
             .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
                      && r.ScreenshotStatus != ScreenshotCompletion.StatusApproved
                      && r.ScreenshotStatus != ScreenshotCompletion.StatusRejected)
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        var rejectedCounts = attestRows
+        var rejectedCounts = activeAttestRows
             .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
                      && r.ScreenshotStatus == ScreenshotCompletion.StatusRejected)
             .GroupBy(r => r.AssociateId)
@@ -115,7 +138,7 @@ public class ManagerService
                        && uta.GivenDate <= today
                        && (uta.ToDate == null || uta.ToDate >= today))
             .Include(uta => uta.ClientTool)
-            .Select(uta => new { uta.ClientID, uta.ToolID, ToolName = uta.ClientTool!.ToolName })
+            .Select(uta => new { ClientID = uta.ClientID!, uta.ToolID, ToolName = uta.ClientTool!.ToolName })
             .ToListAsync();
 
         var clientNames = await _db.Clients.AsNoTracking()
@@ -126,25 +149,33 @@ public class ManagerService
             .Where(tca => tca.AssociateId == memberId && tca.CycleID == cycleId)
             .ToListAsync();
 
-        var attestations = allAttestations
-            .Where(tca => tca.UsedThisCycle.HasValue || tca.HadAccess == false)
+        var activeKeySet = accessKeys
+            .Select(key => (key.ClientID, key.ToolID))
+            .ToHashSet();
+
+        var activeAttestations = allAttestations
+            .Where(tca => activeKeySet.Contains((tca.ClientID, tca.ToolID)))
+            .ToList();
+
+        var attestations = activeAttestations
+            .Where(tca => ScreenshotCompletion.IsAnswered(tca.HadAccess, tca.UsedThisCycle))
             .ToList();
 
         var answeredKeys = attestations
             .Select(a => (a.ClientID, a.ToolID))
             .ToHashSet();
 
-        var attestationsByKey = allAttestations
+        var attestationsByKey = activeAttestations
             .ToDictionary(a => (a.ClientID, a.ToolID));
 
         // §B1: surface raw pending/rejected screenshot counts for the member's status chip.
-        // (The overall five-state status is computed from allAttestations below via the shared helper.)
-        var pendingScreenshots = allAttestations.Count(a =>
+        // The overall five-state status is computed from current active accesses below.
+        var pendingScreenshots = activeAttestations.Count(a =>
             ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
             && a.ScreenshotStatus != ScreenshotCompletion.StatusApproved
             && a.ScreenshotStatus != ScreenshotCompletion.StatusRejected);
 
-        var rejectedScreenshots = allAttestations.Count(a =>
+        var rejectedScreenshots = activeAttestations.Count(a =>
             ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
             && a.ScreenshotStatus == ScreenshotCompletion.StatusRejected);
 
@@ -209,7 +240,8 @@ public class ManagerService
         var pct = totalTools > 0 ? (double)totalAttested / totalTools : 0;
         // WI-6: same shared five-state computation as the team list.
         var status = ScreenshotCompletion.ComputeMemberStatus(
-            allAttestations.Select(a => (a.HadAccess, a.UsedThisCycle, a.ScreenshotStatus, a.AttestationStatus)));
+            totalTools,
+            activeAttestations.Select(a => (a.HadAccess, a.UsedThisCycle, a.ScreenshotStatus, a.AttestationStatus)));
 
         return new MemberDetailDto(member.AssociateId, $"{member.FirstName} {member.LastName}",
                                    status, totalTools, totalAttested, Math.Round(pct, 4), byClient, mismatchDtos,
@@ -704,17 +736,21 @@ public class ManagerService
             throw new InvalidOperationException("A reason is required when rejecting a screenshot.");
 
         // Load every attestation row for this member+cycle (tracked) so we can evaluate the
-        // AllApproved completeness transition once, before and after the change, in this request.
+        // five-state completion transition once, before and after the change, in this request.
         var rows = await _db.ToolCycleAttestations
             .Where(a => a.CycleID == cycleId && a.AssociateId == ownerId)
             .ToListAsync();
+
+        var activeRows = await GetActiveAttestationRowsAsync(ownerId, rows);
 
         var att = rows.FirstOrDefault(a => a.ClientID == clientId && a.ToolID == toolId);
         if (att?.ScreenshotPath is null)
             throw new KeyNotFoundException("No screenshot found for this attestation.");
 
-        var wasComplete = ScreenshotCompletion.AllApproved(
-            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+        var wasComplete = ScreenshotCompletion.ComputeMemberStatus(
+            activeRows.ActiveToolCount,
+            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
+            == ScreenshotCompletion.MemberComplete;
 
         StampReview(att, callerId, approve, reason);
 
@@ -729,8 +765,10 @@ public class ManagerService
         if (!approve)
             await EnqueueScreenshotRejectedAsync(cycleId, ownerId, clientId, toolId, callerId, reason);
 
-        var isComplete = ScreenshotCompletion.AllApproved(
-            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+        var isComplete = ScreenshotCompletion.ComputeMemberStatus(
+            activeRows.ActiveToolCount,
+            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
+            == ScreenshotCompletion.MemberComplete;
 
         if (!wasComplete && isComplete)
             await EnqueueAllApprovedAsync(cycleId, ownerId);
@@ -747,14 +785,17 @@ public class ManagerService
             throw new UnauthorizedAccessException("You are not authorized to review these screenshots.");
 
         // Load every attestation row for this member+cycle (tracked) so we can evaluate the
-        // AllApproved completeness transition once, before and after the bulk change, in this
+        // five-state completion transition once, before and after the bulk change, in this
         // request — this is what prevents a double-send when many rows flip to Approved at once.
         var rows = await _db.ToolCycleAttestations
             .Where(a => a.CycleID == cycleId && a.AssociateId == ownerId)
             .ToListAsync();
 
-        var wasComplete = ScreenshotCompletion.AllApproved(
-            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+        var activeRows = await GetActiveAttestationRowsAsync(ownerId, rows);
+        var wasComplete = ScreenshotCompletion.ComputeMemberStatus(
+            activeRows.ActiveToolCount,
+            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
+            == ScreenshotCompletion.MemberComplete;
 
         var pending = rows.Where(a => a.ScreenshotStatus == "Pending").ToList();
 
@@ -767,13 +808,37 @@ public class ManagerService
 
         await _db.SaveChangesAsync();
 
-        var isComplete = ScreenshotCompletion.AllApproved(
-            rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus)));
+        var isComplete = ScreenshotCompletion.ComputeMemberStatus(
+            activeRows.ActiveToolCount,
+            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
+            == ScreenshotCompletion.MemberComplete;
 
         if (!wasComplete && isComplete)
             await EnqueueAllApprovedAsync(cycleId, ownerId);
 
         return pending.Count;
+    }
+
+    private async Task<(int ActiveToolCount, List<ToolCycleAttestation> Rows)> GetActiveAttestationRowsAsync(
+        string associateId,
+        List<ToolCycleAttestation> rows)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var activeKeys = await _db.UserToolAccess.AsNoTracking()
+            .Where(uta => uta.AssociateId == associateId
+                       && uta.Access
+                       && uta.GivenDate <= today
+                       && (uta.ToDate == null || uta.ToDate >= today))
+            .Select(uta => new { ClientID = uta.ClientID!, uta.ToolID })
+            .ToListAsync();
+
+        var activeKeySet = activeKeys
+            .Select(key => (key.ClientID, key.ToolID))
+            .ToHashSet();
+
+        return (
+            activeKeys.Count,
+            rows.Where(row => activeKeySet.Contains((row.ClientID, row.ToolID))).ToList());
     }
 
     /// <summary>

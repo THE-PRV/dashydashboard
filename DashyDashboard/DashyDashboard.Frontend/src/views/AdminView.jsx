@@ -158,6 +158,21 @@ export default function AdminView({
     return () => { cancelled = true; };
   }, [cycle?.cycleID]);
 
+  function refreshDepartments() {
+    if (!cycle?.cycleID) return;
+    getAdminDepartments(cycle.cycleID)
+      .then((data) => {
+        const nextDepts = Array.isArray(data) ? data : [];
+        setDepts(nextDepts);
+        setDrillDept((current) => (
+          current
+            ? nextDepts.find((dept) => dept.departmentName === current.departmentName) ?? current
+            : current
+        ));
+      })
+      .catch(() => {});
+  }
+
   // Reset notification read-state when the cycle changes.
   useEffect(() => { setNotifRead(false); }, [cycle?.cycleID]);
 
@@ -480,6 +495,7 @@ export default function AdminView({
               dark={dark}
               superUserRole={superUserRole}
               onBack={() => setDrillDept(null)}
+              onReviewed={refreshDepartments}
             />
           ) : (
             <>
@@ -1516,7 +1532,7 @@ function GfhPopover({ info, onClose }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DRILL-DOWN SECTION
 // ─────────────────────────────────────────────────────────────────────────────
-function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
+function DrillDownSection({ dept, onBack, cycle, dark, superUserRole, onReviewed }) {
   const [managers, setManagers] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1568,6 +1584,18 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
     return () => { cancelled = true; };
   }, [dept?.departmentName, cycle?.cycleID, clientFilter]);
 
+  function reloadManagers() {
+    if (!dept?.departmentName || !cycle?.cycleID) return;
+    getDeptManagers(dept.departmentName, cycle.cycleID, clientFilter || undefined)
+      .then((data) => setManagers(data))
+      .catch(() => {});
+  }
+
+  function handleReviewed() {
+    reloadManagers();
+    onReviewed?.();
+  }
+
   const deptPct = dept.totalAssociates > 0
     ? Math.round((dept.submittedCount / dept.totalAssociates) * 100)
     : 0;
@@ -1590,6 +1618,7 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
         dark={dark}
         superUserRole={superUserRole}
         onBack={() => setDrillManager(null)}
+        onReviewed={handleReviewed}
       />
     );
   }
@@ -1933,6 +1962,7 @@ function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
           cycleId={cycle.cycleID}
           cycleName={cycle.cycleName}
           onClose={() => setGalleryOpen(false)}
+          onReviewed={handleReviewed}
         />
       )}
     </div>
@@ -2053,7 +2083,7 @@ function ManagerCard({ mgr, dark, onInfo, onOpen }) {
 // ui.jsx (NotStarted / InProgress / AwaitingApproval / ActionNeeded / Complete) —
 // the old three-state MEMBER_STATUS_META has been removed.
 
-function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
+function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack, onReviewed }) {
   const [team, setTeam] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -2079,6 +2109,11 @@ function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
     getManagerTeam(mgr.associateId, cycle.cycleID)
       .then((data) => setTeam(data))
       .catch(() => {});
+  }
+
+  function handleReviewed() {
+    reloadTeam();
+    onReviewed?.();
   }
 
   // Close member popover on outside click
@@ -2183,6 +2218,7 @@ function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
           superUserRole={superUserRole}
           onClose={() => setDrillMember(null)}
           onReopened={reloadTeam}
+          onReviewed={handleReviewed}
         />
       )}
     </div>
@@ -2286,7 +2322,7 @@ function fmtDate(value) {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
 }
 
-function AssociateDetailOverlay({ mgr, member, cycle, dark, superUserRole, onClose, onReopened }) {
+function AssociateDetailOverlay({ mgr, member, cycle, dark, superUserRole, onClose, onReopened, onReviewed }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -2320,6 +2356,11 @@ function AssociateDetailOverlay({ mgr, member, cycle, dark, superUserRole, onClo
     } finally {
       setReopening(false);
     }
+  }
+
+  function handleReviewed() {
+    load();
+    onReviewed?.();
   }
 
   const pct = Math.round((detail?.progressPct ?? 0) * 100);
@@ -2441,7 +2482,7 @@ function AssociateDetailOverlay({ mgr, member, cycle, dark, superUserRole, onClo
                 byClient={detail.byClient}
                 pendingScreenshots={detail.pendingScreenshots}
                 rejectedScreenshots={detail.rejectedScreenshots}
-                onReviewed={load}
+                onReviewed={handleReviewed}
               />
             </div>
           )}

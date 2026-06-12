@@ -102,9 +102,9 @@ function GalleryTile({ cycleId, item, onOpen }) {
  * Approved/Rejected filter chips with counts. Clicking a tile opens the shared Lightbox over
  * the currently-filtered flat set, with review enabled (server authorizes per-member).
  *
- * Props: { cycleId, cycleName, onClose }
+ * Props: { cycleId, cycleName, onClose, onReviewed }
  */
-export default function CycleGallery({ cycleId, cycleName, onClose }) {
+export default function CycleGallery({ cycleId, cycleName, onClose, onReviewed }) {
   const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -200,6 +200,7 @@ export default function CycleGallery({ cycleId, cycleName, onClose }) {
           }
         : item
     )));
+    onReviewed?.();
   };
 
   const handleLightboxClose = () => {

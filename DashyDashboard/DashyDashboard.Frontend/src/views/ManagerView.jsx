@@ -223,11 +223,13 @@ export default function ManagerView({
   // Refresh the selected member's detail (and the team list's pending/rejected
   // counts) after a screenshot approve/reject/approve-all.
   function refreshDetail() {
-    if (!cycle?.cycleID || !selectedId) return;
-    getMemberDetail(selectedId, cycle.cycleID)
-      .then((response) => setDetail({ ...response, associateId: asAssociateId(response.associateId) }))
-      .catch(() => {});
+    if (!cycle?.cycleID) return;
     loadTeam();
+    if (selectedId) {
+      getMemberDetail(selectedId, cycle.cycleID)
+        .then((response) => setDetail({ ...response, associateId: asAssociateId(response.associateId) }))
+        .catch(() => {});
+    }
   }
 
   useEffect(() => {
@@ -624,6 +626,7 @@ export default function ManagerView({
           cycleId={cycle.cycleID}
           cycleName={cycle.cycleName}
           onClose={() => setGalleryOpen(false)}
+          onReviewed={refreshDetail}
         />
       )}
 
