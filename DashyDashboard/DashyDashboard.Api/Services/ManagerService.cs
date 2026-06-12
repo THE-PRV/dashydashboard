@@ -182,18 +182,26 @@ public class ManagerService
             .Include(tca => tca.Cycle)
             .ToListAsync();
 
+        var mismatchToolIds = mismatches.Select(m => m.ToolID).Distinct().ToList();
+        var mismatchClientIds = mismatches.Select(m => m.ClientID).Distinct().ToList();
         var clientToolNames = await _db.ClientTools.AsNoTracking()
-            .Where(ct => mismatches.Select(m => m.ToolID).Contains(ct.ToolID))
-            .ToDictionaryAsync(ct => ct.ToolID, ct => new { ct.ToolName, ct.ClientID });
+            .Where(ct => ct.ClientID != null
+                      && mismatchToolIds.Contains(ct.ToolID)
+                      && mismatchClientIds.Contains(ct.ClientID))
+            .ToDictionaryAsync(
+                ct => (ct.ClientID!, ct.ToolID),
+                ct => ct.ToolName ?? ct.ToolID.ToString());
 
         var mismatchClientNames = await _db.Clients.AsNoTracking()
-            .Where(c => mismatches.Select(m => m.ClientID).Contains(c.ClientID))
+            .Where(c => mismatchClientIds.Contains(c.ClientID))
             .ToDictionaryAsync(c => c.ClientID, c => c.ClientName ?? c.ClientID);
 
         var mismatchDtos = mismatches.Select(m => {
-            var toolInfo = clientToolNames.GetValueOrDefault(m.ToolID);
+            var toolName = clientToolNames.GetValueOrDefault(
+                (m.ClientID, m.ToolID),
+                m.ToolID.ToString());
             var clientName = mismatchClientNames.GetValueOrDefault(m.ClientID, m.ClientID);
-            return new MismatchDto(m.ClientID, clientName, toolInfo?.ToolName ?? m.ToolID.ToString(), m.Remarks, m.SubmittedAt);
+            return new MismatchDto(m.ClientID, clientName, toolName, m.Remarks, m.SubmittedAt);
         }).ToList();
 
         var totalTools = byClient.Sum(c => c.TotalTools);

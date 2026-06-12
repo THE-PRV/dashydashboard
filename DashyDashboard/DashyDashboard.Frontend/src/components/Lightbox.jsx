@@ -158,16 +158,29 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
   // and R types normally (left to the textbox).
   useEffect(() => {
     function onKeyDown(e) {
+      // Capture Escape before lower overlays' document listeners. One key press should only
+      // dismiss the topmost active layer (the reject input first, then this lightbox).
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (showReject) {
+          setShowReject(false);
+          setReason('');
+        } else {
+          onClose?.();
+        }
+        return;
+      }
+
       if (busy) return;
 
       if (showReject) {
-        if (e.key === 'Escape') { e.preventDefault(); setShowReject(false); setReason(''); return; }
         if (e.key === 'Enter')  { e.preventDefault(); doReject(reason); }
         return; // other keys go to the textbox
       }
 
       switch (e.key) {
-        case 'Escape':     e.preventDefault(); onClose?.(); break;
         case 'ArrowLeft':  e.preventDefault(); goPrev(); break;
         case 'ArrowRight': e.preventDefault(); goNext(); break;
         case 'Enter':      if (isPending) { e.preventDefault(); doApprove(); } break;
@@ -175,8 +188,8 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
         default: break;
       }
     }
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, showReject, reason, isPending, index, items.length, multi]);
 
