@@ -187,7 +187,7 @@ public class AttestationsController : ControllerBase
             await _svc.ReopenAsync(CurrentUser.AssociateId, isAdmin, associateId, cycleId);
             return Ok(new { reopened = true });
         }
-        catch (UnauthorizedAccessException) { return Forbid(); }
+        catch (UnauthorizedAccessException) { return StatusCode(StatusCodes.Status403Forbidden); }
         catch (InvalidOperationException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
     }
 }

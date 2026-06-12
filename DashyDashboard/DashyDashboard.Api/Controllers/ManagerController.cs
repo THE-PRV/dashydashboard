@@ -266,7 +266,7 @@ public class ManagerController : ControllerBase
         if (!await IsManagerAsync()
             && !CurrentSuperUsers.Any(s => SuperUserRoles.IsAny(s.RoleName,
                     SuperUserRoles.Admin, SuperUserRoles.GFH, SuperUserRoles.GFHDelegate)))
-            return Forbid();
+            return StatusCode(StatusCodes.Status403Forbidden);
 
         var items = await _svc.GetCycleScreenshotsAsync(CurrentUser.AssociateId, CurrentSuperUsers, cycleId);
         return Ok(items);
