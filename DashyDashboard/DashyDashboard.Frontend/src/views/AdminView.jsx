@@ -497,7 +497,7 @@ function DeptCard({ dept, dark, onDrill }) {
 
   return (
     <Card pad={0} interactive onClick={() => onDrill(dept)} style={{ display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '22px 22px' }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div>
             <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)', letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -541,7 +541,7 @@ function DeptCard({ dept, dark, onDrill }) {
         </div>
 
         <div style={{ flex: 'none' }}>
-          <AdminDonut pct={pct} size={96} strokeWidth={10} dark={dark} />
+          <AdminDonut pct={pct} size={116} strokeWidth={11} dark={dark} />
         </div>
       </div>
 

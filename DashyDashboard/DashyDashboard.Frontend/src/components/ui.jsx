@@ -460,17 +460,17 @@ export function SegmentedControl({ options = [], value, onChange, size = 'md', a
 export function KpiCard({ label, value, sub, delta, tone, style }) {
   const toneColor = CHIP_TONES[tone]?.fg;
   return (
-    <Card pad={16} style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, ...style }}>
+    <Card pad={18} style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, ...style }}>
       <div style={{
-        fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
-        textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap',
+        fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 500, letterSpacing: '0.1em',
+        textTransform: 'uppercase', color: 'var(--text-faint)', whiteSpace: 'nowrap',
         overflow: 'hidden', textOverflow: 'ellipsis',
       }}>{label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, minWidth: 0 }}>
         <span style={{
-          fontFamily: 'var(--font-display)', fontSize: 34, fontWeight: 560,
-          lineHeight: 1.1, color: toneColor ?? 'var(--text)',
-          fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em',
+          fontFamily: 'var(--font-display)', fontSize: 42, fontWeight: 540,
+          lineHeight: 1, color: toneColor ?? 'var(--text)',
+          fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em',
         }}>{value}</span>
         {delta && (
           <span style={{
