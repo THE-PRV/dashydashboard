@@ -1,18 +1,35 @@
-import React, { useEffect, useRef, useState } from 'react';
-import ReactDOM from 'react-dom';
-import { Icon, Badge, Button } from './ui.jsx';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Icon, Stamp, Button, Skeleton, SegmentedControl, SectionHeader, Modal, useToasts,
+} from './ui.jsx';
 import { getScreenshotThumbUrl } from '../api/attestations.js';
 import { reviewScreenshot, approveAllScreenshots } from '../api/manager.js';
 import Lightbox from './Lightbox.jsx';
 
-const STATUS_BADGE = {
-  Pending: { variant: 'pending', label: 'Pending' },
-  Approved: { variant: 'used', label: 'Approved' },
-  Rejected: { variant: 'danger', label: 'Rejected' },
+// Screenshot-status → Stamp tone. Verdicts read as ink stamps (DESIGN §5).
+const STATUS_STAMP = {
+  Pending:  { tone: 'warning', label: 'PENDING' },
+  Approved: { tone: 'success', label: 'APPROVED' },
+  Rejected: { tone: 'danger',  label: 'REJECTED' },
 };
 
+// Sort order so Pending tiles surface first within each client (review-first).
+const STATUS_RANK = { Pending: 0, Rejected: 1, Approved: 2 };
+
+const FILTER_OPTIONS = [
+  { id: 'All', label: 'All' },
+  { id: 'Pending', label: 'Pending' },
+  { id: 'Rejected', label: 'Rejected' },
+  { id: 'Approved', label: 'Approved' },
+];
+
+function stampFor(status) {
+  if (!status) return null;
+  return STATUS_STAMP[status] ?? { tone: 'neutral', label: String(status).toUpperCase() };
+}
+
 /**
- * One tool tile: thumbnail (lazily fetched) + status + approve/reject controls for
+ * One tool tile: thumbnail (lazily fetched) + status stamp + approve/reject controls for
  * reviewers. Clicking the thumbnail opens the full-size image in a lightbox.
  */
 function GalleryTile({ cycleId, associateId, clientId, tool, onOpen, onReview, busy }) {
@@ -57,27 +74,28 @@ function GalleryTile({ cycleId, associateId, clientId, tool, onOpen, onReview, b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKey]);
 
-  const badge = tool.screenshotStatus ? STATUS_BADGE[tool.screenshotStatus] ?? { variant: 'neutral', label: tool.screenshotStatus } : null;
+  const stamp = stampFor(tool.screenshotStatus);
   const isPending = tool.screenshotStatus === 'Pending';
 
   if (!tool.hadAccess) {
-    // Exempt row — muted "no screenshot required" tile.
+    // Exempt row — muted "No access — exempt" tile (consistent terminology, DESIGN §5).
     return (
       <div style={{
         display: 'flex', flexDirection: 'column', gap: 8, padding: 10,
-        borderRadius: 10, border: '1px dashed var(--border)', background: 'var(--surface-2)', opacity: 0.6,
+        borderRadius: 'var(--radius-card)', border: '1px dashed var(--border)',
+        background: 'var(--surface-2)', opacity: 0.7,
       }}>
         <div style={{
-          width: '100%', aspectRatio: '4 / 3', borderRadius: 8, overflow: 'hidden',
+          width: '100%', aspectRatio: '4 / 3', borderRadius: 'var(--radius)', overflow: 'hidden',
           background: 'var(--surface)', border: '1px solid var(--border-subtle)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-faint)',
         }}>
-          <Icon name="x" size={16} />
+          <Icon name="minus" size={18} />
         </div>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {tool.toolName}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>No access — exempt</div>
+        <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>No access — exempt</div>
       </div>
     );
   }
@@ -85,14 +103,15 @@ function GalleryTile({ cycleId, associateId, clientId, tool, onOpen, onReview, b
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', gap: 8, padding: 10,
-      borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--surface)',
+      borderRadius: 'var(--radius-card)', border: '1px solid var(--border-subtle)', background: 'var(--surface)',
     }}>
       <button
         type="button"
         onClick={() => hasScreenshot && onOpen({ cycleId, associateId, clientId, toolId: tool.toolID, toolName: tool.toolName })}
         disabled={!hasScreenshot}
+        aria-label={hasScreenshot ? `View ${tool.toolName} screenshot full size` : `${tool.toolName} — no screenshot uploaded`}
         style={{
-          width: '100%', aspectRatio: '4 / 3', borderRadius: 8, overflow: 'hidden', padding: 0,
+          width: '100%', aspectRatio: '4 / 3', borderRadius: 'var(--radius)', overflow: 'hidden', padding: 0,
           background: 'var(--surface-2)', border: '1px solid var(--border-subtle)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: hasScreenshot ? 'zoom-in' : 'default',
@@ -101,8 +120,10 @@ function GalleryTile({ cycleId, associateId, clientId, tool, onOpen, onReview, b
       >
         {thumbUrl ? (
           <img src={thumbUrl} alt={`${tool.toolName} screenshot`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : thumbLoading ? (
+          <Skeleton width="100%" height="100%" radius={0} />
         ) : (
-          <Icon name="image" size={20} style={{ color: 'var(--text-muted)', opacity: thumbLoading ? 1 : 0.4 }} />
+          <Icon name="image" size={20} style={{ color: 'var(--text-faint)', opacity: 0.5 }} />
         )}
       </button>
 
@@ -110,11 +131,11 @@ function GalleryTile({ cycleId, associateId, clientId, tool, onOpen, onReview, b
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {tool.toolName}
         </div>
-        {badge && <Badge variant={badge.variant} size="sm">{badge.label}</Badge>}
+        {stamp && <Stamp tone={stamp.tone} label={stamp.label} />}
       </div>
 
       {tool.screenshotStatus === 'Rejected' && tool.screenshotRejectReason && (
-        <div style={{ fontSize: 11, color: 'var(--danger-fg)' }}>{tool.screenshotRejectReason}</div>
+        <div style={{ fontSize: 11, color: 'var(--danger)', lineHeight: 1.4 }}>{tool.screenshotRejectReason}</div>
       )}
 
       {tool.usedThisCycle === false && (
@@ -150,15 +171,17 @@ function GalleryTile({ cycleId, associateId, clientId, tool, onOpen, onReview, b
             placeholder="Reason for rejection…"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
+            aria-label="Reason for rejection"
+            aria-invalid={!reason.trim()}
             style={{
               width: '100%', boxSizing: 'border-box', padding: '6px 8px', fontSize: 12,
-              borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)',
-              color: 'var(--text)', fontFamily: 'inherit',
+              borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--surface)',
+              color: 'var(--text)', fontFamily: 'inherit', outline: 'none',
             }}
           />
           <div style={{ display: 'flex', gap: 6 }}>
             <Button
-              variant="primary" size="sm" icon="x"
+              variant="danger" size="sm" icon="x"
               disabled={busy || !reason.trim()}
               onClick={() => onReview(tool, false, reason.trim())}
               style={{ flex: 1, opacity: (busy || !reason.trim()) ? 0.6 : 1, cursor: (busy || !reason.trim()) ? 'not-allowed' : 'pointer' }}
@@ -177,8 +200,9 @@ function GalleryTile({ cycleId, associateId, clientId, tool, onOpen, onReview, b
 
 /**
  * Reviewer screenshot gallery (Feature 2 §B2). Renders one section per client, with a
- * grid of per-tool tiles (thumbnail + status + approve/reject). Exempt (no-access) tools
- * render a muted placeholder tile.
+ * grid of per-tool tiles (thumbnail + status stamp + approve/reject). Exempt (no-access)
+ * tools render a muted "No access — exempt" placeholder tile. A status filter (Pending
+ * first) narrows the visible tiles; bulk-approve uses a confirm Modal (no window.confirm).
  *
  * props:
  *  - cycleId, associateId, memberName: identify whose gallery this is (memberName is used
@@ -192,25 +216,17 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
   const [lightbox, setLightbox] = useState(null);
   const [busyKey, setBusyKey] = useState(null);
   const [approvingAll, setApprovingAll] = useState(false);
-  const [error, setError] = useState(null);
-  const [toast, setToast] = useState(null);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [filter, setFilter] = useState('All');
+  const toasts = useToasts();
 
   const groups = (byClient ?? []).filter((c) => (c.tools ?? []).length > 0);
   const hasAnyScreenshotRows = groups.some((c) => c.tools.some((t) => t.hadAccess));
 
-  // Auto-dismiss the "n approved, m rejected" toast.
-  useEffect(() => {
-    if (!toast) return undefined;
-    const t = setTimeout(() => setToast(null), 4000);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  if (!hasAnyScreenshotRows) return null;
-
   // Every row that actually has a screenshot, in the shared Lightbox item shape. The
   // tile-click viewer navigates across this full set (not just the clicked tile); review is
-  // offered on whichever items are Pending.
-  const allItems = groups.flatMap((client) =>
+  // offered on whichever items are Pending. Sorted Pending → Rejected → Approved.
+  const allItems = useMemo(() => groups.flatMap((client) =>
     (client.tools ?? [])
       .filter((t) => !!t.screenshotStatus)
       .map((t) => ({
@@ -218,13 +234,15 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
         associateId,
         clientId: client.clientID,
         clientName: client.clientName,
+        memberName,
         toolId: t.toolID,
         toolName: t.toolName,
         screenshotStatus: t.screenshotStatus,
         screenshotRejectReason: t.screenshotRejectReason,
         screenshotUploadedAt: t.screenshotUploadedAt,
-      }))
-  );
+      })),
+  ).sort((a, b) => (STATUS_RANK[a.screenshotStatus] ?? 9) - (STATUS_RANK[b.screenshotStatus] ?? 9)),
+  [groups, cycleId, associateId, memberName]);
 
   // The Pending subset, in the same shape, for the "Review pending" entry point (§B3).
   const pendingItems = allItems.filter((it) => it.screenshotStatus === 'Pending');
@@ -239,31 +257,31 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
     else reviewTallyRef.current.rejected += 1;
   };
 
+  if (!hasAnyScreenshotRows) return null;
+
   const handleReview = async (clientId, tool, approve, reason) => {
     const key = `${clientId}/${tool.toolID}`;
     setBusyKey(key);
-    setError(null);
     try {
       await reviewScreenshot(cycleId, associateId, clientId, tool.toolID, approve, reason);
+      toasts.success(approve ? `Approved ${tool.toolName}` : `Rejected ${tool.toolName}`);
       onReviewed?.();
     } catch (err) {
-      setError(err.message || 'Review failed.');
+      toasts.error(err.message || 'Review failed.');
     } finally {
       setBusyKey(null);
     }
   };
 
   const handleApproveAll = async () => {
-    if (!window.confirm(`Approve ${pendingScreenshots} pending screenshot${pendingScreenshots === 1 ? '' : 's'} for ${memberName || 'this member'}?`)) {
-      return;
-    }
+    setConfirmAll(false);
     setApprovingAll(true);
-    setError(null);
     try {
       await approveAllScreenshots(cycleId, associateId);
+      toasts.success(`Approved ${pendingScreenshots} screenshot${pendingScreenshots === 1 ? '' : 's'}`);
       onReviewed?.();
     } catch (err) {
-      setError(err.message || 'Approve all failed.');
+      toasts.error(err.message || 'Approve all failed.');
     } finally {
       setApprovingAll(false);
     }
@@ -293,45 +311,57 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
     setLightbox(null);
     const { approved, rejected } = reviewTallyRef.current;
     if (approved > 0 || rejected > 0) {
-      setToast(`${approved} approved, ${rejected} rejected`);
+      toasts.success(`${approved} approved, ${rejected} rejected`);
       onReviewed?.();
     }
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, position: 'relative' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-            Screenshots
+      <SectionHeader
+        rule
+        right={(
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <SegmentedControl
+              size="sm"
+              ariaLabel="Filter screenshots by status"
+              options={FILTER_OPTIONS}
+              value={filter}
+              onChange={setFilter}
+            />
+            {pendingItems.length > 0 && (
+              <Button variant="outline" size="sm" icon="image" onClick={handleReviewPending}>
+                Review pending ({pendingItems.length})
+              </Button>
+            )}
+            {pendingScreenshots > 0 && (
+              <Button variant="primary" size="sm" icon="check" disabled={approvingAll} onClick={() => setConfirmAll(true)}
+                style={{ opacity: approvingAll ? 0.6 : 1, cursor: approvingAll ? 'wait' : 'pointer' }}>
+                {approvingAll ? 'Approving…' : `Approve all (${pendingScreenshots})`}
+              </Button>
+            )}
           </div>
-          {pendingScreenshots > 0 && <Badge variant="pending" size="sm">Awaiting approval ({pendingScreenshots})</Badge>}
-          {rejectedScreenshots > 0 && <Badge variant="danger" size="sm">Rejected ({rejectedScreenshots})</Badge>}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {pendingItems.length > 0 && (
-            <Button variant="outline" size="sm" icon="image" onClick={handleReviewPending}>
-              Review pending ({pendingItems.length})
-            </Button>
-          )}
-          {pendingScreenshots > 0 && (
-            <Button variant="primary" size="sm" icon="check" disabled={approvingAll} onClick={handleApproveAll}
-              style={{ opacity: approvingAll ? 0.6 : 1, cursor: approvingAll ? 'wait' : 'pointer' }}>
-              {approvingAll ? 'Approving…' : `Approve all (${pendingScreenshots})`}
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {error && <div style={{ fontSize: 12, color: 'var(--danger-fg)' }}>{error}</div>}
+        )}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          Screenshots
+          {pendingScreenshots > 0 && <Stamp tone="warning" label={`${pendingScreenshots} PENDING`} />}
+          {rejectedScreenshots > 0 && <Stamp tone="danger" label={`${rejectedScreenshots} REJECTED`} />}
+        </span>
+      </SectionHeader>
 
       {groups.map((client) => {
-        const tools = (client.tools ?? []).filter((t) => t.hadAccess || t.screenshotStatus);
+        const tools = (client.tools ?? [])
+          .filter((t) => t.hadAccess || t.screenshotStatus)
+          .filter((t) => filter === 'All' || t.screenshotStatus === filter)
+          .slice()
+          .sort((a, b) => (STATUS_RANK[a.screenshotStatus] ?? 8) - (STATUS_RANK[b.screenshotStatus] ?? 8));
         if (tools.length === 0) return null;
         return (
           <div key={client.clientID}>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
-              {client.clientName} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({client.clientID})</span>
+              {client.clientName}{' '}
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontFamily: 'var(--font-mono)' }}>({client.clientID})</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
               {tools.map((tool) => (
@@ -360,32 +390,25 @@ export default function ScreenshotGallery({ cycleId, associateId, memberName, by
         />
       )}
 
-      {toast && ReactDOM.createPortal(
-        <div
-          className="toast"
-          style={{
-            position: 'fixed', bottom: 24, right: 24, zIndex: 500,
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 10, padding: '12px 18px',
-            boxShadow: 'var(--shadow-lift-h)',
-            display: 'flex', alignItems: 'center', gap: 10,
-            fontSize: 13, color: 'var(--text)', maxWidth: 360,
-          }}
-        >
-          <span style={{ color: 'var(--st-completed)', flexShrink: 0 }}>
-            <Icon name="check" size={16} />
-          </span>
-          <span>{toast}</span>
-          <button
-            type="button"
-            onClick={() => setToast(null)}
-            style={{ marginLeft: 'auto', border: 0, background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', flexShrink: 0, padding: 2, lineHeight: 0 }}
-          >
-            <Icon name="x" size={13} />
-          </button>
-        </div>,
-        document.body,
-      )}
+      <Modal
+        open={confirmAll}
+        onClose={() => setConfirmAll(false)}
+        title="Approve all pending screenshots"
+        width={420}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => setConfirmAll(false)}>Cancel</Button>
+            <Button variant="primary" icon="check" onClick={handleApproveAll}>
+              Approve {pendingScreenshots}
+            </Button>
+          </>
+        )}
+      >
+        <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>
+          Approve all {pendingScreenshots} pending screenshot{pendingScreenshots === 1 ? '' : 's'} for{' '}
+          <strong>{memberName || 'this member'}</strong>? This signs off every awaiting-approval proof at once.
+        </div>
+      </Modal>
     </div>
   );
 }

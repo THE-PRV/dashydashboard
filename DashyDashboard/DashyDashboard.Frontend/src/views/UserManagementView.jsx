@@ -1,54 +1,87 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Icon, Avatar, TopBar, SearchBar } from '../components/ui.jsx';
+import {
+  Icon, Avatar, Button, SearchBar, Card, Skeleton, EmptyState,
+  SortHeader, SectionHeader, Modal, useToasts,
+} from '../components/ui.jsx';
+import { useBreadcrumbs } from '../components/AppShell.jsx';
 import { getAllUsers } from '../api/manager.js';
 import { updateUser } from '../api/admin.js';
 import { asAssociateId, displayUserName } from '../lib/contracts.js';
 
-export default function UserManagementView({
-  user, cycle, cycles, onCycle, onLogout, isManager, role, onRole, dark, onDark,
-}) {
+const inputStyle = {
+  width: '100%', boxSizing: 'border-box', height: 34, padding: '0 12px',
+  background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+  color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
+};
+
+function FieldLabel({ children }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
+      textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6,
+    }}>{children}</div>
+  );
+}
+
+function HoverRow({ children, selected, onClick }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <tr
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      aria-selected={selected || undefined}
+      style={{
+        cursor: 'pointer',
+        background: selected ? 'var(--accent-glow)' : (hovered ? 'var(--surface-2)' : 'transparent'),
+        borderBottom: '1px solid var(--border-subtle)',
+        transition: 'background .12s ease-out',
+      }}
+    >
+      {children}
+    </tr>
+  );
+}
+
+export default function UserManagementView({ user }) {
   const isAdmin = user?.superUserRole === 'Admin';
+  const toasts = useToasts();
 
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(null);
+  const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
 
   // Edit modal state
   const [editRecord, setEditRecord] = useState(null);
-  const [editFirstName, setEditFirstName] = useState('');
-  const [editLastName, setEditLastName] = useState('');
-  const [editUserName, setEditUserName] = useState('');
-  const [editDepartment, setEditDepartment] = useState('');
-  const [editManagerId, setEditManagerId] = useState('');
-  const [editEmail, setEditEmail] = useState('');
+  const [editForm, setEditForm] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState('');
 
+  useBreadcrumbs(useMemo(() => ['Users'], []));
+
   function loadUsers() {
     setLoading(true);
-    setLoadError('');
     getAllUsers()
-      .then((data) => setUsers((data ?? []).map((record) => ({
-        ...record,
-        associateId: asAssociateId(record.associateId),
-      }))))
-      .catch((e) => setLoadError(e.message || 'Failed to load users.'))
+      .then((data) => setUsers((data ?? []).map((r) => ({ ...r, associateId: asAssociateId(r.associateId) }))))
+      .catch((e) => toasts.error(e.message || 'Failed to load users.', { title: 'User directory' }))
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { loadUsers(); }, []);
+  useEffect(() => { loadUsers(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openEdit(e, record) {
     e.stopPropagation();
     setEditRecord(record);
-    setEditFirstName(record.firstName ?? '');
-    setEditLastName(record.lastName ?? '');
-    setEditUserName(record.userName ?? '');
-    setEditDepartment(record.department ?? '');
-    setEditManagerId(record.managerId ?? '');
-    setEditEmail(record.email ?? '');
+    setEditForm({
+      firstName: record.firstName ?? '',
+      lastName: record.lastName ?? '',
+      userName: record.userName ?? '',
+      department: record.department ?? '',
+      managerId: record.managerId ?? '',
+      email: record.email ?? '',
+    });
     setEditError('');
   }
 
@@ -57,19 +90,29 @@ export default function UserManagementView({
     setEditRecord(null);
   }
 
+  function validate(form) {
+    if (!form.firstName.trim()) return 'First name is required.';
+    if (!form.lastName.trim()) return 'Last name is required.';
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'Enter a valid email address.';
+    return '';
+  }
+
   async function submitEdit() {
-    if (!editRecord || editSaving) return;
+    if (!editRecord || !editForm || editSaving) return;
+    const problem = validate(editForm);
+    if (problem) { setEditError(problem); return; }
     setEditSaving(true);
     setEditError('');
     try {
       await updateUser(editRecord.associateId, {
-        firstName: editFirstName,
-        lastName: editLastName,
-        userName: editUserName,
-        department: editDepartment,
-        managerId: editManagerId || null,
-        email: editEmail,
+        firstName: editForm.firstName,
+        lastName: editForm.lastName,
+        userName: editForm.userName,
+        department: editForm.department,
+        managerId: editForm.managerId || null,
+        email: editForm.email,
       });
+      toasts.success(`Saved changes to ${editForm.firstName} ${editForm.lastName}.`.trim(), { title: 'User updated' });
       setEditRecord(null);
       loadUsers();
     } catch (e) {
@@ -82,338 +125,223 @@ export default function UserManagementView({
   const filtered = useMemo(() => {
     if (!search.trim()) return users;
     const q = search.toLowerCase();
-    return users.filter((record) =>
-      record.fullName.toLowerCase().includes(q) ||
-      displayUserName(record).toLowerCase().includes(q) ||
-      record.associateId.includes(q) ||
-      (record.department ?? '').toLowerCase().includes(q) ||
-      (record.managerName ?? '').toLowerCase().includes(q));
+    return users.filter((r) =>
+      r.fullName.toLowerCase().includes(q) ||
+      displayUserName(r).toLowerCase().includes(q) ||
+      r.associateId.includes(q) ||
+      (r.department ?? '').toLowerCase().includes(q) ||
+      (r.managerName ?? '').toLowerCase().includes(q));
   }, [users, search]);
 
-  const inputStyle = {
-    width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-    fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
-    boxSizing: 'border-box',
-  };
-  const labelHeadStyle = {
-    fontSize: 11, fontWeight: 700, letterSpacing: '0.06em',
-    textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6,
-  };
+  const rows = useMemo(() => {
+    const dir = sort.dir === 'desc' ? -1 : 1;
+    const val = (r) => {
+      switch (sort.key) {
+        case 'id': return r.associateId ?? '';
+        case 'name': return (r.fullName ?? '').toLowerCase();
+        case 'username': return displayUserName(r).toLowerCase();
+        case 'department': return (r.department ?? '').toLowerCase();
+        case 'manager': return (r.managerName ?? '').toLowerCase();
+        default: return '';
+      }
+    };
+    return [...filtered].sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * dir);
+  }, [filtered, sort]);
+
+  const onSort = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }));
+  const sortProps = (key, label) => ({ label, active: sort.key === key, dir: sort.dir, onSort: () => onSort(key) });
+
+  const colSpan = isAdmin ? 6 : 5;
+  const departments = useMemo(
+    () => [...new Set(users.map((u) => u.department).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [users],
+  );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
-      <TopBar
-        user={user}
-        cycle={cycle}
-        cycles={cycles}
-        onCycle={onCycle}
-        onLogout={onLogout}
-        isManager={isManager}
-        role={role}
-        onRole={onRole}
-        dark={dark}
-        onDark={onDark}
-      />
-
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, padding: '10px 24px',
-        background: 'color-mix(in oklab, var(--accent), transparent 92%)',
-        borderBottom: '1px solid var(--border)',
-        fontSize: 12, color: 'var(--text)',
-      }}>
-        <Icon name="users" size={14} style={{ color: 'var(--accent)' }} />
-        <span style={{ fontWeight: 600 }}>User directory</span>
-        <span style={{ color: 'var(--text-muted)' }}>
-          {loading ? 'Loading...' : `${users.length} users in system`}
-        </span>
-      </div>
-
-      <div style={{
-        flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
-        padding: '20px 24px', gap: 14, overflow: 'hidden',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--text)' }}>
-              All Users
+    <div style={{ height: '100%', minHeight: 0, overflowY: 'auto', background: 'var(--bg)' }}>
+      <div className="stagger" style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '20px 24px 28px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0 }}>
+            <h1 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 560, lineHeight: 1.1, color: 'var(--text)' }}>
+              User directory
             </h1>
-            <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
-              Read-only directory. Use the search to filter.
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
+              {loading ? 'Loading…' : `${users.length} user${users.length === 1 ? '' : 's'} in the system`}
+              {isAdmin ? ' · click the edit icon to amend a record' : ' · read-only'}
             </p>
           </div>
-          <SearchBar
-            value={search}
-            onChange={setSearch}
-            placeholder="Search by name, ID, or user name..."
-            width={280}
-          />
+          <SearchBar value={search} onChange={setSearch} placeholder="Search name, ID, user name…" width={300} />
         </div>
 
-        {loadError && (
-          <div style={{
-            fontSize: 13, color: 'var(--danger-fg)', padding: '10px 14px', borderRadius: 9,
-            background: 'color-mix(in oklab, var(--danger-fg), transparent 88%)',
-            border: '1px solid color-mix(in oklab, var(--danger-fg), transparent 70%)',
-            display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-          }}>
-            <Icon name="x" size={14} stroke={2} />
-            {loadError}
+        <Card pad={0}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--rule)' }}>
+            <SectionHeader right={<span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{rows.length} SHOWN</span>}>
+              All users
+            </SectionHeader>
           </div>
-        )}
 
-        {loading && (
-          <div style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--text-muted)', fontSize: 13,
-          }}>
-            Loading users...
-          </div>
-        )}
-
-        {!loading && (
-          <div style={{
-            flex: 1, minHeight: 0, overflow: 'auto',
-            border: '1px solid var(--border)', borderRadius: 12,
-            background: 'var(--surface)',
-          }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: 'var(--surface-2)', position: 'sticky', top: 0, zIndex: 1 }}>
-                  {[...['ID', 'Full Name', 'User Name', 'Department', 'Manager'], ...(isAdmin ? ['Actions'] : [])].map((heading) => (
-                    <th key={heading} style={{
-                      textAlign: 'left', padding: '10px 14px',
-                      fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
-                      textTransform: 'uppercase', color: 'var(--text-muted)',
-                      borderBottom: '1px solid var(--border)',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {heading}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={isAdmin ? 6 : 5} style={{
-                      padding: '24px 14px', textAlign: 'center',
-                      color: 'var(--text-muted)', fontSize: 13,
-                    }}>
-                      {search ? 'No users match your search.' : 'No users found.'}
-                    </td>
+          {loading ? (
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Skeleton width={28} height={28} radius={999} />
+                  <Skeleton width="22%" height={12} />
+                  <Skeleton width="16%" height={12} />
+                  <Skeleton width="18%" height={12} />
+                </div>
+              ))}
+            </div>
+          ) : rows.length === 0 ? (
+            <EmptyState icon="users" title={search ? 'No matches' : 'No users'}
+              message={search ? 'No users match your search. Try a different name or ID.' : 'There are no users in the system yet.'} />
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--rule)' }}>
+                    <SortHeader {...sortProps('id', 'ID')} style={{ padding: '0 14px' }} />
+                    <SortHeader {...sortProps('name', 'Full name')} style={{ padding: '0 14px' }} />
+                    <SortHeader {...sortProps('username', 'User name')} style={{ padding: '0 14px' }} />
+                    <SortHeader {...sortProps('department', 'Department')} style={{ padding: '0 14px' }} />
+                    <SortHeader {...sortProps('manager', 'Manager')} style={{ padding: '0 14px' }} />
+                    {isAdmin && (
+                      <th style={{ padding: '6px 14px', textAlign: 'right', fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Actions</th>
+                    )}
                   </tr>
-                )}
-                {filtered.map((record) => {
-                  const selected = record.associateId === selectedId;
-                  const initials = (record.fullName || 'U').slice(0, 2).toUpperCase();
-                  return (
-                    <tr
-                      key={record.associateId}
-                      onClick={() => setSelectedId(selected ? null : record.associateId)}
-                      style={{
-                        cursor: 'pointer',
-                        background: selected
-                          ? 'color-mix(in oklab, var(--accent), transparent 90%)'
-                          : 'transparent',
-                        borderBottom: '1px solid var(--border-subtle)',
-                        transition: 'background .1s',
-                      }}
-                    >
-                      <td style={{
-                        padding: '11px 14px', color: 'var(--text-muted)',
-                        fontSize: 12, fontFamily: 'var(--mono)',
-                        fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-                      }}>
-                        {record.associateId}
-                      </td>
-                      <td style={{ padding: '11px 14px', verticalAlign: 'middle' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                          <Avatar initials={initials} size={28} />
-                          <span style={{ fontWeight: 500, color: 'var(--text)' }}>{record.fullName}</span>
-                        </div>
-                      </td>
-                      <td style={{
-                        padding: '11px 14px', color: 'var(--text-muted)',
-                        fontSize: 12, fontFamily: 'var(--mono)', whiteSpace: 'nowrap',
-                      }}>
-                        {displayUserName(record) || <em style={{ opacity: 0.5 }}>-</em>}
-                      </td>
-                      <td style={{
-                        padding: '11px 14px', color: record.department ? 'var(--text)' : 'var(--text-muted)',
-                        fontSize: 12, whiteSpace: 'nowrap',
-                      }}>
-                        {record.department || <em style={{ opacity: 0.5 }}>-</em>}
-                      </td>
-                      <td style={{
-                        padding: '11px 14px', color: record.managerName ? 'var(--text)' : 'var(--text-muted)',
-                        fontSize: 12,
-                      }}>
-                        {record.managerName ?? <em style={{ opacity: 0.5 }}>-</em>}
-                      </td>
-                      {isAdmin && (
-                        <td style={{ padding: '11px 14px' }}>
-                          <button
-                            onClick={(e) => openEdit(e, record)}
-                            title="Edit user"
-                            style={{
-                              background: 'transparent', border: '1px solid var(--border)',
-                              borderRadius: 7, padding: '5px 7px', cursor: 'pointer',
-                              color: 'var(--text-muted)', display: 'flex', alignItems: 'center',
-                              lineHeight: 1,
-                            }}
-                          >
-                            <Icon name="edit" size={14} stroke={1.8} />
-                          </button>
+                </thead>
+                <tbody>
+                  {rows.map((record) => {
+                    const selected = record.associateId === selectedId;
+                    const initials = (record.fullName || 'U').slice(0, 2).toUpperCase();
+                    return (
+                      <HoverRow key={record.associateId} selected={selected}
+                        onClick={() => setSelectedId(selected ? null : record.associateId)}>
+                        <td style={{ padding: '11px 14px', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {record.associateId}
                         </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        <td style={{ padding: '11px 14px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                            <Avatar initials={initials} size={28} />
+                            <span style={{ fontWeight: 500, color: 'var(--text)' }}>{record.fullName}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '11px 14px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {displayUserName(record) || <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                        </td>
+                        <td style={{ padding: '11px 14px', fontSize: 12.5, color: record.department ? 'var(--text)' : 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+                          {record.department || '—'}
+                        </td>
+                        <td style={{ padding: '11px 14px', fontSize: 12.5, color: record.managerName ? 'var(--text)' : 'var(--text-faint)' }}>
+                          {record.managerName ?? '—'}
+                        </td>
+                        {isAdmin && (
+                          <td style={{ padding: '8px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <Button variant="ghost" size="sm" icon="edit"
+                              onClick={(e) => openEdit(e, record)}
+                              aria-label={`Edit ${record.fullName}`}>Edit</Button>
+                          </td>
+                        )}
+                      </HoverRow>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
       </div>
 
-      {/* ════════════ EDIT USER MODAL ════════════ */}
-      {editRecord && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 200,
-            background: 'rgba(0,0,0,.52)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onClick={closeEdit}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'var(--surface)', borderRadius: 14, padding: '28px 28px 24px',
-              width: 420, border: '1px solid var(--border)', boxShadow: 'var(--shadow-lift-h)',
-              maxHeight: '90vh', overflowY: 'auto',
-            }}
-          >
-            <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-              Edit User
-            </h2>
-            <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-muted)' }}>
-              {editRecord.associateId} — {editRecord.fullName}
-            </p>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
-              <label style={{ display: 'block', marginBottom: 14 }}>
-                <div style={labelHeadStyle}>First Name</div>
-                <input type="text" value={editFirstName} onChange={(e) => setEditFirstName(e.target.value)}
-                  disabled={editSaving} maxLength={100} style={inputStyle} />
-              </label>
-              <label style={{ display: 'block', marginBottom: 14 }}>
-                <div style={labelHeadStyle}>Last Name</div>
-                <input type="text" value={editLastName} onChange={(e) => setEditLastName(e.target.value)}
-                  disabled={editSaving} maxLength={100} style={inputStyle} />
-              </label>
+      {/* ── Edit user modal ── */}
+      <Modal
+        open={!!editRecord}
+        onClose={closeEdit}
+        title="Edit user"
+        width={460}
+        footer={
+          <>
+            <Button variant="ghost" onClick={closeEdit} disabled={editSaving}>Cancel</Button>
+            <Button variant="primary" icon="check" onClick={submitEdit} loading={editSaving}>Save changes</Button>
+          </>
+        }
+      >
+        {editRecord && editForm && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 12, borderBottom: '1px solid var(--border-subtle)' }}>
+              <Avatar initials={(editRecord.fullName || 'U').slice(0, 2).toUpperCase()} size={36} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{editRecord.fullName}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                  ASSOCIATE ID {editRecord.associateId}
+                </div>
+              </div>
             </div>
 
-            <label style={{ display: 'block', marginBottom: 14 }}>
-              <div style={labelHeadStyle}>User Name</div>
-              <input type="text" value={editUserName} onChange={(e) => setEditUserName(e.target.value)}
-                disabled={editSaving} maxLength={100} style={inputStyle} />
-            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <FieldLabel>First name</FieldLabel>
+                <input type="text" value={editForm.firstName} disabled={editSaving} maxLength={100}
+                  aria-invalid={!editForm.firstName.trim() || undefined}
+                  onChange={(e) => setEditForm((f) => ({ ...f, firstName: e.target.value }))} style={inputStyle} />
+              </div>
+              <div>
+                <FieldLabel>Last name</FieldLabel>
+                <input type="text" value={editForm.lastName} disabled={editSaving} maxLength={100}
+                  aria-invalid={!editForm.lastName.trim() || undefined}
+                  onChange={(e) => setEditForm((f) => ({ ...f, lastName: e.target.value }))} style={inputStyle} />
+              </div>
+            </div>
 
-            <label style={{ display: 'block', marginBottom: 14 }}>
-              <div style={labelHeadStyle}>Department</div>
-              <select
-                value={editDepartment}
-                onChange={(e) => setEditDepartment(e.target.value)}
-                disabled={editSaving}
-                style={{ ...inputStyle, cursor: editSaving ? 'not-allowed' : 'pointer' }}
-              >
+            <div>
+              <FieldLabel>User name</FieldLabel>
+              <input type="text" value={editForm.userName} disabled={editSaving} maxLength={100}
+                onChange={(e) => setEditForm((f) => ({ ...f, userName: e.target.value }))}
+                style={{ ...inputStyle, fontFamily: 'var(--font-mono)', fontSize: 12.5 }} />
+            </div>
+
+            <div>
+              <FieldLabel>Department</FieldLabel>
+              <select value={editForm.department} disabled={editSaving}
+                onChange={(e) => setEditForm((f) => ({ ...f, department: e.target.value }))}
+                style={{ ...inputStyle, cursor: editSaving ? 'not-allowed' : 'pointer' }}>
                 <option value="">Select department…</option>
-                {[
-                  ...new Set(
-                    users
-                      .map((u) => u.department)
-                      .filter(Boolean)
-                  ),
-                ]
-                  .sort((a, b) => a.localeCompare(b))
-                  .concat(
-                    editDepartment && !users.some((u) => u.department === editDepartment)
-                      ? [editDepartment]
-                      : []
-                  )
-                  .map((dept) => (
-                    <option key={dept} value={dept}>{dept}</option>
-                  ))}
+                {departments
+                  .concat(editForm.department && !departments.includes(editForm.department) ? [editForm.department] : [])
+                  .map((dept) => <option key={dept} value={dept}>{dept}</option>)}
               </select>
-            </label>
+            </div>
 
-            <label style={{ display: 'block', marginBottom: 14 }}>
-              <div style={labelHeadStyle}>Manager</div>
-              <select
-                value={editManagerId}
-                onChange={(e) => setEditManagerId(e.target.value)}
-                disabled={editSaving}
-                style={{ ...inputStyle, cursor: editSaving ? 'not-allowed' : 'pointer' }}
-              >
+            <div>
+              <FieldLabel>Manager</FieldLabel>
+              <select value={editForm.managerId} disabled={editSaving}
+                onChange={(e) => setEditForm((f) => ({ ...f, managerId: e.target.value }))}
+                style={{ ...inputStyle, cursor: editSaving ? 'not-allowed' : 'pointer' }}>
                 <option value="">— No manager —</option>
                 {users
                   .filter((u) => u.associateId !== editRecord.associateId)
-                  .map((u) => (
-                    <option key={u.associateId} value={u.associateId}>
-                      {u.fullName} ({u.associateId})
-                    </option>
-                  ))}
+                  .map((u) => <option key={u.associateId} value={u.associateId}>{u.fullName} ({u.associateId})</option>)}
               </select>
-            </label>
+            </div>
 
-            <label style={{ display: 'block', marginBottom: 18 }}>
-              <div style={labelHeadStyle}>Email</div>
-              <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
-                disabled={editSaving} maxLength={255} style={inputStyle} placeholder="email@example.com" />
-            </label>
+            <div>
+              <FieldLabel>Email</FieldLabel>
+              <input type="email" value={editForm.email} disabled={editSaving} maxLength={255}
+                placeholder="email@example.com"
+                onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} style={inputStyle} />
+            </div>
 
             {editError && (
-              <div style={{
-                marginBottom: 14, padding: '10px 12px', borderRadius: 8,
-                background: 'var(--st-risk-bg)', color: 'var(--st-risk)',
-                fontSize: 12.5, fontWeight: 500,
-                border: '1px solid color-mix(in oklab, var(--st-risk) 28%, transparent)',
+              <div role="alert" style={{
+                display: 'flex', gap: 8, alignItems: 'flex-start', padding: '10px 12px', borderRadius: 'var(--radius)',
+                background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', color: 'var(--danger)',
+                fontSize: 12.5, lineHeight: 1.5,
               }}>
+                <Icon name="alert" size={15} stroke={2} style={{ flex: 'none', marginTop: 1 }} />
                 {editError}
               </div>
             )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button
-                onClick={closeEdit}
-                disabled={editSaving}
-                style={{
-                  background: 'transparent', color: 'var(--text-muted)',
-                  border: '1px solid var(--border)', borderRadius: 8,
-                  padding: '9px 16px', fontSize: 13, fontWeight: 500,
-                  fontFamily: 'var(--font-sans)', cursor: editSaving ? 'not-allowed' : 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitEdit}
-                disabled={editSaving}
-                style={{
-                  background: editSaving ? 'var(--surface-2)' : 'var(--accent)',
-                  color: editSaving ? 'var(--text-muted)' : 'var(--accent-fg)',
-                  border: 'none', borderRadius: 8,
-                  padding: '9px 18px', fontSize: 13, fontWeight: 600,
-                  fontFamily: 'var(--font-sans)', cursor: editSaving ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {editSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </div>
   );
 }

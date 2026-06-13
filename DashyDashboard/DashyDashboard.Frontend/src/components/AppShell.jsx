@@ -18,11 +18,27 @@ const RAIL_KEY = 'dashy.rail';
 const RAIL_WIDTH = 230;
 const RAIL_WIDTH_COLLAPSED = 56;
 
-// ── Shell context: breadcrumbs ──────────────────────────────────────────────
+// ── Shell context: breadcrumbs + an optional header-action slot ─────────────
+// `headerActions` lets a view inject controls (search, primary buttons) into the
+// shared header bar, left of the cycle picker. Additive: views that never call
+// setHeaderActions render exactly as before.
 const ShellContext = createContext(null);
 
 export function useShell() {
-  return useContext(ShellContext) ?? { breadcrumbs: null, setBreadcrumbs: () => {} };
+  return useContext(ShellContext) ?? {
+    breadcrumbs: null, setBreadcrumbs: () => {},
+    setHeaderActions: () => {},
+  };
+}
+
+// Declarative header-action hook for views. Pass a render node (or null to clear).
+// Resets on unmount. `deps` controls when the node is re-published.
+export function useHeaderActions(node, deps = []) {
+  const { setHeaderActions } = useShell();
+  useEffect(() => {
+    setHeaderActions(node ?? null);
+    return () => setHeaderActions(null);
+  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 // Declarative breadcrumb hook for views:
@@ -183,6 +199,7 @@ export default function AppShell({
   });
   const [mobileOpen, setMobileOpen] = useState(false);
   const [breadcrumbs, setBreadcrumbs] = useState(null);
+  const [headerActions, setHeaderActions] = useState(null);
 
   // Off-canvas rail is always full-width; collapse only applies docked.
   const collapsed = isMobile ? false : collapsedPref;
@@ -205,7 +222,10 @@ export default function AppShell({
     [role, isManager, isSuperAdmin, canOpenUserDirectory, hasRoleSwitch],
   );
 
-  const shellValue = useMemo(() => ({ breadcrumbs, setBreadcrumbs }), [breadcrumbs]);
+  const shellValue = useMemo(
+    () => ({ breadcrumbs, setBreadcrumbs, headerActions, setHeaderActions }),
+    [breadcrumbs, headerActions],
+  );
   const crumbs = breadcrumbs && breadcrumbs.length
     ? breadcrumbs
     : [ROLE_TITLES[role] ?? 'Workspace'];
@@ -324,6 +344,7 @@ export default function AppShell({
             )}
             <Breadcrumbs items={crumbs} />
             <div style={{ flex: 1 }} />
+            {headerActions}
             {cycle && <CycleMenu cycle={cycle} cycles={cycles} onCycle={onCycle} />}
           </header>
 

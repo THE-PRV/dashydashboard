@@ -298,30 +298,26 @@ export default function App() {
       onDark: setDark,
     };
 
-    if (role === 'superadmin') {
-      // Phase 1 compat: AdminView still owns its full chrome (its own 100vh
-      // navy rail), so it stays outside AppShell until the Phase 2 admin agent
-      // moves it onto the shared rail (DESIGN §10).
-      screen = (
-        <AdminView
-          {...sharedViewProps}
-          superUserRole={authUser.superUserRole}
-          superUserDept={authUser.superUserDept}
-          superUserDepts={authUser.superUserDepts}
-        />
-      );
-    } else {
-      screen = (
-        <AppShell {...sharedViewProps}>
-          <div style={{ height: '100%', minHeight: 0 }}>
-            {role === 'agent' && <AgentView {...sharedViewProps} />}
-            {role === 'manager' && <ManagerView {...sharedViewProps} />}
-            {role === 'access' && <AccessManagementView {...sharedViewProps} />}
-            {role === 'admin' && <UserManagementView {...sharedViewProps} />}
-          </div>
-        </AppShell>
-      );
-    }
+    // Phase 2: AdminView now renders content only, inside the shared AppShell
+    // like every other role (DESIGN §10 — the bespoke navy sidebar is gone).
+    screen = (
+      <AppShell {...sharedViewProps}>
+        <div style={{ height: '100%', minHeight: 0 }}>
+          {role === 'superadmin' && (
+            <AdminView
+              {...sharedViewProps}
+              superUserRole={authUser.superUserRole}
+              superUserDept={authUser.superUserDept}
+              superUserDepts={authUser.superUserDepts}
+            />
+          )}
+          {role === 'agent' && <AgentView {...sharedViewProps} />}
+          {role === 'manager' && <ManagerView {...sharedViewProps} />}
+          {role === 'access' && <AccessManagementView {...sharedViewProps} />}
+          {role === 'admin' && <UserManagementView {...sharedViewProps} />}
+        </div>
+      </AppShell>
+    );
   }
 
   return <ToastProvider>{screen}</ToastProvider>;

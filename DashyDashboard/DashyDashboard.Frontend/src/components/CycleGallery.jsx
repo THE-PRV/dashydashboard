@@ -1,25 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Icon, Badge, SectionHeader } from './ui.jsx';
+import { Icon, Stamp, Skeleton, SegmentedControl, SectionHeader, EmptyState, Button } from './ui.jsx';
 import { getScreenshotThumbUrl } from '../api/attestations.js';
 import { getCycleScreenshots, reviewScreenshot } from '../api/manager.js';
 import FullScreenOverlay from './FullScreenOverlay.jsx';
 import Lightbox from './Lightbox.jsx';
 
-const STATUS_BADGE = {
-  Pending: { variant: 'pending', label: 'Pending' },
-  Approved: { variant: 'used', label: 'Approved' },
-  Rejected: { variant: 'danger', label: 'Rejected' },
+const STATUS_STAMP = {
+  Pending:  { tone: 'warning', label: 'PENDING' },
+  Approved: { tone: 'success', label: 'APPROVED' },
+  Rejected: { tone: 'danger',  label: 'REJECTED' },
 };
 
-const FILTERS = [
-  { key: 'All', label: 'All' },
-  { key: 'Pending', label: 'Pending' },
-  { key: 'Approved', label: 'Approved' },
-  { key: 'Rejected', label: 'Rejected' },
-];
+const STATUS_RANK = { Pending: 0, Rejected: 1, Approved: 2 };
+
+function stampFor(status) {
+  if (!status) return null;
+  return STATUS_STAMP[status] ?? { tone: 'neutral', label: String(status).toUpperCase() };
+}
 
 /**
- * One thumbnail tile: lazily-fetched thumbnail + tool name + status badge. Clicking opens
+ * One thumbnail tile: lazily-fetched thumbnail + tool name + status stamp. Clicking opens
  * the shared Lightbox at this item's index within the currently-filtered set.
  */
 function GalleryTile({ cycleId, item, onOpen }) {
@@ -57,28 +57,31 @@ function GalleryTile({ cycleId, item, onOpen }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKey]);
 
-  const badge = item.screenshotStatus ? STATUS_BADGE[item.screenshotStatus] ?? { variant: 'neutral', label: item.screenshotStatus } : null;
+  const stamp = stampFor(item.screenshotStatus);
 
   return (
     <button
       type="button"
       onClick={() => onOpen(item)}
+      aria-label={`View ${item.toolName} screenshot full size`}
       style={{
         display: 'flex', flexDirection: 'column', gap: 8, padding: 10, textAlign: 'left',
-        borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--surface)',
+        borderRadius: 'var(--radius-card)', border: '1px solid var(--border-subtle)', background: 'var(--surface)',
         cursor: 'zoom-in', fontFamily: 'inherit',
       }}
       title="Click to view full size"
     >
       <div style={{
-        width: '100%', aspectRatio: '4 / 3', borderRadius: 8, overflow: 'hidden',
+        width: '100%', aspectRatio: '4 / 3', borderRadius: 'var(--radius)', overflow: 'hidden',
         background: 'var(--surface-2)', border: '1px solid var(--border-subtle)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
         {thumbUrl ? (
           <img src={thumbUrl} alt={`${item.toolName} screenshot`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : thumbLoading ? (
+          <Skeleton width="100%" height="100%" radius={0} />
         ) : (
-          <Icon name="image" size={20} style={{ color: 'var(--text-muted)', opacity: thumbLoading ? 1 : 0.4 }} />
+          <Icon name="image" size={20} style={{ color: 'var(--text-faint)', opacity: 0.5 }} />
         )}
       </div>
 
@@ -86,11 +89,11 @@ function GalleryTile({ cycleId, item, onOpen }) {
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {item.toolName}
         </div>
-        {badge && <Badge variant={badge.variant} size="sm">{badge.label}</Badge>}
+        {stamp && <Stamp tone={stamp.tone} label={stamp.label} />}
       </div>
 
       {item.screenshotStatus === 'Rejected' && item.screenshotRejectReason && (
-        <div style={{ fontSize: 11, color: 'var(--danger-fg)' }}>{item.screenshotRejectReason}</div>
+        <div style={{ fontSize: 11, color: 'var(--danger)', lineHeight: 1.4 }}>{item.screenshotRejectReason}</div>
       )}
     </button>
   );
@@ -101,6 +104,8 @@ function GalleryTile({ cycleId, item, onOpen }) {
  * the screenshots.zip endpoint), groups by member then client, and offers All/Pending/
  * Approved/Rejected filter chips with counts. Clicking a tile opens the shared Lightbox over
  * the currently-filtered flat set, with review enabled (server authorizes per-member).
+ *
+ * Restyled to "The Ledger": SegmentedControl filter, skeleton thumbs, mono labels, stamps.
  *
  * Props: { cycleId, cycleName, onClose, onReviewed }
  */
@@ -136,6 +141,13 @@ export default function CycleGallery({ cycleId, cycleName, onClose, onReviewed }
     };
   }, [items]);
 
+  const filterOptions = useMemo(() => ([
+    { id: 'All', label: `All (${counts.All})` },
+    { id: 'Pending', label: `Pending (${counts.Pending})` },
+    { id: 'Rejected', label: `Rejected (${counts.Rejected})` },
+    { id: 'Approved', label: `Approved (${counts.Approved})` },
+  ]), [counts]);
+
   // The flat, currently-filtered set — drives both the grid and the Lightbox navigation.
   const filteredItems = useMemo(() => {
     const all = items ?? [];
@@ -161,7 +173,10 @@ export default function CycleGallery({ cycleId, cycleName, onClose, onReviewed }
     }
     return Array.from(byMember.values()).map((m) => ({
       ...m,
-      clients: Array.from(m.clients.values()),
+      clients: Array.from(m.clients.values()).map((c) => ({
+        ...c,
+        items: c.items.slice().sort((a, b) => (STATUS_RANK[a.screenshotStatus] ?? 8) - (STATUS_RANK[b.screenshotStatus] ?? 8)),
+      })),
     }));
   }, [filteredItems]);
 
@@ -170,6 +185,7 @@ export default function CycleGallery({ cycleId, cycleName, onClose, onReviewed }
     associateId: i.associateId,
     clientId: i.clientId,
     clientName: i.clientName,
+    memberName: i.associateName,
     toolId: i.toolId,
     toolName: i.toolName,
     screenshotStatus: i.screenshotStatus,
@@ -226,64 +242,55 @@ export default function CycleGallery({ cycleId, cycleName, onClose, onReviewed }
       onClose={handleOverlayClose}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Filter chips */}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {FILTERS.map(({ key, label }) => {
-            const active = filter === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setFilter(key)}
-                style={{
-                  height: 28, padding: '0 12px', borderRadius: 999,
-                  border: `1px solid ${active ? 'var(--text)' : 'var(--border)'}`,
-                  background: active ? 'var(--text)' : 'var(--surface)',
-                  color: active ? 'var(--bg)' : 'var(--text-muted)',
-                  fontSize: 12, fontWeight: active ? 600 : 500, fontFamily: 'inherit',
-                  cursor: 'pointer', whiteSpace: 'nowrap',
-                }}
-              >
-                {label} ({counts[key] ?? 0})
-              </button>
-            );
-          })}
+        {/* Filter — SegmentedControl with live counts */}
+        <div>
+          <SegmentedControl
+            ariaLabel="Filter screenshots by status"
+            options={filterOptions}
+            value={filter}
+            onChange={setFilter}
+          />
         </div>
 
         {loading ? (
-          <div style={{ padding: '28px 0', textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
-            Loading screenshots…
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} style={{
+                display: 'flex', flexDirection: 'column', gap: 8, padding: 10,
+                borderRadius: 'var(--radius-card)', border: '1px solid var(--border-subtle)', background: 'var(--surface)',
+              }}>
+                <Skeleton width="100%" height={104} />
+                <Skeleton width="70%" height={12} />
+              </div>
+            ))}
           </div>
         ) : error ? (
-          <div style={{ fontSize: 13, color: 'var(--danger-fg)' }}>{error}</div>
+          <EmptyState icon="alert" title="Couldn't load screenshots" message={error}
+            action={<Button variant="outline" size="sm" icon="refresh" onClick={load}>Retry</Button>} />
         ) : total === 0 ? (
-          <div style={{
-            padding: '40px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center',
-            justifyContent: 'center', gap: 8, color: 'var(--text-muted)', textAlign: 'center',
-          }}>
-            <Icon name="image" size={20} />
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>No screenshots uploaded</div>
-            <div style={{ fontSize: 12.5, maxWidth: 320 }}>
-              No screenshots have been uploaded for this cycle yet within your review scope.
-            </div>
-          </div>
+          <EmptyState icon="image" title="No screenshots uploaded"
+            message="No screenshots have been uploaded for this cycle yet within your review scope." />
         ) : groups.length === 0 ? (
-          <div style={{ padding: '28px 0', textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
-            No screenshots match this filter.
-          </div>
+          <EmptyState icon="search" title="No matching screenshots"
+            message="No screenshots match this filter. Switch the filter above to see more." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
             {groups.map((member) => {
               const memberCount = member.clients.reduce((sum, c) => sum + c.items.length, 0);
               return (
                 <div key={member.associateId} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <SectionHeader right={<span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{memberCount}</span>}>
-                    {member.associateName} <span style={{ textTransform: 'none', fontWeight: 400 }}>({member.associateId})</span>
+                  <SectionHeader
+                    rule
+                    right={<span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{memberCount}</span>}
+                  >
+                    {member.associateName}{' '}
+                    <span style={{ textTransform: 'none', fontWeight: 400, fontFamily: 'var(--font-mono)' }}>({member.associateId})</span>
                   </SectionHeader>
                   {member.clients.map((client) => (
                     <div key={client.clientId}>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
-                        {client.clientName} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({client.clientId})</span>
+                        {client.clientName}{' '}
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontFamily: 'var(--font-mono)' }}>({client.clientId})</span>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
                         {client.items.map((item) => (

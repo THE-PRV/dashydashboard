@@ -1,14 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
-import { Icon, Button, Badge } from './ui.jsx';
+import { Icon, Button, Stamp } from './ui.jsx';
 import { getScreenshotUrl } from '../api/attestations.js';
 
-// Screenshot-status → Badge tone, reused for the caption chip. Mirrors the tones used by
-// ScreenshotCell/Gallery so a Pending/Approved/Rejected screenshot reads the same everywhere.
-const SS_STATUS_BADGE = {
-  Pending:  { variant: 'pending', label: 'Pending' },
-  Approved: { variant: 'used',    label: 'Approved' },
-  Rejected: { variant: 'danger',  label: 'Rejected' },
+// Screenshot-status → Stamp tone. Verdicts render as ink stamps (DESIGN §5) so the
+// review decision reads as a signed record, consistent everywhere.
+const SS_STAMP = {
+  Pending:  { tone: 'warning', label: 'PENDING' },
+  Approved: { tone: 'success', label: 'APPROVED' },
+  Rejected: { tone: 'danger',  label: 'REJECTED' },
 };
 
 const INTERACTIVE_SELECTOR = [
@@ -37,9 +37,9 @@ function isInteractiveElement(target) {
   return target instanceof Element && !!target.closest(INTERACTIVE_SELECTOR);
 }
 
-function statusBadge(status) {
+function stampFor(status) {
   if (!status) return null;
-  return SS_STATUS_BADGE[status] ?? { variant: 'neutral', label: status };
+  return SS_STAMP[status] ?? { tone: 'neutral', label: String(status).toUpperCase() };
 }
 
 /**
@@ -56,7 +56,7 @@ function statusBadge(status) {
  * Props:
  *   items: Array<{
  *     cycleId, associateId, clientId, clientName, toolId, toolName,
- *     screenshotStatus?, screenshotRejectReason?, screenshotUploadedAt?
+ *     memberName?, screenshotStatus?, screenshotRejectReason?, screenshotUploadedAt?
  *   }>
  *   startIndex : number   — initial item (default 0; clamped)
  *   onClose    : () => void
@@ -64,6 +64,7 @@ function statusBadge(status) {
  *       When provided, items whose screenshotStatus === 'Pending' show Approve / Reject
  *       (reject requires a non-empty reason via an inline input) inside the lightbox.
  *       After a decision the local status updates and the view advances to the next item.
+ *       Keyboard: A or Enter = approve · R = reject · ←/→ = prev/next · Esc = close.
  *
  * Single-image use (items.length === 1) hides prev/next and works as a plain viewer.
  */
@@ -73,8 +74,10 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
 
   const [index, setIndex] = useState(clampStart);
   // Local status overrides keyed by item identity, so a decision reflects immediately in the
-  // caption + hides the review controls without waiting for a parent refetch.
+  // caption + hides the review controls without waiting for a parent refetch. `justDecided`
+  // drives the one-shot stamp-in animation on the verdict.
   const [statusOverride, setStatusOverride] = useState({}); // key -> { status, rejectReason }
+  const [justDecidedKey, setJustDecidedKey] = useState(null);
   const [url, setUrl] = useState(null);
   const [imgLoading, setImgLoading] = useState(false);
   const [imgError, setImgError] = useState(null);
@@ -83,6 +86,7 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
   const [showReject, setShowReject] = useState(false);
   const [reason, setReason] = useState('');
   const reasonInputRef = useRef(null);
+  const restoreFocusRef = useRef(null);
 
   const item = items.length ? items[index] : null;
   const keyOf = (it) => `${it.cycleId}/${it.associateId}/${it.clientId}/${it.toolId}`;
@@ -91,6 +95,12 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
   const effectiveReason = override?.rejectReason ?? item?.screenshotRejectReason;
   const isPending = reviewMode && effectiveStatus === 'Pending';
   const multi = items.length > 1;
+
+  // Remember + restore focus around the lightbox lifetime.
+  useEffect(() => {
+    restoreFocusRef.current = document.activeElement;
+    return () => restoreFocusRef.current?.focus?.();
+  }, []);
 
   // Load the full-size image whenever the current item identity changes. Revoke the prior
   // object URL to avoid leaks (copies the existing cancellation idiom from ScreenshotGallery).
@@ -147,11 +157,13 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
 
   const doApprove = async () => {
     if (!item || busy || !isPending) return;
+    const key = keyOf(item);
     setBusy(true);
     setActionError(null);
     try {
       await review.onDecide(item, true, null);
-      setStatusOverride((m) => ({ ...m, [keyOf(item)]: { status: 'Approved', rejectReason: null } }));
+      setStatusOverride((m) => ({ ...m, [key]: { status: 'Approved', rejectReason: null } }));
+      setJustDecidedKey(key);
       advanceAfterDecision();
     } catch (err) {
       setActionError(err.message || 'Approve failed.');
@@ -164,11 +176,13 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
     if (!item || busy || !isPending) return;
     const trimmed = (reasonText ?? '').trim();
     if (!trimmed) return;
+    const key = keyOf(item);
     setBusy(true);
     setActionError(null);
     try {
       await review.onDecide(item, false, trimmed);
-      setStatusOverride((m) => ({ ...m, [keyOf(item)]: { status: 'Rejected', rejectReason: trimmed } }));
+      setStatusOverride((m) => ({ ...m, [key]: { status: 'Rejected', rejectReason: trimmed } }));
+      setJustDecidedKey(key);
       setShowReject(false);
       setReason('');
       advanceAfterDecision();
@@ -179,9 +193,9 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
     }
   };
 
-  // Keyboard: ←/→ navigate; Esc closes. In review mode on a Pending item: Enter approves,
-  // R opens the reject input. While the reject input is open, Enter submits the rejection
-  // and R types normally (left to the textbox).
+  // Keyboard: ←/→ navigate; Esc closes. In review mode on a Pending item: A or Enter
+  // approves, R opens the reject input. While the reject input is open, Enter submits the
+  // rejection and typed letters go to the textbox.
   useEffect(() => {
     function onKeyDown(e) {
       // Capture Escape before lower overlays' document listeners. One key press should only
@@ -211,6 +225,7 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
         case 'ArrowLeft':  e.preventDefault(); goPrev(); break;
         case 'ArrowRight': e.preventDefault(); goNext(); break;
         case 'Enter':      if (isPending) { e.preventDefault(); doApprove(); } break;
+        case 'a': case 'A': if (isPending) { e.preventDefault(); doApprove(); } break;
         case 'r': case 'R': if (isPending) { e.preventDefault(); setShowReject(true); } break;
         default: break;
       }
@@ -222,10 +237,11 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
 
   if (!item) return null;
 
-  const badge = statusBadge(effectiveStatus);
+  const stamp = stampFor(effectiveStatus);
   const uploaded = item.screenshotUploadedAt
     ? new Date(item.screenshotUploadedAt).toLocaleString()
     : null;
+  const animateStamp = justDecidedKey === keyOf(item);
 
   const navBtnStyle = (disabled) => ({
     width: 44, height: 44, borderRadius: 999, flex: 'none',
@@ -237,6 +253,9 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
 
   return ReactDOM.createPortal(
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Screenshot viewer"
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 400,
@@ -255,13 +274,14 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 14, fontWeight: 600 }}>{item.toolName || item.toolId}</span>
-            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
+            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
               {item.clientName ? `${item.clientName} (${item.clientId})` : item.clientId}
             </span>
-            {badge && <Badge variant={badge.variant} size="sm">{badge.label}</Badge>}
+            {stamp && <Stamp tone={stamp.tone} label={stamp.label} animate={animateStamp} />}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 11.5, color: 'rgba(255,255,255,0.5)', flexWrap: 'wrap' }}>
-            {uploaded && <span>Uploaded {uploaded}</span>}
+            {item.memberName && <span style={{ color: 'rgba(255,255,255,0.7)' }}>{item.memberName}</span>}
+            {uploaded && <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>Uploaded {uploaded}</span>}
             {effectiveStatus === 'Rejected' && effectiveReason && (
               <span style={{ color: '#ff9a9a' }}>Reason: {effectiveReason}</span>
             )}
@@ -269,7 +289,7 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
         </div>
 
         {multi && (
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', fontVariantNumeric: 'tabular-nums', flex: 'none', paddingTop: 2 }}>
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', flex: 'none', paddingTop: 2 }}>
             {index + 1} / {items.length}
           </div>
         )}
@@ -277,6 +297,7 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
         <button
           onClick={onClose}
           title="Close (Esc)"
+          aria-label="Close viewer"
           style={{
             width: 32, height: 32, borderRadius: 8, flex: 'none',
             border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.08)',
@@ -291,7 +312,7 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
       {/* Image stage (with side nav arrows) */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px' }}>
         {multi && (
-          <button onClick={(e) => { e.stopPropagation(); goPrev(); }} style={navBtnStyle(busy)} title="Previous (←)">
+          <button onClick={(e) => { e.stopPropagation(); goPrev(); }} style={navBtnStyle(busy)} title="Previous (←)" aria-label="Previous screenshot">
             <Icon name="chevleft" size={20} />
           </button>
         )}
@@ -301,7 +322,10 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
           style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
           {imgError ? (
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>{imgError}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.85)' }}>
+              <Icon name="image" size={26} style={{ opacity: 0.6 }} />
+              <div style={{ fontSize: 13 }}>{imgError}</div>
+            </div>
           ) : url ? (
             <img
               src={url}
@@ -309,12 +333,18 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
               style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 8 }}
             />
           ) : (
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{imgLoading ? 'Loading…' : ' '}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, color: 'rgba(255,255,255,0.7)' }}>
+              <svg className="spin" width={26} height={26} viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                <path d="M12 3a9 9 0 1 1-9 9" />
+              </svg>
+              <div style={{ fontSize: 12.5 }}>{imgLoading ? 'Loading screenshot…' : ' '}</div>
+            </div>
           )}
         </div>
 
         {multi && (
-          <button onClick={(e) => { e.stopPropagation(); goNext(); }} style={navBtnStyle(busy)} title="Next (→)">
+          <button onClick={(e) => { e.stopPropagation(); goNext(); }} style={navBtnStyle(busy)} title="Next (→)" aria-label="Next screenshot">
             <Icon name="chevright" size={20} />
           </button>
         )}
@@ -344,6 +374,7 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
                 }
               }}
               disabled={busy}
+              aria-label="Reason for rejection"
               style={{
                 flex: 1, padding: '8px 10px', fontSize: 13, borderRadius: 8,
                 border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.06)',
@@ -367,15 +398,15 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
         {isPending && !showReject && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Button variant="outline" size="sm" icon="x" disabled={busy} onClick={() => setShowReject(true)} title="Reject (R)">Reject</Button>
-            <Button variant="primary" size="sm" icon="check" disabled={busy} onClick={doApprove} title="Approve (Enter)">
+            <Button variant="primary" size="sm" icon="check" disabled={busy} onClick={doApprove} title="Approve (A)">
               {busy ? 'Working…' : 'Approve'}
             </Button>
           </div>
         )}
 
-        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', textAlign: 'center' }}>
+        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', textAlign: 'center', fontFamily: 'var(--font-mono)', letterSpacing: '0.03em' }}>
           {reviewMode ? (
-            <>Enter = Approve · R = Reject · ←/→ = Prev/Next · Esc = Close</>
+            <>A = Approve · R = Reject · ←/→ = Prev/Next · Esc = Close</>
           ) : (
             <>←/→ = Prev/Next · Esc = Close</>
           )}
