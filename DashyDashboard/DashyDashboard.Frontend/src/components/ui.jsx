@@ -995,7 +995,13 @@ export function ProfileMenu({ user, isManager, onLogout, direction = 'down', com
 
       {open && (
         <div role="menu" className="pop-in" style={{
-          position: 'absolute', ...vert, [compact ? 'left' : 'right']: 0, zIndex: 60,
+          // Rail menus (direction 'up', incl. collapsed/compact) sit against the LEFT
+          // screen edge, so anchor left:0 and grow rightward. A header menu (direction
+          // 'down') anchors right:0. Anchoring right:0 in the rail overflowed the
+          // viewport's left edge and clipped the popover (the avatar got cut off).
+          position: 'absolute', ...vert,
+          ...((direction === 'up' || compact) ? { left: 0 } : { right: 0 }),
+          zIndex: 60,
           minWidth: 260,
           background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-pop)',
