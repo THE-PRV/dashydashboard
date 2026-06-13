@@ -471,7 +471,6 @@ export default function AgentView({ user, cycle, onLogout }) {
           <div style={{ display: 'flex', alignItems: 'stretch', gap: 12, flexWrap: 'wrap' }}>
             <CompletionRing attested={totals.attested} total={totals.total} />
             <div style={{ flex: '1 1 420px', minWidth: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-              <KpiCard label="Attested" value={totals.attested} sub={`of ${totals.total} tools`} tone="success" />
               <KpiCard label="Remaining" value={totals.pending} sub={totals.pending > 0 ? 'still to attest' : 'all decided'}
                 tone={totals.pending > 0 ? 'warning' : 'success'} />
               <KpiCard label="Clients" value={clients.length} sub={`${totals.used} tools used`} />
@@ -780,17 +779,20 @@ function CompletionRing({ attested, total }) {
   const pct = total > 0 ? Math.max(0, Math.min(1, attested / total)) : 0;
   const display = Math.round(pct * 100);
   const complete = total > 0 && attested >= total;
-  const SIZE = 118;
+  const SIZE = 104;
   const STROKE = 8;
   const r = (SIZE - STROKE) / 2;
   const circ = 2 * Math.PI * r;
   const arc = complete ? 'var(--success)' : 'var(--accent)';
+  const numColor = complete ? 'var(--success)' : 'var(--text)';
+  // Combined hero stat: the progress ring AND the "Attested N / total" headline
+  // live in ONE card (they describe the same thing — no need for two boxes).
   return (
-    <Card pad={16} style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      flex: 'none', minWidth: SIZE + 32,
+    <Card pad={18} style={{
+      display: 'flex', alignItems: 'center', gap: 20,
+      flex: 'none', minWidth: 300,
     }}>
-      <div style={{ position: 'relative', width: SIZE, height: SIZE }}
+      <div style={{ position: 'relative', width: SIZE, height: SIZE, flex: 'none' }}
         role="img" aria-label={`${display}% complete — ${attested} of ${total} tools attested`}>
         <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ transform: 'rotate(-90deg)' }} aria-hidden="true">
           <circle cx={SIZE / 2} cy={SIZE / 2} r={r} fill="none" stroke="var(--surface-2)" strokeWidth={STROKE} />
@@ -806,19 +808,32 @@ function CompletionRing({ attested, total }) {
           />
         </svg>
         <div style={{
-          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 0,
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <span style={{
-            fontFamily: 'var(--font-display)', fontWeight: 560, fontSize: 30, lineHeight: 1,
-            color: complete ? 'var(--success)' : 'var(--text)',
-            fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em',
-          }}>{display}<span style={{ fontSize: 16 }}>%</span></span>
-          <span style={{
-            fontFamily: 'var(--font-mono)', fontSize: 9.5, fontWeight: 500, letterSpacing: '0.1em',
-            textTransform: 'uppercase', color: 'var(--text-faint)', marginTop: 3,
-          }}>Complete</span>
+            fontFamily: 'var(--font-display)', fontWeight: 560, fontSize: 27, lineHeight: 1,
+            color: numColor, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em',
+          }}>{display}<span style={{ fontSize: 15 }}>%</span></span>
         </div>
+      </div>
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{
+          fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 500, letterSpacing: '0.1em',
+          textTransform: 'uppercase', color: 'var(--text-faint)',
+        }}>Attested</span>
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span style={{
+            fontFamily: 'var(--font-display)', fontSize: 42, fontWeight: 540, lineHeight: 1,
+            color: numColor, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em',
+          }}>{attested}</span>
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--text-muted)',
+            fontVariantNumeric: 'tabular-nums',
+          }}>/ {total}</span>
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+          {complete ? 'all tools attested' : `of ${total} tools`}
+        </span>
       </div>
     </Card>
   );

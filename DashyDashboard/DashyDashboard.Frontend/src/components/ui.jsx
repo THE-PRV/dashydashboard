@@ -759,17 +759,22 @@ export function useToasts() {
 
 // ── SortHeader — <th> with aria-sort + direction affordance (DESIGN §8) ─────
 // <SortHeader label="Name" active={sortKey==='name'} dir={sortDir} onSort={...} />
-export function SortHeader({ label, children, active = false, dir = 'asc', onSort, align = 'left', width, style }) {
+export function SortHeader({ label, children, active = false, dir = 'asc', onSort, align = 'left', width, style, band = false }) {
   const ariaSort = active ? (dir === 'desc' ? 'descending' : 'ascending') : 'none';
+  // `band` opts into the flat header-strip look (mono caps on a --surface-2 band
+  // with a hairline rule) so the header reads as a deliberate band, matching the
+  // associate tool table.
+  const thBand = band ? { background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' } : null;
   return (
-    <th aria-sort={ariaSort} style={{ padding: 0, textAlign: align, width, ...style }}>
+    <th aria-sort={ariaSort} style={{ padding: 0, textAlign: align, width, ...thBand, ...style }}>
       <button type="button" onClick={onSort}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 4,
-          padding: '6px 0', border: 0, background: 'transparent', cursor: 'pointer',
-          fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
-          letterSpacing: '0.06em', textTransform: 'uppercase',
-          color: active ? 'var(--text)' : 'var(--text-muted)',
+          padding: band ? '9px 0' : '6px 0', border: 0, background: 'transparent', cursor: 'pointer',
+          fontFamily: band ? 'var(--font-mono)' : 'inherit',
+          fontSize: band ? 10.5 : 11, fontWeight: 600,
+          letterSpacing: band ? '0.08em' : '0.06em', textTransform: 'uppercase',
+          color: active ? 'var(--text)' : (band ? 'var(--text-faint)' : 'var(--text-muted)'),
         }}>
         {label ?? children}
         {active

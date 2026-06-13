@@ -619,12 +619,12 @@ export default function ManagerView({ user, cycle, cycles, onCycle }) {
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--rule)' }}>
-                    <th style={{ padding: '0 16px', width: 36 }} aria-hidden="true" />
-                    <SortHeader label="Team member" active={sortKey === 'name'} dir={sortDir} onSort={() => onSort('name')} style={{ padding: '0 16px' }} />
-                    <SortHeader label="Progress" active={sortKey === 'progress'} dir={sortDir} onSort={() => onSort('progress')} style={{ padding: '0 16px', width: 240 }} />
-                    <SortHeader label="Status" active={sortKey === 'status'} dir={sortDir} onSort={() => onSort('status')} style={{ padding: '0 16px' }} />
-                    <th style={{ padding: '0 16px', width: 40 }} aria-hidden="true" />
+                  <tr>
+                    <th style={{ padding: '0 16px', width: 36, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }} aria-hidden="true" />
+                    <SortHeader band label="Team member" active={sortKey === 'name'} dir={sortDir} onSort={() => onSort('name')} style={{ padding: '0 16px' }} />
+                    <SortHeader band label="Progress" active={sortKey === 'progress'} dir={sortDir} onSort={() => onSort('progress')} style={{ padding: '0 16px', width: 240 }} />
+                    <SortHeader band label="Status" active={sortKey === 'status'} dir={sortDir} onSort={() => onSort('status')} style={{ padding: '0 16px' }} />
+                    <th style={{ padding: '0 16px', width: 40, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }} aria-hidden="true" />
                   </tr>
                 </thead>
                 <tbody>
