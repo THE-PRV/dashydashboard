@@ -74,23 +74,79 @@ function TeamStatusBar({ states, total }) {
   );
 }
 
-// Per-client completion row (client name + n/m + small progress bar).
-function ClientProgressRow({ client, showId = false }) {
+// (Per-client rows are now consolidated into the CompletionByClient chart below.)
+
+// Ledger-palette colour for a per-client completion bar: faint at 0%, ink-blue
+// while in progress, success-green only when fully complete.
+function completionColor(pct, hasTools) {
+  if (!hasTools) return 'var(--text-faint)';
+  if (pct >= 1) return 'var(--success)';
+  if (pct <= 0) return 'var(--text-faint)';
+  return 'var(--accent)';
+}
+
+// Horizontal "Completion by client" chart for the member drawer — one labelled
+// bar per client, mono n/m · % on the right, bar coloured by completion. Compact
+// and scannable for members carrying many clients.
+function CompletionByClient({ clients }) {
+  const rows = useMemo(() => (
+    [...clients]
+      .map((c) => {
+        const total = c.totalTools || 0;
+        const pct = total > 0 ? Math.max(0, Math.min(1, c.attestedTools / total)) : 0;
+        return { ...c, total, pct };
+      })
+      // Surface the least-complete clients first so attention lands where work remains.
+      .sort((a, b) => a.pct - b.pct || (a.clientName || '').localeCompare(b.clientName || ''))
+  ), [clients]);
+
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <div style={{ minWidth: 0, fontSize: 12.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {client.clientName}
-          {showId && <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontFamily: 'var(--font-mono)' }}> ({client.clientID})</span>}
-        </div>
-        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-          {client.attestedTools}/{client.totalTools}
-        </div>
-      </div>
-      <div style={{ marginTop: 6 }}>
-        <Progress value={client.attestedTools} max={client.totalTools || 1} height={4} />
-      </div>
-    </div>
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <SectionHeader rule>Completion by client</SectionHeader>
+      <ul
+        aria-label="Completion by client — tools attested out of total for each client"
+        style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 9 }}
+      >
+        {rows.map((c) => {
+          const barColor = completionColor(c.pct, c.total > 0);
+          const done = c.total > 0 && c.pct >= 1;
+          return (
+            <li key={c.clientID} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {/* Label: client name + faint mono id, fixed-share column, ellipsised. */}
+              <div style={{ flex: '0 0 38%', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span style={{ minWidth: 0, fontSize: 12.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {c.clientName}
+                </span>
+                <span style={{ flex: 'none', fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+                  {c.clientID}
+                </span>
+              </div>
+              {/* Track + value fill. */}
+              <div
+                role="img"
+                aria-label={`${c.clientName}: ${c.attestedTools} of ${c.total} tools, ${Math.round(c.pct * 100)} percent`}
+                style={{ flex: 1, height: 8, borderRadius: 999, background: 'var(--surface-2)', overflow: 'hidden' }}
+              >
+                <div style={{ width: `${c.pct * 100}%`, height: '100%', borderRadius: 999, background: barColor, transition: 'width .4s ease-out' }} />
+              </div>
+              {/* Right rail: n/m and a tabular percent (or a check when complete). */}
+              <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 7, width: 96, fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                  {c.attestedTools}/{c.total}
+                </span>
+                {done ? (
+                  <Icon name="check" size={13} stroke={2.4} style={{ color: 'var(--success)', flex: 'none' }} />
+                ) : (
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', minWidth: 30, textAlign: 'right' }}>
+                    {Math.round(c.pct * 100)}%
+                  </span>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -680,17 +736,15 @@ export default function ManagerView({ user, cycle, cycles, onCycle }) {
                 tone={detail.attestedTools >= detail.totalTools && detail.totalTools > 0 ? 'success' : 'accent'} />
             </div>
 
-            {/* Per-client progress */}
-            <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <SectionHeader rule>Per-client progress</SectionHeader>
-              {detail.byClient.length === 0 ? (
+            {/* Completion by client — horizontal bar chart (primary per-client visual) */}
+            {detail.byClient.length === 0 ? (
+              <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <SectionHeader rule>Completion by client</SectionHeader>
                 <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No client access is active for this user.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {detail.byClient.map((client) => <ClientProgressRow key={client.clientID} client={client} showId />)}
-                </div>
-              )}
-            </section>
+              </section>
+            ) : (
+              <CompletionByClient clients={detail.byClient} />
+            )}
 
             {/* Screenshot review */}
             {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient.some((c) => c.tools?.length)) && (

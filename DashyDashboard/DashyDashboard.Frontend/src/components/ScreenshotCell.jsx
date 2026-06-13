@@ -1,24 +1,35 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ScreenshotCell — "The Ledger" per-row proof control (DESIGN §10 "Agent").
 //
-//   no screenshot : a dashed attach zone (click / drag-drop / Ctrl+V when focused).
-//   loading thumb : Skeleton placeholder.
-//   has screenshot: thumbnail + status Stamp (Pending=warning clock, Approved=
-//                   success check, Rejected=danger alert with the reason inline).
-//   verdict change: stamp-in settle animation (driven by `verdictAnim` from parent).
+// Lives in the PROOF slot of AgentView's two-slot Proof/Reason column, so it owns
+// a single fixed-footprint widget regardless of state — the column lines up
+// vertically down the table.
+//
+//   no screenshot : a compact dashed attach tile (click / drag-drop / Ctrl+V).
+//   loading thumb : Skeleton tile.
+//   has screenshot: ONE thumbnail with the verdict as a small CORNER BADGE
+//                   (Pending=warning clock, Approved=success check, Rejected=
+//                   danger alert). Replace / view / re-upload surface on HOVER
+//                   (and on keyboard focus). The reject reason stays visible
+//                   inline beneath the tile.
+//   verdict change: the corner badge plays the stamp-in settle (`verdictAnim`).
 //   failure       : a visible retry affordance.
 //   rejected      : re-upload stays allowed even read-only / past-due (server rule).
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useRef, useState } from 'react';
-import { Icon, Stamp, Button, Skeleton, Tooltip } from './ui.jsx';
+import { Icon, Skeleton, Tooltip } from './ui.jsx';
 import { uploadScreenshot, getScreenshotThumbUrl } from '../api/attestations.js';
 import { compressImageToFile } from '../utils/imageCompress.js';
 
-const STATUS_STAMP = {
-  Pending:  { tone: 'warning', label: 'Pending' },
-  Approved: { tone: 'success', label: 'Approved' },
-  Rejected: { tone: 'danger',  label: 'Rejected' },
+// Verdict → corner-badge tone + icon (DESIGN §3: status is icon + color, never
+// color alone). Tones read the status vars; nothing hard-coded.
+const STATUS_BADGE = {
+  Pending:  { color: 'var(--warning)', bg: 'var(--warning-bg)', border: 'var(--warning-border)', icon: 'clock', label: 'Pending review' },
+  Approved: { color: 'var(--success)', bg: 'var(--success-bg)', border: 'var(--success-border)', icon: 'check', label: 'Approved' },
+  Rejected: { color: 'var(--danger)',  bg: 'var(--danger-bg)',  border: 'var(--danger-border)',  icon: 'alert', label: 'Rejected' },
 };
+
+const TILE = 44; // fixed thumbnail footprint — keeps the proof slot uniform.
 
 export default function ScreenshotCell({
   cycleId,
@@ -34,6 +45,7 @@ export default function ScreenshotCell({
   onFocus,
   onUploaded,
   onError,
+  onView,
   registerPasteTarget,
 }) {
   const [thumbUrl, setThumbUrl] = useState(null);
@@ -43,6 +55,8 @@ export default function ScreenshotCell({
   const [uploadFailed, setUploadFailed] = useState(false);
   const [pasteState, setPasteState] = useState(null); // null | 'pasted' | 'uploading' | 'done'
   const [dragOver, setDragOver] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [kbFocus, setKbFocus] = useState(false); // keyboard focus within the tile (reveals actions)
   const fileInputRef = useRef(null);
   const lastFileRef = useRef(null); // for retry
 
@@ -143,115 +157,212 @@ export default function ScreenshotCell({
     if (file) doUpload(file);
   };
 
-  const stamp = screenshotStatus ? (STATUS_STAMP[screenshotStatus] ?? { tone: 'neutral', label: screenshotStatus }) : null;
+  const badge = screenshotStatus
+    ? (STATUS_BADGE[screenshotStatus] ?? { color: 'var(--text-muted)', bg: 'var(--surface-2)', border: 'var(--border)', icon: 'info', label: screenshotStatus })
+    : null;
 
-  return (
-    <div
-      tabIndex={0}
-      onFocus={onFocus}
-      onClick={onFocus}
-      onDragOver={(e) => { if (canUploadFresh) { e.preventDefault(); setDragOver(true); } }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={handleDrop}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, minHeight: 36,
-        borderRadius: 'var(--radius)', padding: 3,
-        outline: (isFocused || dragOver) ? '2px solid var(--accent)' : '2px solid transparent',
-        outlineOffset: 1,
-        background: dragOver ? 'var(--accent-glow)' : 'transparent',
-        transition: 'outline-color .12s, background .12s',
-      }}
-    >
-      <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileChange} />
+  // Reveal the action overlay on hover, keyboard focus, or while a paste is busy.
+  const showActions = hovered || kbFocus;
+  const replaceLabel = canReupload ? 'Re-upload' : 'Replace';
 
-      {/* No screenshot → dashed attach zone with paste/drag hint */}
-      {!hasScreenshot && (
-        <Tooltip label={canUploadFresh ? 'Click, drag-drop, or press Ctrl+V to attach' : 'Read-only after the due date'} side="top">
+  // ── No screenshot → compact dashed attach tile ──────────────────────────────
+  if (!hasScreenshot) {
+    return (
+      <div
+        onDragOver={(e) => { if (canUploadFresh) { e.preventDefault(); setDragOver(true); } }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        style={{ display: 'inline-flex', flexDirection: 'column', gap: 4 }}
+      >
+        <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileChange} />
+        <Tooltip label={canUploadFresh ? 'Click, drag-drop, or press Ctrl+V to attach proof' : 'Read-only after the due date'} side="top">
           <button
             type="button"
             disabled={!canUploadFresh || busy}
-            onClick={() => fileInputRef.current?.click()}
+            onFocus={onFocus}
+            onClick={() => { onFocus?.(); fileInputRef.current?.click(); }}
+            aria-label="Attach proof screenshot"
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              height: 28, padding: '0 10px', borderRadius: 'var(--radius)',
-              border: `1px dashed ${dragOver ? 'var(--accent)' : 'var(--border)'}`,
-              background: 'var(--surface-2)', color: 'var(--text-muted)',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              width: 132, height: TILE, padding: '0 8px', borderRadius: 'var(--radius)',
+              border: `1px dashed ${(dragOver || isFocused) ? 'var(--accent)' : 'var(--border)'}`,
+              background: dragOver ? 'var(--accent-glow)' : 'var(--surface-2)',
+              color: dragOver ? 'var(--accent)' : 'var(--text-muted)',
               opacity: !canUploadFresh ? 0.5 : 1,
               cursor: (!canUploadFresh || busy) ? 'not-allowed' : 'pointer',
               fontSize: 11.5, fontWeight: 500, fontFamily: 'inherit',
+              transition: 'border-color .12s, background .12s, color .12s',
             }}
           >
-            <Icon name={busy ? 'upload' : 'camera'} size={13} className={busy ? 'spin' : undefined} />
+            <Icon name={busy ? 'upload' : 'camera'} size={14} className={busy ? 'spin' : undefined} />
             {busy ? 'Uploading…' : 'Attach proof'}
           </button>
         </Tooltip>
-      )}
 
-      {/* Has screenshot → thumbnail + status stamp */}
-      {hasScreenshot && (
-        <>
-          <div style={{
-            width: 36, height: 36, borderRadius: 'var(--radius)', overflow: 'hidden', flex: 'none',
-            background: 'var(--surface-2)', border: '1px solid var(--border)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
-          }}>
-            {thumbLoading ? (
-              <Skeleton width={36} height={36} radius="var(--radius)" />
-            ) : thumbUrl ? (
-              <img src={thumbUrl} alt="Screenshot thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : thumbError ? (
-              <button type="button" onClick={retryThumb} title="Thumbnail failed — click to retry"
-                aria-label="Retry loading thumbnail"
-                style={{ border: 0, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}>
-                <Icon name="refresh" size={14} />
-              </button>
-            ) : (
-              <Icon name="image" size={14} style={{ color: 'var(--text-faint)' }} />
-            )}
-          </div>
+        {uploadFailed && (
+          <button type="button" onClick={() => lastFileRef.current && doUpload(lastFileRef.current)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, height: 20, padding: '0 6px',
+              border: '1px solid var(--danger-border)', borderRadius: 'var(--radius)',
+              background: 'var(--danger-bg)', color: 'var(--danger)',
+              fontSize: 10.5, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+            }}>
+            <Icon name="refresh" size={11} stroke={2.2} /> Retry upload
+          </button>
+        )}
 
-          {stamp && (
-            <Stamp tone={stamp.tone} label={stamp.label} animate={verdictAnim}
-              title={screenshotStatus === 'Rejected' ? (screenshotRejectReason || 'Rejected') : undefined} />
+        {pasteState && <PasteBadge state={pasteState} />}
+      </div>
+    );
+  }
+
+  // ── Has screenshot → single thumbnail + corner badge + hover actions ────────
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocusCapture={() => { setKbFocus(true); onFocus?.(); }}
+      onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setKbFocus(false); }}
+      onDragOver={(e) => { if (canUploadFresh) { e.preventDefault(); setDragOver(true); } }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={handleDrop}
+      style={{ display: 'inline-flex', flexDirection: 'column', gap: 4 }}
+    >
+      <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileChange} />
+
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        {/* The thumbnail tile (relative anchor for the corner badge + hover overlay) */}
+        <div style={{
+          position: 'relative', width: TILE, height: TILE, flex: 'none',
+          borderRadius: 'var(--radius)', overflow: 'hidden',
+          background: 'var(--surface-2)',
+          border: `1px solid ${(dragOver || isFocused) ? 'var(--accent)' : 'var(--border)'}`,
+          transition: 'border-color .12s',
+        }}>
+          {thumbLoading ? (
+            <Skeleton width={TILE} height={TILE} radius="var(--radius)" />
+          ) : thumbUrl ? (
+            <button type="button" onClick={onView} title="View full screenshot" aria-label="View full screenshot"
+              style={{ display: 'block', width: '100%', height: '100%', padding: 0, border: 0, background: 'transparent', cursor: onView ? 'zoom-in' : 'default' }}>
+              <img src={thumbUrl} alt="Screenshot thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            </button>
+          ) : thumbError ? (
+            <button type="button" onClick={retryThumb} title="Thumbnail failed — click to retry"
+              aria-label="Retry loading thumbnail"
+              style={{ width: '100%', height: '100%', border: 0, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="refresh" size={15} />
+            </button>
+          ) : (
+            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="image" size={15} style={{ color: 'var(--text-faint)' }} />
+            </div>
           )}
 
-          {screenshotStatus === 'Rejected' && (
-            <span style={{
-              fontSize: 11, color: 'var(--danger)', maxWidth: 150,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }} title={screenshotRejectReason || 'Rejected — see your manager for details.'}>
-              {screenshotRejectReason || 'Rejected'}
+          {/* Corner verdict badge — plays the stamp-in settle on a fresh verdict. */}
+          {badge && (
+            <span
+              className={verdictAnim ? 'stamp-in' : undefined}
+              title={badge.label}
+              aria-label={`Screenshot ${badge.label}`}
+              style={{
+                position: 'absolute', top: 2, right: 2,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 16, height: 16, borderRadius: 999,
+                background: badge.bg, border: `1.5px solid ${badge.color}`, color: badge.color,
+                boxShadow: '0 0 0 1.5px var(--surface)',
+              }}>
+              <Icon name={badge.icon} size={9} stroke={2.6} />
             </span>
           )}
 
-          {(canReupload || !readOnly) && (
-            <Button variant="outline" size="sm" icon="refresh" loading={busy}
-              onClick={() => fileInputRef.current?.click()}
-              style={{ height: 26, padding: '0 8px', fontSize: 11 }}>
-              {canReupload ? 'Re-upload' : 'Replace'}
-            </Button>
+          {/* Hover / focus action overlay — Replace + view, surfaced on demand. */}
+          {showActions && (
+            <div style={{
+              position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+              background: 'color-mix(in oklab, var(--text), transparent 35%)',
+            }}>
+              {onView && thumbUrl && (
+                <TileAction icon="eye" label="View screenshot" onClick={onView} />
+              )}
+              {(canReupload || !readOnly) && (
+                <TileAction icon="refresh" label={replaceLabel} busy={busy}
+                  onClick={() => { onFocus?.(); fileInputRef.current?.click(); }} />
+              )}
+            </div>
           )}
-        </>
-      )}
+        </div>
 
-      {/* Upload failure retry (when no screenshot is shown yet) */}
-      {uploadFailed && !hasScreenshot && (
-        <Button variant="outline" size="sm" icon="refresh"
-          onClick={() => lastFileRef.current && doUpload(lastFileRef.current)}
-          style={{ height: 26, padding: '0 8px', fontSize: 11, color: 'var(--danger)', borderColor: 'var(--danger-border)' }}>
-          Retry
-        </Button>
-      )}
+        {/* Re-upload nudge for a rejected shot — always visible (the actionable case). */}
+        {canReupload && !showActions && (
+          <button type="button" onClick={() => { onFocus?.(); fileInputRef.current?.click(); }}
+            disabled={busy}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, height: 24, padding: '0 8px',
+              border: '1px solid var(--danger-border)', borderRadius: 'var(--radius)',
+              background: 'var(--danger-bg)', color: 'var(--danger)',
+              fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+              cursor: busy ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+            }}>
+            <Icon name="refresh" size={12} stroke={2.2} className={busy ? 'spin' : undefined} /> Re-upload
+          </button>
+        )}
+      </div>
 
-      {pasteState && (
+      {/* Rejected → reason stays visible inline beneath the tile. */}
+      {screenshotStatus === 'Rejected' && (
         <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 500, letterSpacing: '0.04em',
-          textTransform: 'uppercase', color: 'var(--accent)',
-          padding: '1px 6px', borderRadius: 4, background: 'var(--accent-glow)',
-        }}>
-          {pasteState === 'pasted' ? 'Pasted' : pasteState === 'uploading' ? 'Uploading' : 'Done'}
+          fontSize: 11, color: 'var(--danger)', maxWidth: 200, lineHeight: 1.35,
+          display: 'inline-flex', alignItems: 'flex-start', gap: 4,
+        }} title={screenshotRejectReason || 'Rejected — see your manager for details.'}>
+          <Icon name="alert" size={11} stroke={2.2} style={{ flex: 'none', marginTop: 2 }} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {screenshotRejectReason || 'Rejected'}
+          </span>
         </span>
       )}
+
+      {uploadFailed && (
+        <button type="button" onClick={() => lastFileRef.current && doUpload(lastFileRef.current)}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4, height: 20, padding: '0 6px',
+            border: '1px solid var(--danger-border)', borderRadius: 'var(--radius)',
+            background: 'var(--danger-bg)', color: 'var(--danger)',
+            fontSize: 10.5, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', alignSelf: 'flex-start',
+          }}>
+          <Icon name="refresh" size={11} stroke={2.2} /> Retry upload
+        </button>
+      )}
+
+      {pasteState && <PasteBadge state={pasteState} />}
     </div>
+  );
+}
+
+// Small icon button shown in the hover overlay over the thumbnail.
+function TileAction({ icon, label, onClick, busy = false }) {
+  return (
+    <button type="button" onClick={onClick} disabled={busy} title={label} aria-label={label}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: 26, height: 26, borderRadius: 'var(--radius)',
+        border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)',
+        cursor: busy ? 'wait' : 'pointer', padding: 0,
+        boxShadow: 'var(--shadow-pop)',
+      }}>
+      <Icon name={icon} size={13} stroke={2} className={busy ? 'spin' : undefined} />
+    </button>
+  );
+}
+
+// Transient paste status pill (mono uppercase, accent tint).
+function PasteBadge({ state }) {
+  return (
+    <span style={{
+      fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 500, letterSpacing: '0.04em',
+      textTransform: 'uppercase', color: 'var(--accent)', alignSelf: 'flex-start',
+      padding: '1px 6px', borderRadius: 4, background: 'var(--accent-glow)',
+    }}>
+      {state === 'pasted' ? 'Pasted' : state === 'uploading' ? 'Uploading' : 'Done'}
+    </span>
   );
 }

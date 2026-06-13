@@ -44,6 +44,29 @@ function fmtDate(value) {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
 }
 
+// Map the free-text Status strings the non-submitted endpoint emits
+// ("Not started" / "In progress" / "Awaiting approval" / "Action needed") to
+// the ledger icon+color language (DESIGN §3 — status is never color alone).
+// `rank` drives worst-first default ordering (lower = needs more attention).
+const NS_STATUS_META = {
+  'not started':       { tone: 'neutral', icon: 'circle', rank: 0 },
+  'in progress':       { tone: 'info',    icon: 'half',   rank: 1 },
+  'awaiting approval': { tone: 'warning', icon: 'clock',  rank: 2 },
+  'action needed':     { tone: 'danger',  icon: 'alert',  rank: 0 },
+};
+function nsStatusMeta(status) {
+  return NS_STATUS_META[(status || '').toLowerCase()]
+    ?? { tone: 'neutral', icon: 'circle', rank: 1 };
+}
+// Mirror ui.jsx CHIP_TONES (soft icon+label chip — DESIGN §3/§5).
+const NS_CHIP_TONES = {
+  neutral: { fg: 'var(--text-muted)', bg: 'var(--surface-2)' },
+  info:    { fg: 'var(--accent)',     bg: 'var(--accent-glow)' },
+  warning: { fg: 'var(--warning)',    bg: 'var(--warning-bg)' },
+  danger:  { fg: 'var(--danger)',     bg: 'var(--danger-bg)' },
+  success: { fg: 'var(--success)',    bg: 'var(--success-bg)' },
+};
+
 // Generic sort helper for the data tables.
 function useSort(initialKey, initialDir = 'asc') {
   const [sortKey, setSortKey] = useState(initialKey);
@@ -453,7 +476,227 @@ function OverviewSection({
           {depts.map((dept) => <DeptCard key={dept.departmentName} dept={dept} dark={dark} onDrill={onDrill} />)}
         </div>
       )}
+
+      {/* TASK D — department completion bar chart (comparable at a glance). */}
+      {depts.length > 0 && (
+        <DeptCompletionChart depts={depts} onDrill={onDrill} />
+      )}
+
+      {/* TASK C — "Needs attention" panel: non-submitted associates across the
+          shown departments, merged + tagged, worst-first. Lazy-fetched. */}
+      {depts.length > 0 && cycle?.cycleID && (
+        <NeedsAttentionPanel depts={depts} cycleId={cycle.cycleID} onDrill={onDrill} />
+      )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TASK D — Department completion bar chart
+// One horizontal bar per department (submitted/total %), colored by the shared
+// pctTone/--st-* status palette, with mono % labels. div-bars in the ledger
+// style; sorted worst-first so the laggards read top-down. Clicking a row drills.
+// ─────────────────────────────────────────────────────────────────────────────
+function DeptCompletionChart({ depts, onDrill }) {
+  const rows = useMemo(() => (
+    depts
+      .map((d) => {
+        const pct = d.totalAssociates > 0 ? Math.round((d.submittedCount / d.totalAssociates) * 100) : 0;
+        return { dept: d, name: d.departmentName, pct, submitted: d.submittedCount, total: d.totalAssociates };
+      })
+      .sort((a, b) => a.pct - b.pct || a.name.localeCompare(b.name))
+  ), [depts]);
+
+  return (
+    <Card style={{ marginTop: 22 }}>
+      <SectionHeader rule style={{ marginBottom: 14 }}
+        right={<span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0 }}>submitted / total</span>}>
+        Completion by department
+      </SectionHeader>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {rows.map((r) => {
+          const toneVar = `var(${statusOf(r.pct).varName})`;
+          return (
+            <button
+              key={r.name} type="button" onClick={() => onDrill(r.dept)}
+              aria-label={`${r.name}: ${r.pct}% complete, ${r.submitted} of ${r.total} submitted. Open department.`}
+              style={{
+                display: 'grid', gridTemplateColumns: 'minmax(120px, 1.6fr) 3fr auto',
+                alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
+                border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', padding: 0,
+              }}>
+              <span style={{
+                fontSize: 12.5, fontWeight: 600, color: 'var(--text)',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>{r.name}</span>
+              <span style={{ position: 'relative', height: 18, borderRadius: 'var(--radius)', background: 'var(--surface-2)', overflow: 'hidden' }}>
+                <span style={{
+                  position: 'absolute', inset: 0, width: `${r.pct}%`, background: toneVar,
+                  borderRadius: 'var(--radius)', transition: 'width .4s ease-out',
+                }} />
+              </span>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end',
+                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                fontSize: 12.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: 110,
+              }}>
+                <span style={{ color: 'var(--text-faint)' }}>{r.submitted}/{r.total}</span>
+                <b style={{ color: toneVar, fontWeight: 600, minWidth: 38, textAlign: 'right' }}>{r.pct}%</b>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TASK C — "Needs attention" panel
+// Lazily fetches the non-submitted/at-risk associates for the in-scope
+// departments shown on the overview (Promise.all over those depts only — the
+// perf guard), tags each row with its department, merges, and renders a sortable
+// real <table>. Worst-first by default (lowest %, "Not started" / "Action
+// needed" first). A failed per-dept fetch is skipped, not fatal.
+// ─────────────────────────────────────────────────────────────────────────────
+function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
+  const [rows, setRows] = useState(null);   // null = not loaded yet
+  const [loading, setLoading] = useState(false);
+  const sort = useSort('completionPct', 'asc');
+
+  // Re-key the fetch on the exact set of shown depts + cycle so a search filter
+  // or cycle change re-pulls only the now-visible departments.
+  const deptKey = useMemo(() => depts.map((d) => d.departmentName).join('|'), [depts]);
+
+  useEffect(() => {
+    if (!cycleId || depts.length === 0) { setRows([]); return undefined; }
+    let cancelled = false;
+    setLoading(true);
+    setRows(null);
+    // PERF GUARD: only the departments currently shown on the overview, fetched
+    // in parallel. Each dept fetch is independently caught → a single failure is
+    // skipped (empty list) instead of blowing up the whole panel.
+    Promise.all(
+      depts.map((d) =>
+        getNonSubmitted(d.departmentName, cycleId)
+          .then((list) => (Array.isArray(list) ? list : []).map((r) => ({ ...r, departmentName: d.departmentName })))
+          .catch(() => [])
+      )
+    )
+      .then((groups) => { if (!cancelled) { setRows(groups.flat()); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setRows([]); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [deptKey, cycleId]);
+
+  const accessors = {
+    name: (r) => r.name,
+    departmentName: (r) => r.departmentName,
+    manager: (r) => r.managerName,
+    completionPct: (r) => r.completionPct,
+    status: (r) => nsStatusMeta(r.status).rank,
+  };
+  // Default worst-first: when sorting by %, break ties by status rank so
+  // "Not started" / "Action needed" float above same-% "In progress".
+  const sorted = useMemo(() => {
+    const base = sortRows(rows ?? [], sort.sortKey, sort.sortDir, accessors);
+    if (sort.sortKey === 'completionPct' && sort.sortDir === 'asc') {
+      return [...base].sort((a, b) => (a.completionPct - b.completionPct)
+        || (nsStatusMeta(a.status).rank - nsStatusMeta(b.status).rank));
+    }
+    return base;
+  }, [rows, sort.sortKey, sort.sortDir]);
+
+  const deptByName = useMemo(() => {
+    const m = {};
+    depts.forEach((d) => { m[d.departmentName] = d; });
+    return m;
+  }, [depts]);
+
+  return (
+    <Card pad={0} style={{ marginTop: 22, overflow: 'hidden' }}>
+      <div style={{ padding: '16px 18px 4px' }}>
+        <SectionHeader
+          right={!loading && rows ? (
+            <span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0 }}>
+              {sorted.length} {sorted.length === 1 ? 'associate' : 'associates'}
+            </span>
+          ) : undefined}>
+          Needs attention
+        </SectionHeader>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, marginBottom: 4 }}>
+          Associates across these departments who have not finished attesting — worst first.
+        </div>
+      </div>
+
+      {loading || rows === null ? (
+        <div style={{ padding: '4px 18px 16px', display: 'flex', flexDirection: 'column', gap: 8 }} aria-busy="true">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} height={20} />)}
+        </div>
+      ) : sorted.length === 0 ? (
+        <EmptyState icon="check" title="Everyone's on track"
+          message="No associates in the shown departments are outstanding for this cycle."
+          style={{ padding: '32px 24px' }} />
+      ) : (
+        <div style={{ overflowX: 'auto', borderTop: '1px solid var(--border-subtle)' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--rule)' }}>
+                <SortHeader label="Associate" active={sort.sortKey === 'name'} dir={sort.sortDir} onSort={() => sort.onSort('name')} style={{ padding: '0 18px' }} />
+                <SortHeader label="Department" active={sort.sortKey === 'departmentName'} dir={sort.sortDir} onSort={() => sort.onSort('departmentName')} style={{ padding: '0 18px' }} />
+                <SortHeader label="Manager" active={sort.sortKey === 'manager'} dir={sort.sortDir} onSort={() => sort.onSort('manager')} style={{ padding: '0 18px' }} />
+                <SortHeader label="% done" align="right" active={sort.sortKey === 'completionPct'} dir={sort.sortDir} onSort={() => sort.onSort('completionPct')} style={{ padding: '0 18px' }} />
+                <SortHeader label="Status" active={sort.sortKey === 'status'} dir={sort.sortDir} onSort={() => sort.onSort('status')} style={{ padding: '0 18px' }} />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r, i) => {
+                const meta = nsStatusMeta(r.status);
+                const dept = deptByName[r.departmentName];
+                return (
+                  <tr key={`${r.departmentName}::${r.associateId}::${i}`}
+                    style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <td style={{ padding: '10px 18px' }}>
+                      <div style={{ fontWeight: 500, color: 'var(--text)' }}>{r.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+                        ID {r.associateId}{r.email ? ` · ${r.email}` : ''}
+                      </div>
+                    </td>
+                    <td style={{ padding: '10px 18px' }}>
+                      {dept ? (
+                        <button type="button" onClick={() => onDrill(dept)}
+                          aria-label={`Open ${r.departmentName}`}
+                          style={{
+                            border: 0, background: 'transparent', padding: 0, cursor: 'pointer',
+                            fontFamily: 'inherit', fontSize: 13, color: 'var(--accent)', fontWeight: 500, textAlign: 'left',
+                          }}>{r.departmentName}</button>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>{r.departmentName}</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '10px 18px', color: 'var(--text-muted)' }}>{r.managerName || '—'}</td>
+                    <td style={{ padding: '10px 18px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>
+                      {r.completionPct}%
+                    </td>
+                    <td style={{ padding: '10px 18px' }}>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        padding: '2px 9px', borderRadius: 999,
+                        background: NS_CHIP_TONES[meta.tone].bg,
+                        color: NS_CHIP_TONES[meta.tone].fg,
+                        fontSize: 11.5, fontWeight: 500, lineHeight: 1.4, whiteSpace: 'nowrap',
+                      }}>
+                        <Icon name={meta.icon} size={12} stroke={2} />
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 

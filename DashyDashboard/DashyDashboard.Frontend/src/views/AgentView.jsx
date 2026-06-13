@@ -15,7 +15,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Icon, TriToggle, Button, SearchBar, Card, KpiCard, SectionHeader,
-  Stamp, Tooltip, EmptyState, Skeleton, Progress, useToasts,
+  Tooltip, EmptyState, Skeleton, Progress, useToasts,
 } from '../components/ui.jsx';
 import { getMyAttestations, toggleUsed, toggleHadAccess, submitAll, addRemark } from '../api/attestations.js';
 import RemarksModal from '../components/RemarksModal.jsx';
@@ -464,14 +464,17 @@ export default function AgentView({ user, cycle, onLogout }) {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-            <KpiCard label="Attested" value={totals.attested} sub={`of ${totals.total} tools`} tone="success" />
-            <KpiCard label="Remaining" value={totals.pending} sub={totals.pending > 0 ? 'still to attest' : 'all decided'}
-              tone={totals.pending > 0 ? 'warning' : 'success'} />
-            <KpiCard label="Clients" value={clients.length} sub={`${totals.used} tools used`} />
-            <KpiCard label="Days left" value={cycle?.daysLeft ?? '—'}
-              sub={cycle?.dueDate ? `due ${fmtDueDate(cycle.dueDate)}` : undefined}
-              tone={(cycle?.daysLeft ?? 99) < 0 ? 'danger' : (cycle?.daysLeft ?? 99) <= 3 ? 'warning' : undefined} />
+          <div style={{ display: 'flex', alignItems: 'stretch', gap: 12, flexWrap: 'wrap' }}>
+            <CompletionRing attested={totals.attested} total={totals.total} />
+            <div style={{ flex: '1 1 420px', minWidth: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+              <KpiCard label="Attested" value={totals.attested} sub={`of ${totals.total} tools`} tone="success" />
+              <KpiCard label="Remaining" value={totals.pending} sub={totals.pending > 0 ? 'still to attest' : 'all decided'}
+                tone={totals.pending > 0 ? 'warning' : 'success'} />
+              <KpiCard label="Clients" value={clients.length} sub={`${totals.used} tools used`} />
+              <KpiCard label="Days left" value={cycle?.daysLeft ?? '—'}
+                sub={cycle?.dueDate ? `due ${fmtDueDate(cycle.dueDate)}` : undefined}
+                tone={(cycle?.daysLeft ?? 99) < 0 ? 'danger' : (cycle?.daysLeft ?? 99) <= 3 ? 'warning' : undefined} />
+            </div>
           </div>
         </div>
 
@@ -636,9 +639,10 @@ export default function AgentView({ user, cycle, onLogout }) {
                                 className="agent-row"
                                 style={{
                                   borderBottom: '1px solid var(--border-subtle)',
-                                  background: flashing
-                                    ? 'var(--accent-glow)'
-                                    : (blocked && !isSubmitted) ? 'var(--danger-bg)' : 'transparent',
+                                  // Calm blocked styling (DESIGN §10 / A3): keep only a 3px danger
+                                  // LEFT-BAR — no full-row danger-bg wash. The "Jump" flash
+                                  // (accent glow + accent bar) still takes precedence.
+                                  background: flashing ? 'var(--accent-glow)' : 'transparent',
                                   boxShadow: flashing
                                     ? 'inset 3px 0 0 var(--accent)'
                                     : (blocked && !isSubmitted) ? 'inset 3px 0 0 var(--danger)' : 'none',
@@ -761,67 +765,82 @@ const BLOCKER_ICON = {
   screenshot: 'camera',
 };
 
+// ── CompletionRing — hero progress donut (Task B) ──────────────────────────────
+// Inline SVG, ledger palette: accent arc on a --surface-2 track, % in the centre
+// in --font-display. Tone shifts to success at 100%. The arc width transitions
+// (killed under prefers-reduced-motion by the global rule in index.css — no spin).
+function CompletionRing({ attested, total }) {
+  const pct = total > 0 ? Math.max(0, Math.min(1, attested / total)) : 0;
+  const display = Math.round(pct * 100);
+  const complete = total > 0 && attested >= total;
+  const SIZE = 116;
+  const STROKE = 11;
+  const r = (SIZE - STROKE) / 2;
+  const circ = 2 * Math.PI * r;
+  const arc = complete ? 'var(--success)' : 'var(--accent)';
+  return (
+    <Card pad={16} style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flex: 'none', minWidth: SIZE + 32,
+    }}>
+      <div style={{ position: 'relative', width: SIZE, height: SIZE }}
+        role="img" aria-label={`${display}% complete — ${attested} of ${total} tools attested`}>
+        <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ transform: 'rotate(-90deg)' }} aria-hidden="true">
+          <circle cx={SIZE / 2} cy={SIZE / 2} r={r} fill="none" stroke="var(--surface-2)" strokeWidth={STROKE} />
+          <circle
+            cx={SIZE / 2} cy={SIZE / 2} r={r} fill="none"
+            stroke={arc} strokeWidth={STROKE} strokeLinecap="round"
+            strokeDasharray={circ}
+            strokeDashoffset={circ * (1 - pct)}
+            style={{ transition: 'stroke-dashoffset .4s ease-out, stroke .2s ease-out' }}
+          />
+        </svg>
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: 0,
+        }}>
+          <span style={{
+            fontFamily: 'var(--font-display)', fontWeight: 560, fontSize: 30, lineHeight: 1,
+            color: complete ? 'var(--success)' : 'var(--text)',
+            fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em',
+          }}>{display}<span style={{ fontSize: 16 }}>%</span></span>
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 9.5, fontWeight: 500, letterSpacing: '0.1em',
+            textTransform: 'uppercase', color: 'var(--text-faint)', marginTop: 3,
+          }}>Complete</span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 // ── Proof / Reason cell — the right-most "question answer" column ───────────────
-// No access  → required reason input (or saved-remark chip once filled).
-// Not used   → required reason input (or saved-remark chip), plus a view button if
-//              a screenshot was uploaded before flipping to Not used.
-// Used       → the ScreenshotCell upload/status control.
+// EVERY row renders the SAME two-slot layout so the column lines up vertically
+// down the table (DESIGN §10 / fix A1):
+//   [ PROOF slot — fixed width ] [ NOTE slot ]
+//
+//   PROOF slot:
+//     used / undecided-with-access → the ScreenshotCell upload/status control.
+//     no-access / not-used         → an em-dash placeholder, OR a small "view"
+//                                     affordance if a stale screenshot exists
+//                                     (uploaded before the row flipped).
+//   NOTE slot:
+//     required-reason rows → the inline required reason input (DESIGN §10).
+//     everything else      → the remark chip (required-tinted where mandatory).
+const PROOF_SLOT_WIDTH = 156; // fixed → vertical alignment across every row state.
+
 function ProofReasonCell({
   tool, clientId, noAccess, notUsed, needsReason, isSubmitted, pastDue, cycle, user,
   draft, saving, verdictAnim, onDraft, onCommitDraft, onOpenRemark, onViewScreenshot,
   focused, onFocus, onUploaded, onError, registerPasteTarget,
 }) {
-  const hasRemark = !!(tool.remarks && String(tool.remarks).trim());
+  const isProofRow = !noAccess && !notUsed; // used / undecided-with-access
+  const needsInlineReason = (noAccess || notUsed) && needsReason && !isSubmitted;
 
-  // No-access / not-used rows that still need a reason: inline required input.
-  if ((noAccess || notUsed) && needsReason && !isSubmitted) {
-    const commit = () => onCommitDraft(draft);
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 220, maxWidth: 320 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input
-            type="text"
-            value={draft}
-            placeholder={noAccess ? 'Why no access this cycle?' : "Why wasn't this tool used?"}
-            maxLength={500}
-            disabled={saving}
-            aria-invalid
-            aria-label={noAccess ? 'Reason for no access (required)' : 'Reason not used (required)'}
-            onChange={(e) => onDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
-            onBlur={commit}
-            style={{
-              flex: 1, minWidth: 0, height: 28, padding: '0 8px', borderRadius: 'var(--radius)',
-              border: '1px solid var(--danger-border)', background: 'var(--surface)', color: 'var(--text)',
-              fontSize: 12, fontFamily: 'inherit', outline: 'none', opacity: saving ? 0.6 : 1,
-            }}
-          />
-        </div>
-        <span style={{ fontSize: 10.5, color: 'var(--danger)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <Icon name="alert" size={11} stroke={2.2} />
-          {saving ? 'Saving…' : `Required — ${noAccess ? 'explain why you had no access' : "explain why you didn't use this tool"}`}
-        </span>
-      </div>
-    );
-  }
-
-  // No-access / not-used rows whose reason is filled → compact remark chip (edit on click).
-  if (noAccess || notUsed) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-        <RemarkChip text={tool.remarks} disabled={isSubmitted} onClick={onOpenRemark} required />
-        {/* If a screenshot exists (e.g. uploaded before flipping to Not used), let them view it. */}
-        {tool.screenshotStatus && (
-          <Button variant="ghost" size="sm" icon="eye" onClick={onViewScreenshot}
-            aria-label="View previous screenshot" style={{ padding: '0 7px' }} />
-        )}
-      </div>
-    );
-  }
-
-  // Used (or undecided-with-access) rows → screenshot control + optional remark chip.
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+  // ── PROOF slot (fixed width) ────────────────────────────────────────────────
+  let proofSlot;
+  if (isProofRow) {
+    proofSlot = (
       <ScreenshotCell
         cycleId={cycle.cycleID}
         associateId={user.associateId}
@@ -836,9 +855,67 @@ function ProofReasonCell({
         onFocus={onFocus}
         onUploaded={onUploaded}
         onError={onError}
+        onView={onViewScreenshot}
         registerPasteTarget={registerPasteTarget}
       />
-      <RemarkChip text={tool.remarks} disabled={isSubmitted} onClick={onOpenRemark} />
+    );
+  } else if (tool.screenshotStatus) {
+    // Stale screenshot on a no-access / not-used row → keep a view affordance.
+    proofSlot = (
+      <Button variant="outline" size="sm" icon="eye" onClick={onViewScreenshot}
+        aria-label="View previous screenshot" style={{ height: 26 }}>
+        View
+      </Button>
+    );
+  } else {
+    proofSlot = <span aria-hidden="true" style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>—</span>;
+  }
+
+  // ── NOTE slot ───────────────────────────────────────────────────────────────
+  let noteSlot;
+  if (needsInlineReason) {
+    const commit = () => onCommitDraft(draft);
+    noteSlot = (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 200, maxWidth: 320 }}>
+        <input
+          type="text"
+          value={draft}
+          placeholder={noAccess ? 'Why no access this cycle?' : "Why wasn't this tool used?"}
+          maxLength={500}
+          disabled={saving}
+          aria-invalid
+          aria-label={noAccess ? 'Reason for no access (required)' : 'Reason not used (required)'}
+          onChange={(e) => onDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
+          onBlur={commit}
+          style={{
+            width: '100%', minWidth: 0, height: 28, padding: '0 8px', borderRadius: 'var(--radius)',
+            border: '1px solid var(--danger-border)', background: 'var(--surface)', color: 'var(--text)',
+            fontSize: 12, fontFamily: 'inherit', outline: 'none', opacity: saving ? 0.6 : 1,
+          }}
+        />
+        <span style={{ fontSize: 10.5, color: 'var(--danger)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <Icon name="alert" size={11} stroke={2.2} />
+          {saving ? 'Saving…' : `Required — ${noAccess ? 'explain why you had no access' : "explain why you didn't use this tool"}`}
+        </span>
+      </div>
+    );
+  } else {
+    // Remark chip — required-tinted when a no-access/not-used row mandates it.
+    noteSlot = (
+      <RemarkChip text={tool.remarks} disabled={isSubmitted} onClick={onOpenRemark}
+        required={noAccess || notUsed} />
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+      <div style={{ width: PROOF_SLOT_WIDTH, flex: 'none', display: 'flex', alignItems: 'center', minHeight: 28 }}>
+        {proofSlot}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', minHeight: 28 }}>
+        {noteSlot}
+      </div>
     </div>
   );
 }
