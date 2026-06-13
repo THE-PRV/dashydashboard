@@ -49,25 +49,48 @@ function relativeAge(value) {
 }
 
 // Team status distribution — a single stacked bar + legend over the five states.
-function TeamStatusBar({ states, total }) {
+function TeamStatusBar({ states, total, active, onSelect }) {
   if (!total) return null;
   return (
-    <Card pad={16}>
-      <SectionHeader rule>Team status distribution</SectionHeader>
+    <Card pad={16} style={{ height: '100%' }}>
+      <SectionHeader
+        rule
+        right={<span style={{
+          fontFamily: 'var(--font-display)', fontSize: 24, color: 'var(--text)',
+          fontVariantNumeric: 'tabular-nums',
+        }}>{total}</span>}
+      >
+        Team status
+      </SectionHeader>
       <div role="img" aria-label="Distribution of team members across the five attestation states"
-        style={{ display: 'flex', height: 14, borderRadius: 999, overflow: 'hidden', marginTop: 12, background: 'var(--surface-2)' }}>
+        style={{ display: 'flex', height: 16, borderRadius: 999, overflow: 'hidden', marginTop: 16, background: 'var(--surface-2)' }}>
         {states.filter((s) => s.value > 0).map((s) => (
           <div key={s.key} title={`${statusMeta(s.key).label}: ${s.value}`}
             style={{ width: `${(s.value / total) * 100}%`, background: STATE_COLOR[s.key] ?? 'var(--text-faint)' }} />
         ))}
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 18px', marginTop: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 16 }}>
         {states.map((s) => (
-          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-muted)' }}>
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => onSelect?.(active === s.key ? 'all' : s.key)}
+            aria-pressed={active === s.key}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7, minWidth: 0,
+              padding: '7px 8px', borderRadius: 'var(--radius)',
+              border: `1px solid ${active === s.key ? 'var(--accent)' : 'var(--border-subtle)'}`,
+              background: active === s.key ? 'var(--accent-glow)' : 'transparent',
+              color: 'var(--text-muted)', fontSize: 12, fontFamily: 'inherit',
+              cursor: 'pointer', textAlign: 'left',
+            }}
+          >
             <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 2, background: STATE_COLOR[s.key] ?? 'var(--text-faint)', flex: 'none' }} />
-            <span>{statusMeta(s.key).label}</span>
+            <span style={{ minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {statusMeta(s.key).label}
+            </span>
             <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{s.value}</span>
-          </div>
+          </button>
         ))}
       </div>
     </Card>
@@ -461,7 +484,11 @@ export default function ManagerView({ user, cycle, cycles, onCycle }) {
         </div>
 
         {/* ── Action queue — the centerpiece (DESIGN §10 Manager) ── */}
-        <Card pad={0}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'minmax(0, 1.45fr) minmax(320px, .8fr)',
+          gap: 14, alignItems: 'stretch',
+        }}>
+          <Card pad={0}>
           <div style={{ padding: '14px 16px 0' }}>
             <SectionHeader
               rule
@@ -469,7 +496,7 @@ export default function ManagerView({ user, cycle, cycles, onCycle }) {
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                   {queueLoading && <Skeleton width={56} height={14} />}
                   {!queueLoading && (totalAttention > 0
-                    ? <Stamp tone={queue.pending.length || queue.rejected.length ? 'warning' : 'danger'} label={`${totalAttention} TO ACT`} />
+                    ? <Stamp tone="warning" label={`${totalAttention} TO ACT`} />
                     : <Stamp tone="success" label="ALL CLEAR" />)}
                 </span>
               )}
@@ -512,7 +539,7 @@ export default function ManagerView({ user, cycle, cycles, onCycle }) {
                 )}
                 {(team?.mismatchCount ?? 0) > 0 && (
                   <QueueRow
-                    icon="bell" tone="danger"
+                    icon="bell" tone="warning"
                     title="Access disputes"
                     detail={`${team.mismatchCount} team member${team.mismatchCount === 1 ? '' : 's'} reported a dispute`}
                     count={team.mismatchCount}
@@ -526,44 +553,13 @@ export default function ManagerView({ user, cycle, cycles, onCycle }) {
           </div>
         </Card>
 
-        {/* ── KPI / filter band ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 12 }}>
-          {summary.map((item) => {
-            const active = filter === item.key;
-            // Every card filters now — "Direct reports" sets the filter back to 'all'
-            // (clears any status filter); the status cards toggle their own state.
-            const onClick = item.key === 'all'
-              ? () => setFilter('all')
-              : () => setFilter(active ? 'all' : item.key);
-            return (
-              <button
-                key={item.key}
-                type="button"
-                aria-pressed={active}
-                title={item.key === 'all' ? 'Show all direct reports' : `Filter to ${item.label}`}
-                onClick={onClick}
-                style={{
-                  textAlign: 'left', padding: '12px 14px',
-                  borderRadius: 'var(--radius-card)', background: 'var(--surface)',
-                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-                  boxShadow: active ? '0 0 0 3px var(--accent-glow)' : 'var(--shadow-sm)',
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  transition: 'border-color .15s ease-out, box-shadow .15s ease-out',
-                }}
-              >
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {item.label}
-                </div>
-                <div style={{ marginTop: 5, fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 540, lineHeight: 1, color: 'var(--text)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.015em' }}>
-                  {item.value}
-                </div>
-              </button>
-            );
-          })}
+          <TeamStatusBar
+            states={summary.slice(1)}
+            total={team?.totalMembers ?? 0}
+            active={filter}
+            onSelect={setFilter}
+          />
         </div>
-
-        {/* ── Team status distribution graph ── */}
-        <TeamStatusBar states={summary.slice(1)} total={team?.totalMembers ?? 0} />
 
         {/* ── Team table ── */}
         <Card pad={0}>

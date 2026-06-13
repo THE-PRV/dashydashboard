@@ -439,7 +439,9 @@ export default function AgentView({ user, cycle, onLogout }) {
                   ? 'All set — your attestation is in.'
                   : totals.pending > 0
                     ? `${totals.pending} tool${totals.pending === 1 ? '' : 's'} left to attest, ${firstName}.`
-                    : `Ready to submit, ${firstName}.`}
+                    : blockers.length > 0
+                      ? `Almost there, ${firstName}.`
+                      : `Ready to submit, ${firstName}.`}
               </h1>
               <p style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 13.5, maxWidth: 560, lineHeight: 1.5 }}>
                 {isSubmitted
@@ -497,14 +499,17 @@ export default function AgentView({ user, cycle, onLogout }) {
         {/* ── Blockers panel — the #1 UX fix (DESIGN §10) ─────────────────── */}
         <div aria-live="polite">
           {blockers.length > 0 && (
-            <Card pad={0} style={{ borderColor: 'var(--danger-border)', marginBottom: 16, overflow: 'hidden' }}>
+            <Card pad={0} style={{
+              borderColor: 'var(--warning-border)', marginBottom: 16, overflow: 'hidden',
+              boxShadow: 'inset 3px 0 0 var(--warning)',
+            }}>
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px',
-                background: 'var(--danger-bg)', borderBottom: '1px solid var(--danger-border)',
+                background: 'var(--warning-bg)', borderBottom: '1px solid var(--warning-border)',
               }}>
-                <Icon name="alert" size={16} stroke={2.2} style={{ color: 'var(--danger)', flex: 'none' }} />
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--danger)' }}>
-                  {blockers.length} thing{blockers.length === 1 ? '' : 's'} to fix before you can submit
+                <Icon name="clock" size={16} stroke={2.2} style={{ color: 'var(--warning)', flex: 'none' }} />
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                  {blockers.length} final item{blockers.length === 1 ? '' : 's'} before submission
                 </div>
               </div>
               <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
@@ -515,7 +520,7 @@ export default function AgentView({ user, cycle, onLogout }) {
                     borderBottom: i < blockers.length - 1 ? '1px solid var(--border-subtle)' : 'none',
                   }}>
                     <Icon name={BLOCKER_ICON[b.kind] ?? 'alert'} size={14} stroke={2}
-                      style={{ color: 'var(--danger)', flex: 'none' }} />
+                      style={{ color: 'var(--warning)', flex: 'none' }} />
                     <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                       <span style={{
                         fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)',

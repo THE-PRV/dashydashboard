@@ -1,14 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
 import { Icon, Button, Stamp } from './ui.jsx';
 import { getScreenshotUrl } from '../api/attestations.js';
 
-// Screenshot-status → Stamp tone. Verdicts render as ink stamps (DESIGN §5) so the
-// review decision reads as a signed record, consistent everywhere.
 const SS_STAMP = {
-  Pending:  { tone: 'warning', label: 'PENDING' },
+  Pending: { tone: 'warning', label: 'PENDING' },
   Approved: { tone: 'success', label: 'APPROVED' },
-  Rejected: { tone: 'danger',  label: 'REJECTED' },
+  Rejected: { tone: 'danger', label: 'REJECTED' },
 };
 
 const INTERACTIVE_SELECTOR = [
@@ -42,99 +40,104 @@ function stampFor(status) {
   return SS_STAMP[status] ?? { tone: 'neutral', label: String(status).toUpperCase() };
 }
 
-/**
- * WI-5 — the ONE shared full-screen screenshot lightbox. Used by manager review, admin
- * review, the agent-side corner button (WI-2), per-row thumbnails, and the cycle gallery
- * (WI-9). True full-viewport, near-black backdrop, image fit-to-screen via the FULL image
- * endpoint (getScreenshotUrl → auth blob URL, revoked on change/unmount).
- *
- * Always renders on a deliberately-dark surface regardless of the app theme (matching the
- * old ReviewLightbox precedent — the only place we hardcode dark colors).
- *
- * z-index 400: above FullScreenOverlay (250) and RemarksModal (200).
- *
- * Props:
- *   items: Array<{
- *     cycleId, associateId, clientId, clientName, toolId, toolName,
- *     memberName?, screenshotStatus?, screenshotRejectReason?, screenshotUploadedAt?
- *   }>
- *   startIndex : number   — initial item (default 0; clamped)
- *   onClose    : () => void
- *   review?    : { onDecide(item, approve, reason): Promise }
- *       When provided, items whose screenshotStatus === 'Pending' show Approve / Reject
- *       (reject requires a non-empty reason via an inline input) inside the lightbox.
- *       After a decision the local status updates and the view advances to the next item.
- *       Keyboard: A or Enter = approve · R = reject · ←/→ = prev/next · Esc = close.
- *
- * Single-image use (items.length === 1) hides prev/next and works as a plain viewer.
- */
+function itemKey(item) {
+  return `${item.cycleId}/${item.associateId}/${item.clientId}/${item.toolId}`;
+}
+
 export default function Lightbox({ items = [], startIndex = 0, onClose, review }) {
   const reviewMode = !!review?.onDecide;
-  const clampStart = items.length ? Math.max(0, Math.min(startIndex || 0, items.length - 1)) : 0;
+  const clampStart = items.length
+    ? Math.max(0, Math.min(startIndex || 0, items.length - 1))
+    : 0;
 
   const [index, setIndex] = useState(clampStart);
-  // Local status overrides keyed by item identity, so a decision reflects immediately in the
-  // caption + hides the review controls without waiting for a parent refetch. `justDecided`
-  // drives the one-shot stamp-in animation on the verdict.
-  const [statusOverride, setStatusOverride] = useState({}); // key -> { status, rejectReason }
+  const [statusOverride, setStatusOverride] = useState({});
   const [justDecidedKey, setJustDecidedKey] = useState(null);
   const [url, setUrl] = useState(null);
   const [imgLoading, setImgLoading] = useState(false);
   const [imgError, setImgError] = useState(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [zoomed, setZoomed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [showReject, setShowReject] = useState(false);
   const [reason, setReason] = useState('');
+
+  const dialogRef = useRef(null);
   const reasonInputRef = useRef(null);
   const restoreFocusRef = useRef(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   const item = items.length ? items[index] : null;
-  const keyOf = (it) => `${it.cycleId}/${it.associateId}/${it.clientId}/${it.toolId}`;
-  const override = item ? statusOverride[keyOf(item)] : null;
+  const key = item ? itemKey(item) : null;
+  const override = key ? statusOverride[key] : null;
   const effectiveStatus = override?.status ?? item?.screenshotStatus;
   const effectiveReason = override?.rejectReason ?? item?.screenshotRejectReason;
   const isPending = reviewMode && effectiveStatus === 'Pending';
   const multi = items.length > 1;
+  const imageReady = !!url && !imgLoading && !imgError;
+  const canDecide = isPending && imageReady;
 
-  // Remember + restore focus around the lightbox lifetime.
+  const pendingRemaining = items.reduce((count, candidate) => {
+    const status = statusOverride[itemKey(candidate)]?.status ?? candidate.screenshotStatus;
+    return count + (status === 'Pending' ? 1 : 0);
+  }, 0);
+
   useEffect(() => {
     restoreFocusRef.current = document.activeElement;
-    return () => restoreFocusRef.current?.focus?.();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => dialogRef.current?.focus());
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      restoreFocusRef.current?.focus?.();
+    };
   }, []);
 
-  // Load the full-size image whenever the current item identity changes. Revoke the prior
-  // object URL to avoid leaks (copies the existing cancellation idiom from ScreenshotGallery).
   useEffect(() => {
     if (!item) return undefined;
+
     let cancelled = false;
     let createdUrl = null;
     setUrl(null);
     setImgError(null);
     setImgLoading(true);
+    setZoomed(false);
 
     getScreenshotUrl(item.cycleId, item.associateId, item.clientId, item.toolId)
-      .then((u) => {
-        if (cancelled) { if (u) URL.revokeObjectURL(u); return; }
-        if (!u) { setImgError('Screenshot not found.'); return; }
-        createdUrl = u;
-        setUrl(u);
+      .then((nextUrl) => {
+        if (cancelled) {
+          if (nextUrl) URL.revokeObjectURL(nextUrl);
+          return;
+        }
+        if (!nextUrl) {
+          setImgError('The full-size screenshot could not be found.');
+          setImgLoading(false);
+          return;
+        }
+        createdUrl = nextUrl;
+        setUrl(nextUrl);
       })
-      .catch((err) => { if (!cancelled) setImgError(err.message || 'Failed to load screenshot.'); })
-      .finally(() => { if (!cancelled) setImgLoading(false); });
+      .catch((err) => {
+        if (!cancelled) {
+          setImgError(err.message || 'Failed to load the full-size screenshot.');
+          setImgLoading(false);
+        }
+      });
 
     return () => {
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item && keyOf(item)]);
+  }, [key, loadAttempt]);
 
-  // Reset the reject input each time we move to a different item.
   useEffect(() => {
     setShowReject(false);
     setReason('');
     setActionError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    requestAnimationFrame(() => dialogRef.current?.focus());
   }, [index]);
 
   useEffect(() => {
@@ -143,28 +146,51 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
 
   const goPrev = () => {
     if (busy || !multi) return;
-    setIndex((i) => (i - 1 + items.length) % items.length);
+    setIndex((current) => (current - 1 + items.length) % items.length);
   };
+
   const goNext = () => {
     if (busy || !multi) return;
-    setIndex((i) => (i + 1) % items.length);
+    setIndex((current) => (current + 1) % items.length);
   };
-  // After a decision: move to the next item if there is one, else close.
-  const advanceAfterDecision = () => {
-    if (multi && index < items.length - 1) setIndex((i) => i + 1);
-    else if (multi) setIndex((i) => (i + 1) % items.length);
+
+  const cancelReject = () => {
+    setShowReject(false);
+    setReason('');
+    requestAnimationFrame(() => dialogRef.current?.focus());
+  };
+
+  const advanceAfterDecision = (decidedKey, nextStatus) => {
+    if (!multi) return;
+
+    for (let offset = 1; offset < items.length; offset += 1) {
+      const candidateIndex = (index + offset) % items.length;
+      const candidate = items[candidateIndex];
+      const candidateKey = itemKey(candidate);
+      const status = candidateKey === decidedKey
+        ? nextStatus
+        : (statusOverride[candidateKey]?.status ?? candidate.screenshotStatus);
+
+      if (status === 'Pending') {
+        setIndex(candidateIndex);
+        return;
+      }
+    }
   };
 
   const doApprove = async () => {
-    if (!item || busy || !isPending) return;
-    const key = keyOf(item);
+    if (!item || busy || !canDecide) return;
+
     setBusy(true);
     setActionError(null);
     try {
       await review.onDecide(item, true, null);
-      setStatusOverride((m) => ({ ...m, [key]: { status: 'Approved', rejectReason: null } }));
+      setStatusOverride((current) => ({
+        ...current,
+        [key]: { status: 'Approved', rejectReason: null },
+      }));
       setJustDecidedKey(key);
-      advanceAfterDecision();
+      advanceAfterDecision(key, 'Approved');
     } catch (err) {
       setActionError(err.message || 'Approve failed.');
     } finally {
@@ -173,19 +199,23 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
   };
 
   const doReject = async (reasonText) => {
-    if (!item || busy || !isPending) return;
+    if (!item || busy || !canDecide) return;
+
     const trimmed = (reasonText ?? '').trim();
     if (!trimmed) return;
-    const key = keyOf(item);
+
     setBusy(true);
     setActionError(null);
     try {
       await review.onDecide(item, false, trimmed);
-      setStatusOverride((m) => ({ ...m, [key]: { status: 'Rejected', rejectReason: trimmed } }));
+      setStatusOverride((current) => ({
+        ...current,
+        [key]: { status: 'Rejected', rejectReason: trimmed },
+      }));
       setJustDecidedKey(key);
       setShowReject(false);
       setReason('');
-      advanceAfterDecision();
+      advanceAfterDecision(key, 'Rejected');
     } catch (err) {
       setActionError(err.message || 'Reject failed.');
     } finally {
@@ -193,47 +223,83 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
     }
   };
 
-  // Keyboard: ←/→ navigate; Esc closes. In review mode on a Pending item: A or Enter
-  // approves, R opens the reject input. While the reject input is open, Enter submits the
-  // rejection and typed letters go to the textbox.
   useEffect(() => {
-    function onKeyDown(e) {
-      // Capture Escape before lower overlays' document listeners. One key press should only
-      // dismiss the topmost active layer (the reject input first, then this lightbox).
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        if (showReject) {
-          setShowReject(false);
-          setReason('');
-        } else {
-          onClose?.();
-        }
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        if (busy) return;
+        if (showReject) cancelReject();
+        else onClose?.();
         return;
       }
 
       if (busy) return;
 
-      // Let focused controls handle Enter, arrows, and typed shortcut letters normally.
-      // Checking activeElement as well covers synthetic key events dispatched on document.
-      if (isInteractiveElement(e.target) || isInteractiveElement(document.activeElement)) return;
+      if (event.key === 'Tab') {
+        const focusable = Array.from(
+          dialogRef.current?.querySelectorAll(INTERACTIVE_SELECTOR) ?? [],
+        ).filter((element) =>
+          !element.disabled && element.getAttribute('aria-hidden') !== 'true');
 
-      if (showReject) return;
+        if (focusable.length === 0) {
+          event.preventDefault();
+          dialogRef.current?.focus();
+          return;
+        }
 
-      switch (e.key) {
-        case 'ArrowLeft':  e.preventDefault(); goPrev(); break;
-        case 'ArrowRight': e.preventDefault(); goNext(); break;
-        case 'Enter':      if (isPending) { e.preventDefault(); doApprove(); } break;
-        case 'a': case 'A': if (isPending) { e.preventDefault(); doApprove(); } break;
-        case 'r': case 'R': if (isPending) { e.preventDefault(); setShowReject(true); } break;
-        default: break;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey
+          && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+
+      if (isInteractiveElement(event.target)
+        || isInteractiveElement(document.activeElement)
+        || showReject) {
+        return;
+      }
+
+      switch (event.key) {
+        case 'ArrowLeft':
+          event.preventDefault();
+          goPrev();
+          break;
+        case 'ArrowRight':
+          event.preventDefault();
+          goNext();
+          break;
+        case 'a':
+        case 'A':
+          if (canDecide) {
+            event.preventDefault();
+            doApprove();
+          }
+          break;
+        case 'r':
+        case 'R':
+          if (canDecide) {
+            event.preventDefault();
+            setShowReject(true);
+          }
+          break;
+        default:
+          break;
       }
     }
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, showReject, reason, isPending, index, items.length, multi]);
+  }, [busy, showReject, canDecide, index, items.length, multi]);
 
   if (!item) return null;
 
@@ -241,9 +307,9 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
   const uploaded = item.screenshotUploadedAt
     ? new Date(item.screenshotUploadedAt).toLocaleString()
     : null;
-  const animateStamp = justDecidedKey === keyOf(item);
+  const animateStamp = justDecidedKey === key;
 
-  const navBtnStyle = (disabled) => ({
+  const navButtonStyle = (disabled) => ({
     width: 44, height: 44, borderRadius: 999, flex: 'none',
     border: '1px solid rgba(255,255,255,0.25)',
     background: 'rgba(255,255,255,0.08)', color: '#fff',
@@ -253,35 +319,65 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
 
   return ReactDOM.createPortal(
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label="Screenshot viewer"
-      onClick={onClose}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      aria-busy={busy || imgLoading || undefined}
+      tabIndex={-1}
+      className="overlay-backdrop"
       style={{
-        position: 'fixed', inset: 0, zIndex: 400,
+        position: 'fixed', inset: 0, zIndex: 1300,
         background: '#08090c', color: '#fff',
         display: 'flex', flexDirection: 'column',
       }}
     >
-      {/* Header / caption */}
       <div
-        onClick={(e) => e.stopPropagation()}
         style={{
           display: 'flex', alignItems: 'flex-start', gap: 14,
-          padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.12)', flex: 'none',
+          padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.12)',
+          flex: 'none',
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>{item.toolName || item.toolId}</span>
-            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+            <span id={titleId} style={{ fontSize: 14, fontWeight: 600 }}>
+              {item.toolName || item.toolId}
+            </span>
+            <span style={{
+              fontSize: 13, color: 'rgba(255,255,255,0.6)',
+              fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+            }}>
               {item.clientName ? `${item.clientName} (${item.clientId})` : item.clientId}
             </span>
-            {stamp && <Stamp tone={stamp.tone} label={stamp.label} animate={animateStamp} />}
+            {stamp && (
+              <Stamp
+                tone={stamp.tone}
+                label={stamp.label}
+                animate={animateStamp}
+              />
+            )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 11.5, color: 'rgba(255,255,255,0.5)', flexWrap: 'wrap' }}>
-            {item.memberName && <span style={{ color: 'rgba(255,255,255,0.7)' }}>{item.memberName}</span>}
-            {uploaded && <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>Uploaded {uploaded}</span>}
+          <div
+            id={descriptionId}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12, marginTop: 4,
+              fontSize: 11.5, color: 'rgba(255,255,255,0.5)', flexWrap: 'wrap',
+            }}
+          >
+            {item.memberName && (
+              <span style={{ color: 'rgba(255,255,255,0.7)' }}>{item.memberName}</span>
+            )}
+            {uploaded && (
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+              }}>
+                Uploaded {uploaded}
+              </span>
+            )}
+            {reviewMode && <span>{pendingRemaining} pending</span>}
+            {imageReady && <span>{zoomed ? 'Click image to fit' : 'Click image for actual size'}</span>}
             {effectiveStatus === 'Rejected' && effectiveReason && (
               <span style={{ color: '#ff9a9a' }}>Reason: {effectiveReason}</span>
             )}
@@ -289,19 +385,26 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
         </div>
 
         {multi && (
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', flex: 'none', paddingTop: 2 }}>
+          <div style={{
+            fontSize: 12, color: 'rgba(255,255,255,0.7)',
+            fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+            flex: 'none', paddingTop: 2,
+          }}>
             {index + 1} / {items.length}
           </div>
         )}
 
         <button
-          onClick={onClose}
+          type="button"
+          onClick={() => onClose?.()}
+          disabled={busy}
           title="Close (Esc)"
           aria-label="Close viewer"
           style={{
             width: 32, height: 32, borderRadius: 8, flex: 'none',
-            border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.08)',
-            color: '#fff', cursor: 'pointer',
+            border: '1px solid rgba(255,255,255,0.3)',
+            background: 'rgba(255,255,255,0.08)', color: '#fff',
+            cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.5 : 1,
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           }}
         >
@@ -309,107 +412,276 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
         </button>
       </div>
 
-      {/* Image stage (with side nav arrows) */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px' }}>
+      <div
+        onClick={(event) => {
+          if (event.target === event.currentTarget && !busy) onClose?.();
+        }}
+        style={{
+          flex: 1, minHeight: 0, display: 'flex', alignItems: 'center',
+          gap: 12, padding: '16px 20px',
+        }}
+      >
         {multi && (
-          <button onClick={(e) => { e.stopPropagation(); goPrev(); }} style={navBtnStyle(busy)} title="Previous (←)" aria-label="Previous screenshot">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              goPrev();
+            }}
+            disabled={busy}
+            style={navButtonStyle(busy)}
+            title="Previous (Left arrow)"
+            aria-label="Previous screenshot"
+          >
             <Icon name="chevleft" size={20} />
           </button>
         )}
 
         <div
-          onClick={(e) => e.stopPropagation()}
-          style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={(event) => event.stopPropagation()}
+          style={{
+            flex: 1, minWidth: 0, height: '100%', position: 'relative',
+            display: 'flex',
+            alignItems: zoomed ? 'flex-start' : 'center',
+            justifyContent: zoomed ? 'flex-start' : 'center',
+            overflow: zoomed ? 'auto' : 'hidden',
+          }}
         >
           {imgError ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.85)' }}>
+            <div
+              role="alert"
+              style={{
+                margin: 'auto', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', gap: 10, color: 'rgba(255,255,255,0.85)',
+                textAlign: 'center',
+              }}
+            >
               <Icon name="image" size={26} style={{ opacity: 0.6 }} />
               <div style={{ fontSize: 13 }}>{imgError}</div>
+              <button
+                type="button"
+                onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+                style={{
+                  minHeight: 32, padding: '0 12px', borderRadius: 8,
+                  border: '1px solid rgba(255,255,255,0.28)',
+                  background: 'rgba(255,255,255,0.08)', color: '#fff',
+                  fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                <Icon name="refresh" size={13} />
+                Retry full image
+              </button>
             </div>
           ) : url ? (
-            <img
-              src={url}
-              alt={`${item.toolName || item.toolId} full screenshot`}
-              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 8 }}
-            />
+            <>
+              {imgLoading && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  style={{
+                    margin: 'auto', display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', gap: 10, color: 'rgba(255,255,255,0.7)',
+                  }}
+                >
+                  <svg
+                    className="spin"
+                    width={26}
+                    height={26}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 3a9 9 0 1 1-9 9" />
+                  </svg>
+                  <div style={{ fontSize: 12.5 }}>Preparing full-size screenshot...</div>
+                </div>
+              )}
+              <img
+                src={url}
+                alt={`${item.toolName || item.toolId} full screenshot`}
+                onLoad={() => setImgLoading(false)}
+                onError={() => {
+                  setImgError('The full-size screenshot could not be displayed.');
+                  setImgLoading(false);
+                }}
+                onClick={() => setZoomed((current) => !current)}
+                title={zoomed ? 'Click to fit image' : 'Click for actual size'}
+                style={{
+                  display: imgLoading ? 'none' : 'block',
+                  maxWidth: zoomed ? 'none' : '100%',
+                  maxHeight: zoomed ? 'none' : '100%',
+                  objectFit: 'contain', borderRadius: 8,
+                  cursor: zoomed ? 'zoom-out' : 'zoom-in',
+                  margin: zoomed ? 0 : 'auto',
+                }}
+              />
+            </>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, color: 'rgba(255,255,255,0.7)' }}>
-              <svg className="spin" width={26} height={26} viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                gap: 10, color: 'rgba(255,255,255,0.7)',
+              }}
+            >
+              <svg
+                className="spin"
+                width={26}
+                height={26}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
                 <path d="M12 3a9 9 0 1 1-9 9" />
               </svg>
-              <div style={{ fontSize: 12.5 }}>{imgLoading ? 'Loading screenshot…' : ' '}</div>
+              <div style={{ fontSize: 12.5 }}>
+                {imgLoading ? 'Loading full-size screenshot...' : 'Preparing viewer...'}
+              </div>
             </div>
           )}
         </div>
 
         {multi && (
-          <button onClick={(e) => { e.stopPropagation(); goNext(); }} style={navBtnStyle(busy)} title="Next (→)" aria-label="Next screenshot">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              goNext();
+            }}
+            disabled={busy}
+            style={navButtonStyle(busy)}
+            title="Next (Right arrow)"
+            aria-label="Next screenshot"
+          >
             <Icon name="chevright" size={20} />
           </button>
         )}
       </div>
 
       {actionError && (
-        <div style={{ padding: '0 20px 8px', fontSize: 12.5, color: '#ff8a8a', textAlign: 'center' }}>{actionError}</div>
+        <div
+          role="alert"
+          style={{
+            padding: '0 20px 8px', fontSize: 12.5,
+            color: '#ff8a8a', textAlign: 'center',
+          }}
+        >
+          {actionError}
+        </div>
       )}
 
-      {/* Footer — review controls (when applicable) + key hints */}
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ padding: '12px 20px 18px', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', flex: 'none', borderTop: '1px solid rgba(255,255,255,0.10)' }}
-      >
-        {isPending && showReject && (
-          <div style={{ display: 'flex', gap: 8, width: '100%', maxWidth: 520 }}>
+      <div style={{
+        padding: '12px 20px 18px', display: 'flex', flexDirection: 'column',
+        gap: 10, alignItems: 'center', flex: 'none',
+        borderTop: '1px solid rgba(255,255,255,0.10)',
+      }}>
+        {canDecide && showReject && (
+          <div style={{ display: 'flex', gap: 8, width: '100%', maxWidth: 620, flexWrap: 'wrap' }}>
             <input
               ref={reasonInputRef}
               type="text"
-              placeholder="Reason for rejection… (required)"
+              placeholder="Reason for rejection (required)"
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
+              onChange={(event) => setReason(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
                   doReject(reason);
                 }
               }}
               disabled={busy}
               aria-label="Reason for rejection"
+              aria-invalid={!reason.trim()}
               style={{
-                flex: 1, padding: '8px 10px', fontSize: 13, borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.06)',
+                flex: '1 1 260px', minWidth: 0, padding: '8px 10px',
+                fontSize: 13, borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.25)',
+                background: 'rgba(255,255,255,0.06)',
                 color: '#fff', fontFamily: 'inherit', outline: 'none',
               }}
             />
             <Button
-              variant="primary" size="sm" icon="x"
-              disabled={busy || !reason.trim()}
+              variant="danger"
+              size="sm"
+              icon="x"
+              loading={busy}
+              disabled={!reason.trim()}
               onClick={() => doReject(reason)}
-              style={{ opacity: (busy || !reason.trim()) ? 0.6 : 1, cursor: (busy || !reason.trim()) ? 'not-allowed' : 'pointer' }}
             >
               Confirm reject
             </Button>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => { setShowReject(false); setReason(''); }}>
+            <Button variant="outline" size="sm" disabled={busy} onClick={cancelReject}>
               Cancel
             </Button>
           </div>
         )}
 
-        {isPending && !showReject && (
+        {isPending && !imageReady && (
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.62)', textAlign: 'center' }}>
+            {imgError
+              ? 'Reload the image before reviewing it.'
+              : 'Review controls will appear when the full image is ready.'}
+          </div>
+        )}
+
+        {canDecide && !showReject && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <Button variant="outline" size="sm" icon="x" disabled={busy} onClick={() => setShowReject(true)} title="Reject (R)">Reject</Button>
-            <Button variant="primary" size="sm" icon="check" disabled={busy} onClick={doApprove} title="Approve (A)">
-              {busy ? 'Working…' : 'Approve'}
+            <Button
+              variant="outline"
+              size="sm"
+              icon="x"
+              disabled={busy}
+              onClick={() => setShowReject(true)}
+              title="Reject (R)"
+            >
+              Reject
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon="check"
+              loading={busy}
+              onClick={doApprove}
+              title="Approve (A)"
+            >
+              Approve screenshot
             </Button>
           </div>
         )}
 
-        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', textAlign: 'center', fontFamily: 'var(--font-mono)', letterSpacing: '0.03em' }}>
-          {reviewMode ? (
-            <>A = Approve · R = Reject · ←/→ = Prev/Next · Esc = Close</>
-          ) : (
-            <>←/→ = Prev/Next · Esc = Close</>
-          )}
+        {reviewMode && !isPending && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              fontSize: 12, color: 'rgba(255,255,255,0.7)',
+            }}
+          >
+            <Icon name={effectiveStatus === 'Approved' ? 'check' : 'info'} size={13} />
+            {effectiveStatus === 'Approved'
+              ? 'This screenshot is approved.'
+              : effectiveStatus === 'Rejected'
+                ? 'This screenshot is rejected.'
+                : 'This screenshot has already been reviewed.'}
+          </div>
+        )}
+
+        <div style={{
+          fontSize: 11, color: 'rgba(255,255,255,0.5)', textAlign: 'center',
+          fontFamily: 'var(--font-mono)', letterSpacing: '0.03em',
+        }}>
+          {reviewMode
+            ? 'A = Approve | R = Reject | Left/Right = Navigate | Esc = Close'
+            : 'Left/Right = Navigate | Esc = Close'}
         </div>
       </div>
     </div>,

@@ -10,7 +10,7 @@ import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
 import FullScreenOverlay from '../components/FullScreenOverlay.jsx';
 import CycleGallery from '../components/CycleGallery.jsx';
 import {
-  StatusChip, SectionHeader, KpiCard, Card, Button, SearchBar, Modal,
+  StatusChip, SectionHeader, Card, Button, SearchBar, Modal,
   EmptyState, Skeleton, Stamp, Badge, Icon, SortHeader, useToasts,
   useClickOutside,
 } from '../components/ui.jsx';
@@ -21,7 +21,7 @@ import { useBreadcrumbs, useHeaderActions } from '../components/AppShell.jsx';
 // AppShell (the bespoke navy sidebar is gone, DESIGN §10). Navigation is
 // breadcrumb-driven: Overview → Department → Manager → Member, with an explicit
 // "← Back" affordance at every drill level. At-risk individuals surface at the
-// department level. KPI band uses KpiCard (Fraunces numerals); tables use real
+// department level. Portfolio analytics use compact charts; tables use real
 // <table> semantics + SortHeader. Add Tool / Add Client / reopen confirm all use
 // the Modal primitive — no window.confirm / alert anywhere.
 //
@@ -33,8 +33,8 @@ import { useBreadcrumbs, useHeaderActions } from '../components/AppShell.jsx';
 // AdminDonut.statusOf thresholds but maps to the icon+color status language.
 function pctTone(pct) {
   if (pct >= 90) return { tone: 'success', icon: 'check', label: 'Completed' };
-  if (pct >= 75) return { tone: 'warning', icon: 'half', label: 'On track' };
-  if (pct >= 50) return { tone: 'warning', icon: 'half', label: 'Below target' };
+  if (pct >= 75) return { tone: 'info', icon: 'half', label: 'On track' };
+  if (pct >= 50) return { tone: 'warning', icon: 'clock', label: 'Needs attention' };
   return { tone: 'danger', icon: 'alert', label: 'At risk' };
 }
 
@@ -66,6 +66,7 @@ const NS_CHIP_TONES = {
   danger:  { fg: 'var(--danger)',     bg: 'var(--danger-bg)' },
   success: { fg: 'var(--success)',    bg: 'var(--success-bg)' },
 };
+const EMPTY_DEPARTMENTS = [];
 
 // Generic sort helper for the data tables.
 function useSort(initialKey, initialDir = 'asc') {
@@ -174,7 +175,7 @@ function MetaPopover({ title, name, email }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function AdminView({
   user, cycle, cycles, onLogout, dark, onDark,
-  superUserRole, superUserDept, superUserDepts = [],
+  superUserRole, superUserDept, superUserDepts = EMPTY_DEPARTMENTS,
 }) {
   const toasts = useToasts();
 
@@ -249,11 +250,21 @@ export default function AdminView({
   }, [canAdd]);
 
   // ── Scope + search + zero-tool filtering ────────────────────────────────────
-  const scopedDepts = isAdmin ? depts : depts.filter((d) => superUserDepts.includes(d.departmentName));
+  const scopedDepts = useMemo(
+    () => (isAdmin
+      ? depts
+      : depts.filter((d) => superUserDepts.includes(d.departmentName))),
+    [depts, isAdmin, superUserDepts],
+  );
   const q = search.trim().toLowerCase();
-  const filteredDepts = scopedDepts
-    .filter((d) => d.totalAssociates > 0)
-    .filter((d) => !q || (d.departmentName ?? '').toLowerCase().includes(q) || (d.gfhName ?? '').toLowerCase().includes(q));
+  const filteredDepts = useMemo(
+    () => scopedDepts
+      .filter((d) => d.totalAssociates > 0)
+      .filter((d) => !q
+        || (d.departmentName ?? '').toLowerCase().includes(q)
+        || (d.gfhName ?? '').toLowerCase().includes(q)),
+    [q, scopedDepts],
+  );
 
   // ── KPI aggregates ──────────────────────────────────────────────────────────
   const totalUsers = scopedDepts.reduce((s, d) => s + (d.totalUsers ?? d.totalAssociates), 0);
@@ -267,7 +278,10 @@ export default function AdminView({
   }).length;
 
   // ── Notifications ───────────────────────────────────────────────────────────
-  const notifItems = buildNotifications(scopedDepts, cycle);
+  const notifItems = useMemo(
+    () => buildNotifications(scopedDepts, cycle),
+    [cycle, scopedDepts],
+  );
   const notifCount = notifRead ? 0 : Math.max(0, notifItems.length - 1);
 
   // ── Add Tool helpers ────────────────────────────────────────────────────────
@@ -442,21 +456,61 @@ function OverviewSection({
   completionPct, atRiskCount, cycle, dark, hasQuery, onDrill,
 }) {
   return (
-    <div className="stagger">
-      {/* KPI band */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-        gap: 14, marginBottom: 22,
-      }}>
-        <KpiCard label="Associates" value={totalUsers} sub={`${scopedCount} department${scopedCount === 1 ? '' : 's'}`} />
-        <KpiCard label="Associate-tools" value={totalAssociates} />
-        <KpiCard label="Submitted" value={submitted} sub={`${completionPct}% complete`} tone="success" />
-        <KpiCard label="Pending" value={pending} sub="open" tone={pending > 0 ? 'warning' : undefined} />
-        <KpiCard label="At-risk depts" value={atRiskCount} sub={`of ${scopedCount}`} tone={atRiskCount > 0 ? 'danger' : undefined} />
-      </div>
+    <div className="stagger" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {depts.length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
+          gap: 16, alignItems: 'stretch',
+        }}>
+          <Card pad={20} style={{ minWidth: 0 }}>
+            <SectionHeader
+              rule
+              right={<span style={{
+                fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)',
+                fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0,
+              }}>{cycle?.cycleName ?? ''}</span>}
+            >
+              Portfolio progress
+            </SectionHeader>
+
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)',
+              gap: 24, alignItems: 'center', padding: '20px 0 18px',
+            }}>
+              <AdminDonut pct={completionPct} size={150} strokeWidth={13} dark={dark} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 560,
+                  color: 'var(--text)', lineHeight: 1.08, letterSpacing: '-0.02em',
+                }}>
+                  {submitted.toLocaleString()} of {totalAssociates.toLocaleString()}
+                </div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>
+                  tool attestations submitted
+                </div>
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gap: 10, marginTop: 18,
+                }}>
+                  <PortfolioMetric label="People" value={totalUsers} />
+                  <PortfolioMetric label="Open" value={pending} tone="warning" />
+                  <PortfolioMetric label="Watchlist" value={atRiskCount} suffix={`/${scopedCount}`} />
+                </div>
+              </div>
+            </div>
+
+            <DeptCompletionChart depts={depts} onDrill={onDrill} />
+          </Card>
+
+          {cycle?.cycleID && (
+            <NeedsAttentionPanel depts={depts} cycleId={cycle.cycleID} onDrill={onDrill} />
+          )}
+        </div>
+      )}
 
       {/* Section header */}
-      <SectionHeader rule style={{ marginBottom: 14 }}
+      <SectionHeader rule
         right={<span style={{
           fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)',
           fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0,
@@ -472,21 +526,31 @@ function OverviewSection({
           message={hasQuery ? 'No departments match your search for this cycle.' : 'No departments are in scope for this cycle yet.'}
         />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 14, alignItems: 'start' }}>
           {depts.map((dept) => <DeptCard key={dept.departmentName} dept={dept} dark={dark} onDrill={onDrill} />)}
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* TASK D — department completion bar chart (comparable at a glance). */}
-      {depts.length > 0 && (
-        <DeptCompletionChart depts={depts} onDrill={onDrill} />
-      )}
-
-      {/* TASK C — "Needs attention" panel: non-submitted associates across the
-          shown departments, merged + tagged, worst-first. Lazy-fetched. */}
-      {depts.length > 0 && cycle?.cycleID && (
-        <NeedsAttentionPanel depts={depts} cycleId={cycle.cycleID} onDrill={onDrill} />
-      )}
+function PortfolioMetric({ label, value, suffix, tone }) {
+  const color = tone === 'warning' ? 'var(--warning)' : 'var(--text)';
+  return (
+    <div style={{
+      borderLeft: '1px solid var(--rule)', paddingLeft: 10, minWidth: 0,
+    }}>
+      <div style={{
+        fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
+        textTransform: 'uppercase', color: 'var(--text-faint)',
+      }}>{label}</div>
+      <div style={{
+        marginTop: 4, fontFamily: 'var(--font-display)', fontSize: 24,
+        lineHeight: 1, color, fontVariantNumeric: 'tabular-nums',
+      }}>
+        {Number(value).toLocaleString()}
+        {suffix && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{suffix}</span>}
+      </div>
     </div>
   );
 }
@@ -508,12 +572,12 @@ function DeptCompletionChart({ depts, onDrill }) {
   ), [depts]);
 
   return (
-    <Card style={{ marginTop: 22 }}>
-      <SectionHeader rule style={{ marginBottom: 14 }}
+    <div style={{ borderTop: '1px solid var(--rule)', paddingTop: 14 }}>
+      <SectionHeader style={{ marginBottom: 12 }}
         right={<span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0 }}>submitted / total</span>}>
-        Completion by department
+        Department comparison
       </SectionHeader>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {rows.map((r) => {
           const toneVar = `var(${statusOf(r.pct).varName})`;
           return (
@@ -521,15 +585,15 @@ function DeptCompletionChart({ depts, onDrill }) {
               key={r.name} type="button" onClick={() => onDrill(r.dept)}
               aria-label={`${r.name}: ${r.pct}% complete, ${r.submitted} of ${r.total} submitted. Open department.`}
               style={{
-                display: 'grid', gridTemplateColumns: 'minmax(120px, 1.6fr) 3fr auto',
-                alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
-                border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', padding: 0,
+                display: 'grid', gridTemplateColumns: 'minmax(120px, 1.35fr) 3fr auto',
+                alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
+                border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', padding: '2px 0',
               }}>
               <span style={{
                 fontSize: 12.5, fontWeight: 600, color: 'var(--text)',
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               }}>{r.name}</span>
-              <span style={{ position: 'relative', height: 18, borderRadius: 'var(--radius)', background: 'var(--surface-2)', overflow: 'hidden' }}>
+              <span style={{ position: 'relative', height: 10, borderRadius: 999, background: 'var(--surface-2)', overflow: 'hidden' }}>
                 <span style={{
                   position: 'absolute', inset: 0, width: `${r.pct}%`, background: toneVar,
                   borderRadius: 'var(--radius)', transition: 'width .4s ease-out',
@@ -538,7 +602,7 @@ function DeptCompletionChart({ depts, onDrill }) {
               <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end',
                 fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
-                fontSize: 12.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: 110,
+                fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: 96,
               }}>
                 <span style={{ color: 'var(--text-faint)' }}>{r.submitted}/{r.total}</span>
                 <b style={{ color: toneVar, fontWeight: 600, minWidth: 38, textAlign: 'right' }}>{r.pct}%</b>
@@ -547,7 +611,7 @@ function DeptCompletionChart({ depts, onDrill }) {
           );
         })}
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -562,7 +626,6 @@ function DeptCompletionChart({ depts, onDrill }) {
 function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
   const [rows, setRows] = useState(null);   // null = not loaded yet
   const [loading, setLoading] = useState(false);
-  const sort = useSort('completionPct', 'asc');
 
   // Re-key the fetch on the exact set of shown depts + cycle so a search filter
   // or cycle change re-pulls only the now-visible departments.
@@ -588,23 +651,13 @@ function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
     return () => { cancelled = true; };
   }, [deptKey, cycleId]);
 
-  const accessors = {
-    name: (r) => r.name,
-    departmentName: (r) => r.departmentName,
-    manager: (r) => r.managerName,
-    completionPct: (r) => r.completionPct,
-    status: (r) => nsStatusMeta(r.status).rank,
-  };
-  // Default worst-first: when sorting by %, break ties by status rank so
-  // "Not started" / "Action needed" float above same-% "In progress".
   const sorted = useMemo(() => {
-    const base = sortRows(rows ?? [], sort.sortKey, sort.sortDir, accessors);
-    if (sort.sortKey === 'completionPct' && sort.sortDir === 'asc') {
-      return [...base].sort((a, b) => (a.completionPct - b.completionPct)
-        || (nsStatusMeta(a.status).rank - nsStatusMeta(b.status).rank));
-    }
-    return base;
-  }, [rows, sort.sortKey, sort.sortDir]);
+    return [...(rows ?? [])].sort((a, b) =>
+      (nsStatusMeta(a.status).rank - nsStatusMeta(b.status).rank)
+      || (a.completionPct - b.completionPct)
+      || String(a.name).localeCompare(String(b.name)));
+  }, [rows]);
+  const visibleRows = sorted.slice(0, 5);
 
   const deptByName = useMemo(() => {
     const m = {};
@@ -613,8 +666,8 @@ function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
   }, [depts]);
 
   return (
-    <Card pad={0} style={{ marginTop: 22, overflow: 'hidden' }}>
-      <div style={{ padding: '16px 18px 4px' }}>
+    <Card pad={0} style={{ overflow: 'hidden', height: '100%', minHeight: 0 }}>
+      <div style={{ padding: '16px 18px 12px' }}>
         <SectionHeader
           right={!loading && rows ? (
             <span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0 }}>
@@ -623,77 +676,68 @@ function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
           ) : undefined}>
           Needs attention
         </SectionHeader>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, marginBottom: 4 }}>
-          Associates across these departments who have not finished attesting — worst first.
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+          The most urgent open attestations across the current scope.
         </div>
       </div>
 
       {loading || rows === null ? (
-        <div style={{ padding: '4px 18px 16px', display: 'flex', flexDirection: 'column', gap: 8 }} aria-busy="true">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} height={20} />)}
+        <div style={{ padding: '0 18px 16px', display: 'flex', flexDirection: 'column', gap: 10 }} aria-busy="true">
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={36} />)}
         </div>
       ) : sorted.length === 0 ? (
         <EmptyState icon="check" title="Everyone's on track"
           message="No associates in the shown departments are outstanding for this cycle."
           style={{ padding: '32px 24px' }} />
       ) : (
-        <div style={{ overflowX: 'auto', borderTop: '1px solid var(--border-subtle)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--rule)' }}>
-                <SortHeader label="Associate" active={sort.sortKey === 'name'} dir={sort.sortDir} onSort={() => sort.onSort('name')} style={{ padding: '0 18px' }} />
-                <SortHeader label="Department" active={sort.sortKey === 'departmentName'} dir={sort.sortDir} onSort={() => sort.onSort('departmentName')} style={{ padding: '0 18px' }} />
-                <SortHeader label="Manager" active={sort.sortKey === 'manager'} dir={sort.sortDir} onSort={() => sort.onSort('manager')} style={{ padding: '0 18px' }} />
-                <SortHeader label="% done" align="right" active={sort.sortKey === 'completionPct'} dir={sort.sortDir} onSort={() => sort.onSort('completionPct')} style={{ padding: '0 18px' }} />
-                <SortHeader label="Status" active={sort.sortKey === 'status'} dir={sort.sortDir} onSort={() => sort.onSort('status')} style={{ padding: '0 18px' }} />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((r, i) => {
-                const meta = nsStatusMeta(r.status);
-                const dept = deptByName[r.departmentName];
-                return (
-                  <tr key={`${r.departmentName}::${r.associateId}::${i}`}
-                    style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td style={{ padding: '10px 18px' }}>
-                      <div style={{ fontWeight: 500, color: 'var(--text)' }}>{r.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
-                        ID {r.associateId}{r.email ? ` · ${r.email}` : ''}
-                      </div>
-                    </td>
-                    <td style={{ padding: '10px 18px' }}>
-                      {dept ? (
-                        <button type="button" onClick={() => onDrill(dept)}
-                          aria-label={`Open ${r.departmentName}`}
-                          style={{
-                            border: 0, background: 'transparent', padding: 0, cursor: 'pointer',
-                            fontFamily: 'inherit', fontSize: 13, color: 'var(--accent)', fontWeight: 500, textAlign: 'left',
-                          }}>{r.departmentName}</button>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>{r.departmentName}</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '10px 18px', color: 'var(--text-muted)' }}>{r.managerName || '—'}</td>
-                    <td style={{ padding: '10px 18px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>
-                      {r.completionPct}%
-                    </td>
-                    <td style={{ padding: '10px 18px' }}>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 5,
-                        padding: '2px 9px', borderRadius: 999,
-                        background: NS_CHIP_TONES[meta.tone].bg,
-                        color: NS_CHIP_TONES[meta.tone].fg,
-                        fontSize: 11.5, fontWeight: 500, lineHeight: 1.4, whiteSpace: 'nowrap',
-                      }}>
-                        <Icon name={meta.icon} size={12} stroke={2} />
-                        {r.status}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          {visibleRows.map((r, i) => {
+            const meta = nsStatusMeta(r.status);
+            const dept = deptByName[r.departmentName];
+            return (
+              <button
+                key={`${r.departmentName}::${r.associateId}::${i}`}
+                type="button"
+                onClick={() => dept && onDrill(dept)}
+                style={{
+                  display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto',
+                  gap: 12, width: '100%', padding: '10px 18px', textAlign: 'left',
+                  border: 0, borderBottom: '1px solid var(--border-subtle)',
+                  background: 'transparent', cursor: dept ? 'pointer' : 'default', fontFamily: 'inherit',
+                }}
+              >
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block', fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {r.name}
+                  </span>
+                  <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {r.departmentName} · {r.managerName || 'No manager'}
+                  </span>
+                </span>
+                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                  <span style={{
+                    fontFamily: 'var(--font-mono)', color: 'var(--text)', fontSize: 12,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>{r.completionPct}%</span>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    color: NS_CHIP_TONES[meta.tone].fg, fontSize: 10.5, whiteSpace: 'nowrap',
+                  }}>
+                    <Icon name={meta.icon} size={11} stroke={2} />
+                    {r.status}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+          {sorted.length > visibleRows.length && (
+            <div style={{
+              padding: '10px 18px', fontSize: 11.5, color: 'var(--text-faint)',
+              fontFamily: 'var(--font-mono)', textAlign: 'center',
+            }}>
+              Showing {visibleRows.length} of {sorted.length} open associates
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -702,18 +746,19 @@ function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
 
 function OverviewSkeleton() {
   return (
-    <div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14, marginBottom: 22 }}>
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Card key={i} pad={16} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <Skeleton width={80} height={10} />
-            <Skeleton width={56} height={30} />
-            <Skeleton width={70} height={10} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 16 }}>
+        {Array.from({ length: 2 }).map((_, i) => (
+          <Card key={i} pad={20} style={{ display: 'flex', flexDirection: 'column', gap: 14, minHeight: 360 }}>
+            <Skeleton width={130} height={12} />
+            <Skeleton width="100%" height={1} />
+            <Skeleton width="100%" height={i === 0 ? 170 : 250} />
           </Card>
         ))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-        {Array.from({ length: 6 }).map((_, i) => (
+      <Skeleton width={160} height={13} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 14 }}>
+        {Array.from({ length: 4 }).map((_, i) => (
           <Card key={i} pad={20} style={{ display: 'flex', gap: 16, alignItems: 'center', minHeight: 140 }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
               <Skeleton width="70%" height={15} />
@@ -736,11 +781,20 @@ function DeptCard({ dept, dark, onDrill }) {
 
   const pct = dept.totalAssociates > 0 ? Math.round((dept.submittedCount / dept.totalAssociates) * 100) : 0;
   const st = pctTone(pct);
-  const breakdown = dept.clientBreakdown && dept.clientBreakdown.length > 0 ? dept.clientBreakdown : null;
+  const allBreakdown = dept.clientBreakdown && dept.clientBreakdown.length > 0 ? dept.clientBreakdown : [];
+  const breakdown = allBreakdown
+    .slice()
+    .sort((a, b) => {
+      const aPct = a.total > 0 ? a.submitted / a.total : 0;
+      const bPct = b.total > 0 ? b.submitted / b.total : 0;
+      return aPct - bPct;
+    })
+    .slice(0, 3);
+  const hiddenClients = Math.max(0, allBreakdown.length - breakdown.length);
 
   return (
     <Card pad={0} interactive onClick={() => onDrill(dept)} style={{ display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '22px 22px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '18px 20px' }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div>
             <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)', letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -784,12 +838,12 @@ function DeptCard({ dept, dark, onDrill }) {
         </div>
 
         <div style={{ flex: 'none' }}>
-          <AdminDonut pct={pct} size={116} strokeWidth={11} dark={dark} />
+          <AdminDonut pct={pct} size={104} strokeWidth={10} dark={dark} />
         </div>
       </div>
 
-      {breakdown && (
-        <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '4px 20px 14px' }}>
+      {breakdown.length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '2px 20px 14px' }}>
           {breakdown.map((c) => {
             const cpct = c.total > 0 ? Math.round((c.submitted / c.total) * 100) : 0;
             const cst = statusOf(cpct);
@@ -807,6 +861,14 @@ function DeptCard({ dept, dark, onDrill }) {
               </div>
             );
           })}
+          {hiddenClients > 0 && (
+            <div style={{
+              marginTop: 12, fontSize: 11, color: 'var(--text-faint)',
+              fontFamily: 'var(--font-mono)',
+            }}>
+              +{hiddenClients} more client{hiddenClients === 1 ? '' : 's'} in department view
+            </div>
+          )}
         </div>
       )}
     </Card>

@@ -22,11 +22,20 @@ namespace DashyDashboard.Api.Data;
 ///   DEMO06 Carlos Mendez - InProgress; not-used remarks, Pending screenshot, and a not-used row
 ///                          retaining an old Approved screenshot.
 ///
+/// Admin dashboard distribution:
+///   DTC Settlements      - Completed (about 92%).
+///   Government Settlement - On track (about 82%).
+///   International        - Below target (about 62%).
+///   Reorg                - At risk (about 38%).
+///
 /// Safety and repeatability:
 ///   - Program.cs calls this only in Development when EnableDemoSeedData is true.
 ///   - The connected database must match DeveloperMode:DemoSeedDatabaseName, which defaults to
 ///     DashyDashboardDev.
-///   - Only DEMO-prefixed users and their dependent rows are written.
+///   - DEMO-prefixed users provide detailed status and screenshot fixtures.
+///   - The dashboard distribution pass only promotes otherwise-empty/incomplete current-cycle
+///     rows in the guarded development database. It never touches screenshot rows, rows with
+///     remarks, production configuration, access grants, users, or historical cycles.
 ///   - DEMO01..DEMO06 access is reconciled to the assignment manifest on every run. Attestation
 ///     cleanup is limited to the selected cycle; historical rows in other cycles are preserved.
 ///   - Dates and timestamps are derived from the selected cycle, never from the run time.
@@ -46,6 +55,17 @@ public static class SeedData
     private const string Reviewer = "PRV001";
     private const string ClientUs = "DTC-US";
     private const string ClientUk = "DTC-UK";
+    private const string DashboardFixtureRemark =
+        "Development dashboard fixture: tool was not used during this cycle.";
+
+    private static readonly IReadOnlyDictionary<string, DashboardTarget> DashboardTargets =
+        new Dictionary<string, DashboardTarget>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["DTC Settlements"] = new(92, "Completed"),
+            ["Government Settlement"] = new(82, "On track"),
+            ["International"] = new(62, "Below target"),
+            ["Reorg"] = new(38, "At risk")
+        };
 
     private static readonly IReadOnlyDictionary<string, string> ExpectedStates =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -346,7 +366,11 @@ public static class SeedData
         await UpsertSubmitLogAsync(db, cycleId, "DEMO05", "Priya Nair", 3, submittedAt);
         await db.SaveChangesAsync();
 
+        await ReconcileDashboardDistributionAsync(db, cycle, submittedAt, logger);
+        await db.SaveChangesAsync();
+
         await ValidateCoverageAsync(db, cycleId, assignments, screenshotCoverage, logger);
+        await ValidateDashboardDistributionAsync(db, cycleId, logger);
 
         logger.LogInformation(
             "Demo seed complete: 6 demo members upserted for active cycle {CycleId} ({CycleName}).",
@@ -818,6 +842,238 @@ public static class SeedData
             db.AttestationLogs.RemoveRange(matchingLogs.Skip(1));
     }
 
+    private static async Task ReconcileDashboardDistributionAsync(
+        AppDbContext db,
+        Cycle cycle,
+        DateTime submittedAt,
+        ILogger logger)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var targetDepartments = DashboardTargets.Keys.ToArray();
+
+        var activeAccessRows = await (
+            from access in db.UserToolAccess.AsNoTracking()
+            join user in db.Users.AsNoTracking()
+                on access.AssociateId equals user.AssociateId
+            where access.AssociateId != null
+                  && access.ClientID != null
+                  && access.Access
+                  && access.GivenDate <= today
+                  && (access.ToDate == null || access.ToDate >= today)
+                  && user.Department != null
+                  && targetDepartments.Contains(user.Department)
+            select new
+            {
+                user.Department,
+                AssociateId = access.AssociateId!,
+                ClientId = access.ClientID!,
+                access.ToolID
+            })
+            .ToListAsync();
+
+        var activeAccess = activeAccessRows
+            .Select(row => new DashboardAccess(
+                row.Department!,
+                row.AssociateId,
+                row.ClientId,
+                row.ToolID))
+            .ToList();
+
+        var associateIds = activeAccess
+            .Select(row => row.AssociateId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var cycleRows = await db.ToolCycleAttestations
+            .Where(row =>
+                row.CycleID == cycle.CycleID
+                && associateIds.Contains(row.AssociateId))
+            .ToListAsync();
+        var rowsByKey = cycleRows.ToDictionary(
+            row => DemoToolKey.Create(row.AssociateId, row.ClientID, row.ToolID));
+
+        foreach (var (department, target) in DashboardTargets)
+        {
+            var departmentAccess = activeAccess
+                .Where(row => string.Equals(
+                    row.Department,
+                    department,
+                    StringComparison.OrdinalIgnoreCase))
+                .OrderBy(row => row.AssociateId, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(row => row.ClientId, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(row => row.ToolId)
+                .ToList();
+
+            if (departmentAccess.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Development dashboard fixture cannot seed '{department}': no active tool access was found.");
+            }
+
+            var currentDone = departmentAccess.Count(access =>
+                rowsByKey.TryGetValue(access.Key, out var row)
+                && CountsAsDashboardDone(row));
+            var desiredDone = (int)Math.Ceiling(departmentAccess.Count * target.Percent / 100d);
+            var promotionsNeeded = Math.Max(0, desiredDone - currentDone);
+
+            var candidates = departmentAccess
+                .Where(access =>
+                    !access.AssociateId.StartsWith("DEMO", StringComparison.OrdinalIgnoreCase)
+                    && (!rowsByKey.TryGetValue(access.Key, out var row)
+                        || IsSafeDashboardCandidate(row)))
+                .OrderBy(access => rowsByKey.ContainsKey(access.Key) ? 1 : 0)
+                .ThenBy(access => access.AssociateId, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(access => access.ClientId, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(access => access.ToolId)
+                .Take(promotionsNeeded)
+                .ToList();
+
+            if (candidates.Count != promotionsNeeded)
+            {
+                throw new InvalidOperationException(
+                    $"Development dashboard fixture cannot reach {target.Percent}% for '{department}' "
+                    + $"without overwriting screenshot or remark data. Needed {promotionsNeeded} safe rows, "
+                    + $"found {candidates.Count}.");
+            }
+
+            foreach (var access in candidates)
+            {
+                if (!rowsByKey.TryGetValue(access.Key, out var row))
+                {
+                    row = new ToolCycleAttestation
+                    {
+                        CycleID = cycle.CycleID,
+                        AssociateId = access.AssociateId,
+                        ClientID = access.ClientId,
+                        ToolID = access.ToolId
+                    };
+                    db.ToolCycleAttestations.Add(row);
+                    rowsByKey.Add(access.Key, row);
+                }
+
+                row.HadAccess = true;
+                row.UsedThisCycle = false;
+                row.AttestationStatus = "Submitted";
+                row.SubmittedAt = submittedAt;
+                row.Remarks = DashboardFixtureRemark;
+                ClearScreenshot(row);
+            }
+
+            logger.LogInformation(
+                "Development dashboard fixture: {Department} promoted {PromotedCount} rows toward {TargetPercent}% ({ExpectedBand}).",
+                department,
+                candidates.Count,
+                target.Percent,
+                target.ExpectedBand);
+        }
+    }
+
+    private static bool IsSafeDashboardCandidate(ToolCycleAttestation row)
+        => !CountsAsDashboardDone(row)
+           && row.ScreenshotPath is null
+           && row.ScreenshotHash is null
+           && row.ScreenshotStatus is null
+           && string.IsNullOrWhiteSpace(row.Remarks);
+
+    private static bool CountsAsDashboardDone(ToolCycleAttestation row)
+        => !row.HadAccess
+           || row.UsedThisCycle == false
+           || (row.UsedThisCycle == true
+               && row.ScreenshotStatus == ScreenshotCompletion.StatusApproved);
+
+    private static async Task ValidateDashboardDistributionAsync(
+        AppDbContext db,
+        int cycleId,
+        ILogger logger)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var targetDepartments = DashboardTargets.Keys.ToArray();
+        var activeAccess = await (
+            from access in db.UserToolAccess.AsNoTracking()
+            join user in db.Users.AsNoTracking()
+                on access.AssociateId equals user.AssociateId
+            where access.AssociateId != null
+                  && access.ClientID != null
+                  && access.Access
+                  && access.GivenDate <= today
+                  && (access.ToDate == null || access.ToDate >= today)
+                  && user.Department != null
+                  && targetDepartments.Contains(user.Department)
+            select new
+            {
+                user.Department,
+                AssociateId = access.AssociateId!,
+                ClientId = access.ClientID!,
+                access.ToolID
+            })
+            .ToListAsync();
+
+        var associateIds = activeAccess
+            .Select(row => row.AssociateId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var cycleRows = await db.ToolCycleAttestations.AsNoTracking()
+            .Where(row =>
+                row.CycleID == cycleId
+                && associateIds.Contains(row.AssociateId))
+            .ToListAsync();
+        var rowsByKey = cycleRows.ToDictionary(
+            row => DemoToolKey.Create(row.AssociateId, row.ClientID, row.ToolID));
+
+        var results = activeAccess
+            .GroupBy(row => row.Department!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var total = group.Count();
+                    var done = group.Count(access =>
+                        rowsByKey.TryGetValue(
+                            DemoToolKey.Create(access.AssociateId, access.ClientId, access.ToolID),
+                            out var row)
+                        && CountsAsDashboardDone(row));
+                    var percent = total == 0 ? 0 : done * 100d / total;
+                    return new DashboardResult(total, done, percent, DashboardBand(percent));
+                },
+                StringComparer.OrdinalIgnoreCase);
+
+        var mismatches = DashboardTargets
+            .Where(target =>
+                !results.TryGetValue(target.Key, out var result)
+                || !string.Equals(
+                    result.Band,
+                    target.Value.ExpectedBand,
+                    StringComparison.OrdinalIgnoreCase))
+            .Select(target =>
+            {
+                if (!results.TryGetValue(target.Key, out var result))
+                    return $"{target.Key}: no active access";
+
+                return $"{target.Key}: expected {target.Value.ExpectedBand}, "
+                       + $"actual {result.Band} ({result.Percent:F1}%)";
+            })
+            .ToList();
+
+        if (mismatches.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Development dashboard distribution validation failed: {string.Join("; ", mismatches)}.");
+        }
+
+        logger.LogInformation(
+            "Development dashboard distribution verified for cycle {CycleId}: {Distribution}.",
+            cycleId,
+            string.Join(
+                ", ",
+                results.OrderBy(result => result.Key).Select(result =>
+                    $"{result.Key}={result.Value.Percent:F1}% ({result.Value.Band})")));
+    }
+
+    private static string DashboardBand(double percent)
+        => percent >= 90 ? "Completed"
+            : percent >= 75 ? "On track"
+            : percent >= 50 ? "Below target"
+            : "At risk";
+
     private static async Task ValidateCoverageAsync(
         AppDbContext db,
         int cycleId,
@@ -991,6 +1247,23 @@ public static class SeedData
         int ToolId,
         string? ToolUserId,
         bool HasCycleRow);
+
+    private sealed record DashboardTarget(int Percent, string ExpectedBand);
+
+    private sealed record DashboardAccess(
+        string Department,
+        string AssociateId,
+        string ClientId,
+        int ToolId)
+    {
+        public DemoToolKey Key => DemoToolKey.Create(AssociateId, ClientId, ToolId);
+    }
+
+    private sealed record DashboardResult(
+        int Total,
+        int Done,
+        double Percent,
+        string Band);
 
     private readonly record struct DemoToolKey(string AssociateId, string ClientId, int ToolId)
     {

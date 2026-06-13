@@ -8,10 +8,10 @@ import React from 'react';
  * @returns {{ key: string, label: string, varName: string }}
  */
 export function statusOf(pct) {
-  if (pct >= 90) return { key: 'completed', label: 'Completed',    varName: '--st-completed' };
-  if (pct >= 75) return { key: 'ontrack',   label: 'On Track',     varName: '--st-ontrack'   };
-  if (pct >= 50) return { key: 'below',     label: 'Below Target', varName: '--st-below'     };
-  return               { key: 'risk',      label: 'At Risk',      varName: '--st-risk'      };
+  if (pct >= 90) return { key: 'completed', label: 'Completed',       varName: '--st-completed' };
+  if (pct >= 75) return { key: 'ontrack',   label: 'On track',        varName: '--st-ontrack'   };
+  if (pct >= 50) return { key: 'below',     label: 'Needs attention', varName: '--st-below'     };
+  return                 { key: 'risk',      label: 'At risk',         varName: '--st-risk'      };
 }
 
 /**
