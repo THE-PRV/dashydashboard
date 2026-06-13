@@ -84,13 +84,15 @@ function fmtDueDate(s) {
 
 // One ledger header label cell for the tool table.
 function Th({ children, width, align = 'left' }) {
+  // A flat header band — NOT sticky (sticky-to-viewport detached it from the
+  // table and left it floating over blank space when the page scrolled).
   return (
     <th style={{
-      textAlign: align, padding: '0 14px 7px', width,
-      fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
-      textTransform: 'uppercase', color: 'var(--text-muted)',
-      borderBottom: '1px solid var(--rule)', whiteSpace: 'nowrap',
-      position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1,
+      textAlign: align, padding: '9px 14px', width,
+      fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600,
+      letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)',
+      background: 'var(--surface-2)', borderBottom: '1px solid var(--border)',
+      whiteSpace: 'nowrap',
     }}>{children}</th>
   );
 }
@@ -778,8 +780,8 @@ function CompletionRing({ attested, total }) {
   const pct = total > 0 ? Math.max(0, Math.min(1, attested / total)) : 0;
   const display = Math.round(pct * 100);
   const complete = total > 0 && attested >= total;
-  const SIZE = 116;
-  const STROKE = 11;
+  const SIZE = 118;
+  const STROKE = 8;
   const r = (SIZE - STROKE) / 2;
   const circ = 2 * Math.PI * r;
   const arc = complete ? 'var(--success)' : 'var(--accent)';
@@ -794,7 +796,10 @@ function CompletionRing({ attested, total }) {
           <circle cx={SIZE / 2} cy={SIZE / 2} r={r} fill="none" stroke="var(--surface-2)" strokeWidth={STROKE} />
           <circle
             cx={SIZE / 2} cy={SIZE / 2} r={r} fill="none"
-            stroke={arc} strokeWidth={STROKE} strokeLinecap="round"
+            stroke={arc} strokeWidth={STROKE}
+            /* round cap looks good mid-progress, but at 100% it overlaps the
+               seam and leaves a nub — switch to a flush butt cap when complete. */
+            strokeLinecap={complete ? 'butt' : 'round'}
             strokeDasharray={circ}
             strokeDashoffset={circ * (1 - pct)}
             style={{ transition: 'stroke-dashoffset .4s ease-out, stroke .2s ease-out' }}

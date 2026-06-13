@@ -120,22 +120,23 @@
 }
 
 :root[data-theme="dark"] {
-  /* ── Night ledger ───────────────────────────────────────────────────────── */
-  --bg:            #13161D;
-  --surface:       #1B1F28;
-  --surface-2:     #242936;
+  /* ── Night ledger — neutral slate-grey, no blue cast ────────────────────── */
+  --bg:            #17181B;
+  --surface:       #202225;
+  --surface-2:     #2A2D31;
   --text:          #E8E6DF;  /* paper-toned */
-  --text-muted:    #9CA1AC;
-  --text-faint:    #6E7480;
-  --border:        #2B3140;
+  --text-muted:    #A2A4A8;
+  --text-faint:    #72757A;
+  --border:        #33363B;
   --border-subtle: color-mix(in oklab, var(--border), transparent 45%);
-  --border-hover:  #3E4658;
-  --rule:          #353C4D;
+  --border-hover:  #474A50;
+  --rule:          #3B3E44;
 
-  --accent:      #8FA7EE;
-  --accent-2:    #A9BCF4;
-  --accent-fg:   #10131A;
-  --accent-glow: rgba(143, 167, 238, .16);
+  /* Accent: cool silver-slate (deliberately desaturated — not blue). */
+  --accent:      #BCC0C8;
+  --accent-2:    #CED2D9;
+  --accent-fg:   #191A1D;
+  --accent-glow: rgba(188, 192, 200, .15);
 
   --success:        #5CC58C;
   --success-bg:     rgba(92, 197, 140, .13);
@@ -155,7 +156,7 @@
 
   --avatar-1-bg: rgba(214, 190, 130, .16);  --avatar-1-fg: #D9C490;
   --avatar-2-bg: rgba(120, 196, 152, .14);  --avatar-2-fg: #9DD3B4;
-  --avatar-3-bg: rgba(143, 167, 238, .16);  --avatar-3-fg: #AFC1F2;
+  --avatar-3-bg: rgba(188, 192, 200, .16);  --avatar-3-fg: #C8CCD4;
   --avatar-4-bg: rgba(224, 152, 138, .14);  --avatar-4-fg: #E2AFA4;
   --avatar-5-bg: rgba(186, 152, 216, .14);  --avatar-5-fg: #C9AEDD;
   --avatar-6-bg: rgba(126, 192, 200, .14);  --avatar-6-fg: #A4CFD5;
@@ -173,8 +174,8 @@
   --toggle-notused-bg: rgba(217, 168, 78, .18);  --toggle-notused-fg: #E3BC72;
 
   --gradient-hero:
-    radial-gradient(1100px 440px at 0% 0%, rgba(143, 167, 238, .05), transparent 60%),
-    radial-gradient(900px 360px at 100% 100%, rgba(143, 167, 238, .04), transparent 60%);
+    radial-gradient(1100px 440px at 0% 0%, rgba(188, 192, 200, .05), transparent 60%),
+    radial-gradient(900px 360px at 100% 100%, rgba(188, 192, 200, .04), transparent 60%);
 
   --st-completed:    #5CC58C;  --st-completed-bg: rgba(92, 197, 140, .14);
   --st-ontrack:      #D9A84E;  --st-ontrack-bg:   rgba(217, 168, 78, .14);
@@ -191,7 +192,7 @@
   --side-text:        var(--text);
   --side-text-muted:  var(--text-muted);
   --side-faint:       var(--text-faint);
-  --side-logo:        linear-gradient(135deg, #8FA7EE, #5F7BD6);
+  --side-logo:        linear-gradient(135deg, #C8CCD4, #8A8E96);
   --side-active-bg:   color-mix(in oklab, var(--accent) 14%, transparent);
   --side-active-text: var(--accent);
   --side-role:        var(--accent);

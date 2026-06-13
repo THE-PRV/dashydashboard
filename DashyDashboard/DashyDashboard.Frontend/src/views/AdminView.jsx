@@ -641,20 +641,43 @@ function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
     // skipped (empty list) instead of blowing up the whole panel.
     Promise.all(
       depts.map((d) =>
-        getNonSubmitted(d.departmentName, cycleId)
-          .then((list) => (Array.isArray(list) ? list : []).map((r) => ({ ...r, departmentName: d.departmentName })))
+        getDeptManagers(d.departmentName, cycleId)
+          .then((data) => {
+            const gfhName = data?.gfhName || d.gfhName || null;
+            return (data?.managers ?? []).map((m) => {
+              const total = m.totalTools ?? m.totalAssociates ?? 0;
+              const submitted = m.submittedCount ?? 0;
+              const pct = total > 0 ? Math.round((submitted / total) * 100) : 0;
+              return {
+                associateId: m.associateId,
+                name: m.fullName || m.managerName || 'Unnamed manager',
+                departmentName: d.departmentName,
+                gfhName,
+                total,
+                submitted,
+                open: Math.max(0, total - submitted),
+                pct,
+              };
+            });
+          })
           .catch(() => [])
       )
     )
-      .then((groups) => { if (!cancelled) { setRows(groups.flat()); setLoading(false); } })
+      .then((groups) => {
+        if (!cancelled) {
+          // Only managers whose teams still have work outstanding this cycle.
+          setRows(groups.flat().filter((m) => m.total > 0 && m.open > 0));
+          setLoading(false);
+        }
+      })
       .catch(() => { if (!cancelled) { setRows([]); setLoading(false); } });
     return () => { cancelled = true; };
   }, [deptKey, cycleId]);
 
   const sorted = useMemo(() => {
     return [...(rows ?? [])].sort((a, b) =>
-      (nsStatusMeta(a.status).rank - nsStatusMeta(b.status).rank)
-      || (a.completionPct - b.completionPct)
+      (a.pct - b.pct)              // worst completion first
+      || (b.open - a.open)         // then the most still open
       || String(a.name).localeCompare(String(b.name)));
   }, [rows]);
   const visibleRows = sorted.slice(0, 5);
@@ -671,37 +694,38 @@ function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
         <SectionHeader
           right={!loading && rows ? (
             <span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0 }}>
-              {sorted.length} {sorted.length === 1 ? 'associate' : 'associates'}
+              {sorted.length} {sorted.length === 1 ? 'manager' : 'managers'}
             </span>
           ) : undefined}>
           Needs attention
         </SectionHeader>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
-          The most urgent open attestations across the current scope.
+          Managers whose teams are furthest from finishing this cycle.
         </div>
       </div>
 
       {loading || rows === null ? (
         <div style={{ padding: '0 18px 16px', display: 'flex', flexDirection: 'column', gap: 10 }} aria-busy="true">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={36} />)}
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} height={40} />)}
         </div>
       ) : sorted.length === 0 ? (
-        <EmptyState icon="check" title="Everyone's on track"
-          message="No associates in the shown departments are outstanding for this cycle."
+        <EmptyState icon="check" title="Every team's on track"
+          message="No managers in the shown departments have outstanding work this cycle."
           style={{ padding: '32px 24px' }} />
       ) : (
         <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
           {visibleRows.map((r, i) => {
-            const meta = nsStatusMeta(r.status);
             const dept = deptByName[r.departmentName];
+            const st = statusOf(r.pct);
             return (
               <button
                 key={`${r.departmentName}::${r.associateId}::${i}`}
                 type="button"
                 onClick={() => dept && onDrill(dept)}
+                title={dept ? `Open ${r.departmentName}` : undefined}
                 style={{
                   display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto',
-                  gap: 12, width: '100%', padding: '10px 18px', textAlign: 'left',
+                  gap: 12, width: '100%', padding: '11px 18px', textAlign: 'left',
                   border: 0, borderBottom: '1px solid var(--border-subtle)',
                   background: 'transparent', cursor: dept ? 'pointer' : 'default', fontFamily: 'inherit',
                 }}
@@ -711,21 +735,18 @@ function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
                     {r.name}
                   </span>
                   <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {r.departmentName} · {r.managerName || 'No manager'}
+                    {r.departmentName}{r.gfhName ? ` · GFH ${r.gfhName}` : ''}
                   </span>
                 </span>
                 <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                   <span style={{
-                    fontFamily: 'var(--font-mono)', color: 'var(--text)', fontSize: 12,
+                    fontFamily: 'var(--font-mono)', color: `var(${st.varName})`, fontSize: 13, fontWeight: 600,
                     fontVariantNumeric: 'tabular-nums',
-                  }}>{r.completionPct}%</span>
+                  }}>{r.pct}%</span>
                   <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    color: NS_CHIP_TONES[meta.tone].fg, fontSize: 10.5, whiteSpace: 'nowrap',
-                  }}>
-                    <Icon name={meta.icon} size={11} stroke={2} />
-                    {r.status}
-                  </span>
+                    fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)',
+                    fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                  }}>{r.open} of {r.total} open</span>
                 </span>
               </button>
             );
@@ -735,7 +756,7 @@ function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
               padding: '10px 18px', fontSize: 11.5, color: 'var(--text-faint)',
               fontFamily: 'var(--font-mono)', textAlign: 'center',
             }}>
-              Showing {visibleRows.length} of {sorted.length} open associates
+              Showing {visibleRows.length} of {sorted.length} managers behind
             </div>
           )}
         </div>
