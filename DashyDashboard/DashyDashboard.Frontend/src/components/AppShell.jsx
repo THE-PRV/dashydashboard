@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Icon, ProfileMenu, CycleMenu, CycleRuler, Tooltip } from './ui.jsx';
+import logoUrl from '../assets/broadridge-logo.svg';
 
 const RAIL_KEY = 'dashy.rail';
 const RAIL_WIDTH = 230;
@@ -89,27 +90,59 @@ function buildNav({ role, isManager, isSuperAdmin, canOpenUserDirectory, hasRole
   ];
 }
 
-function Wordmark({ collapsed }) {
+// The Broadridge wordmark is a monochrome navy SVG. We paint it with a CSS mask so
+// it inherits --text (ink on paper / paper on night) instead of disappearing in dark.
+function BrandMark({ collapsed }) {
+  const mask = {
+    background: 'var(--text)',
+    WebkitMaskImage: `url(${logoUrl})`, maskImage: `url(${logoUrl})`,
+    WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+  };
   if (collapsed) {
+    // Show only the square emblem (leftmost ~31/160 of the artwork).
     return (
-      <div aria-label="Attest — Broadridge access review" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        lineHeight: 1, color: 'var(--text)', textAlign: 'center', userSelect: 'none',
-      }}>A</div>
+      <div role="img" aria-label="Broadridge" style={{
+        ...mask, width: 24, height: 28,
+        WebkitMaskSize: '124px 28px', maskSize: '124px 28px',
+        WebkitMaskPosition: 'left center', maskPosition: 'left center',
+      }} />
     );
   }
   return (
     <div style={{ userSelect: 'none', minWidth: 0 }}>
+      <div role="img" aria-label="Broadridge" style={{
+        ...mask, width: 140, height: 31,
+        WebkitMaskSize: 'contain', maskSize: 'contain',
+        WebkitMaskPosition: 'left center', maskPosition: 'left center',
+      }} />
       <div style={{
-        fontFamily: 'var(--font-display)', fontSize: 21, fontWeight: 600,
-        lineHeight: 1.1, color: 'var(--text)', letterSpacing: '-0.01em',
-      }}>Attest</div>
-      <div style={{
-        marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 9.5, fontWeight: 500,
-        letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-faint)',
+        marginTop: 7, fontFamily: 'var(--font-mono)', fontSize: 9.5, fontWeight: 500,
+        letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-faint)',
         whiteSpace: 'nowrap',
-      }}>Broadridge · BPO</div>
+      }}>Access Review</div>
     </div>
+  );
+}
+
+// Theme toggle — lives in the header (top-right), not the rail.
+function ThemeToggle({ dark, onDark }) {
+  return (
+    <Tooltip label={dark ? 'Light mode' : 'Dark mode'}>
+      <button
+        type="button"
+        aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+        onClick={() => onDark(!dark)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 32, height: 32, flex: 'none',
+          border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+          background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer',
+          transition: 'color .15s, border-color .15s',
+        }}
+      >
+        <Icon name={dark ? 'sun' : 'moon'} size={15} />
+      </button>
+    </Tooltip>
   );
 }
 
@@ -255,7 +288,7 @@ export default function AppShell({
         borderBottom: '1px solid var(--border)', flex: 'none',
         display: 'flex', justifyContent: collapsed ? 'center' : 'flex-start',
       }}>
-        <Wordmark collapsed={collapsed} />
+        <BrandMark collapsed={collapsed} />
       </div>
 
       {/* Nav */}
@@ -284,19 +317,11 @@ export default function AppShell({
 
       <div style={{ flex: 1 }} />
 
-      {/* Bottom block: theme, collapse, profile */}
+      {/* Bottom block: collapse, profile (theme toggle lives in the header) */}
       <div style={{
         borderTop: '1px solid var(--border)', padding: 8, flex: 'none',
         display: 'flex', flexDirection: 'column', gap: 2,
       }}>
-        {typeof onDark === 'function' && (
-          <RailButton
-            icon={dark ? 'sun' : 'moon'}
-            label={dark ? 'Light mode' : 'Dark mode'}
-            collapsed={collapsed}
-            onClick={() => onDark(!dark)}
-          />
-        )}
         {!isMobile && (
           <RailButton
             icon="panel"
@@ -345,6 +370,7 @@ export default function AppShell({
             <Breadcrumbs items={crumbs} />
             <div style={{ flex: 1 }} />
             {headerActions}
+            {typeof onDark === 'function' && <ThemeToggle dark={dark} onDark={onDark} />}
             {cycle && <CycleMenu cycle={cycle} cycles={cycles} onCycle={onCycle} />}
           </header>
 
