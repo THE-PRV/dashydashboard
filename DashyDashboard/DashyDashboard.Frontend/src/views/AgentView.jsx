@@ -20,7 +20,6 @@ import {
 import { getMyAttestations, toggleUsed, toggleHadAccess, submitAll, addRemark } from '../api/attestations.js';
 import RemarksModal from '../components/RemarksModal.jsx';
 import ScreenshotCell from '../components/ScreenshotCell.jsx';
-import ScreenshotBatchModal from '../components/ScreenshotBatchModal.jsx';
 import Lightbox from '../components/Lightbox.jsx';
 import { asToolIdKey } from '../lib/contracts.js';
 
@@ -107,7 +106,6 @@ export default function AgentView({ user, cycle, onLogout }) {
   const [submitting, setSubmitting] = useState(false);
   const [remarkPane, setRemarkPane] = useState(null);
   const [focusedRow, setFocusedRow] = useState(null); // rowKey of the paste target
-  const [batchOpen, setBatchOpen] = useState(false);
   const [gateOffending, setGateOffending] = useState(null); // Set of rowKeys from the API's offendingRows
   const [notUsedRemarkDrafts, setNotUsedRemarkDrafts] = useState({}); // rowKey -> draft text
   const [savingRemarkRows, setSavingRemarkRows] = useState(() => new Set());
@@ -453,11 +451,6 @@ export default function AgentView({ user, cycle, onLogout }) {
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, flex: 'none' }}>
-              <Button variant="outline" icon="upload" onClick={() => setBatchOpen(true)}
-                disabled={isSubmitted || pastDue}
-                title={isSubmitted ? 'Attestation is locked' : pastDue ? 'Past the due date' : 'Upload many screenshots at once'}>
-                Batch upload
-              </Button>
               <Tooltip label={submitDisabledReason || ''} side="bottom">
                 <Button variant="primary" icon="check" onClick={handleSubmitAll}
                   loading={submitting} disabled={!canSubmit}
@@ -748,15 +741,6 @@ export default function AgentView({ user, cycle, onLogout }) {
         />
       )}
 
-      {batchOpen && (
-        <ScreenshotBatchModal
-          cycleId={cycle.cycleID}
-          clients={clients}
-          onClose={() => setBatchOpen(false)}
-          onUploaded={() => loadAttestations({ preserveExpansion: true })}
-        />
-      )}
-
       {lightboxItems && (
         <Lightbox items={lightboxItems} onClose={() => setLightboxItems(null)} />
       )}
@@ -863,38 +847,30 @@ function ProofReasonCell({
   const needsInlineReason = (noAccess || notUsed) && needsReason && !isSubmitted;
 
   // ── PROOF slot (fixed width) ────────────────────────────────────────────────
-  let proofSlot;
-  if (isProofRow) {
-    proofSlot = (
-      <ScreenshotCell
-        cycleId={cycle.cycleID}
-        associateId={user.associateId}
-        clientId={clientId}
-        toolId={tool.toolID}
-        screenshotStatus={tool.screenshotStatus}
-        screenshotRejectReason={tool.screenshotRejectReason}
-        screenshotUploadedAt={tool.screenshotUploadedAt}
-        readOnly={isSubmitted || pastDue}
-        isFocused={focused}
-        verdictAnim={verdictAnim}
-        onFocus={onFocus}
-        onUploaded={onUploaded}
-        onError={onError}
-        onView={onViewScreenshot}
-        registerPasteTarget={registerPasteTarget}
-      />
-    );
-  } else if (tool.screenshotStatus) {
-    // Stale screenshot on a no-access / not-used row → keep a view affordance.
-    proofSlot = (
-      <Button variant="outline" size="sm" icon="eye" onClick={onViewScreenshot}
-        aria-label="View previous screenshot" style={{ height: 26 }}>
-        View
-      </Button>
-    );
-  } else {
-    proofSlot = <span aria-hidden="true" style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>—</span>;
-  }
+  // EVERY row renders the ScreenshotCell — on a no-access / not-used row the upload
+  // is OPTIONAL (the required reason lives in the NOTE slot), so it shows a softer
+  // "Attach (optional)" tile. The cell already handles the thumbnail + view
+  // affordance when a screenshot exists.
+  const proofSlot = (
+    <ScreenshotCell
+      cycleId={cycle.cycleID}
+      associateId={user.associateId}
+      clientId={clientId}
+      toolId={tool.toolID}
+      screenshotStatus={tool.screenshotStatus}
+      screenshotRejectReason={tool.screenshotRejectReason}
+      screenshotUploadedAt={tool.screenshotUploadedAt}
+      readOnly={isSubmitted || pastDue}
+      optional={!isProofRow}
+      isFocused={focused}
+      verdictAnim={verdictAnim}
+      onFocus={onFocus}
+      onUploaded={onUploaded}
+      onError={onError}
+      onView={onViewScreenshot}
+      registerPasteTarget={registerPasteTarget}
+    />
+  );
 
   // ── NOTE slot ───────────────────────────────────────────────────────────────
   let noteSlot;

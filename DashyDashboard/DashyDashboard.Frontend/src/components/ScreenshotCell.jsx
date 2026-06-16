@@ -40,6 +40,7 @@ export default function ScreenshotCell({
   screenshotRejectReason,
   screenshotUploadedAt,
   readOnly = false,
+  optional = false,
   isFocused = false,
   verdictAnim = false,
   onFocus,
@@ -175,7 +176,7 @@ export default function ScreenshotCell({
         style={{ display: 'inline-flex', flexDirection: 'column', gap: 4 }}
       >
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileChange} />
-        <Tooltip label={canUploadFresh ? 'Click, drag-drop, or press Ctrl+V to attach proof' : 'Read-only after the due date'} side="top">
+        <Tooltip label={canUploadFresh ? (optional ? 'Optional — click, drag-drop, or Ctrl+V to attach proof' : 'Click, drag-drop, or press Ctrl+V to attach proof') : 'Read-only after the due date'} side="top">
           <button
             type="button"
             disabled={!canUploadFresh || busy}
@@ -195,7 +196,7 @@ export default function ScreenshotCell({
             }}
           >
             <Icon name={busy ? 'upload' : 'camera'} size={14} className={busy ? 'spin' : undefined} />
-            {busy ? 'Uploading…' : 'Attach proof'}
+            {busy ? 'Uploading…' : optional ? 'Attach (optional)' : 'Attach proof'}
           </button>
         </Tooltip>
 

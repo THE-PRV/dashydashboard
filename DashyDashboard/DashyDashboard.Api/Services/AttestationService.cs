@@ -386,89 +386,6 @@ public class AttestationService
     }
 
     /// <summary>
-    /// Batch upload. Each file is named <c>{clientId}_{toolId}.ext</c> (split on the FIRST underscore;
-    /// clientIds never contain '_'). The tool part is matched against the caller's OWN attestation
-    /// rows in this cycle (by int ToolID string-form, then ToolName) BEFORE any disk path is composed.
-    /// Matched files flow through the same single-upload pipeline. Unmatched / disallowed / invalid
-    /// files are reported per-file; partial success is fine. Writes ONE log row with the saved count.
-    /// </summary>
-    public async Task<BatchScreenshotResult> UploadBatchAsync(
-        string associateId, int cycleId, IReadOnlyList<(string FileName, byte[] Bytes)> files)
-    {
-        await AssertCycleExistsAsync(cycleId);
-
-        // The caller's attestation rows for this cycle: the only legitimate upload targets.
-        var rows = await _db.ToolCycleAttestations
-            .Where(a => a.AssociateId == associateId && a.CycleID == cycleId)
-            .ToListAsync();
-
-        // Tool names for matching the filename's tool part against a human-readable name.
-        var toolNames = await _db.ClientTools.AsNoTracking()
-            .Where(ct => rows.Select(r => r.ToolID).Distinct().Contains(ct.ToolID))
-            .ToDictionaryAsync(ct => ct.ToolID, ct => ct.ToolName ?? "");
-
-        var results = new List<BatchScreenshotItemResult>();
-        var saved = 0;
-
-        foreach (var (fileName, bytes) in files)
-        {
-            var (clientId, toolPart) = SplitBatchFileName(fileName);
-            if (clientId is null)
-            {
-                results.Add(new BatchScreenshotItemResult(fileName, "unmatched",
-                    "Name must be {clientId}_{toolId}.ext"));
-                continue;
-            }
-
-            // Match against the caller's own rows: clientId exact, tool part = ToolID (string form)
-            // or the tool's name (case-insensitive). This binds to a validated DB row before any
-            // disk path is built.
-            var match = rows.FirstOrDefault(r =>
-                string.Equals(r.ClientID, clientId, StringComparison.OrdinalIgnoreCase)
-                && (string.Equals(r.ToolID.ToString(), toolPart, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(toolNames.GetValueOrDefault(r.ToolID, ""), toolPart, StringComparison.OrdinalIgnoreCase)));
-
-            if (match is null)
-            {
-                results.Add(new BatchScreenshotItemResult(fileName, "unmatched",
-                    "No matching tool access for this cycle."));
-                continue;
-            }
-
-            try
-            {
-                EnsureUploadAllowed(match);
-            }
-            catch (InvalidOperationException ex)
-            {
-                results.Add(new BatchScreenshotItemResult(fileName, "notAllowed", ex.Message));
-                continue;
-            }
-
-            try
-            {
-                ApplyUpload(match, associateId, cycleId, match.ClientID, match.ToolID, bytes);
-                saved++;
-                results.Add(new BatchScreenshotItemResult(fileName, "saved", null));
-            }
-            catch (ArgumentException)
-            {
-                results.Add(new BatchScreenshotItemResult(fileName, "invalidImage",
-                    "File is not a valid image."));
-            }
-        }
-
-        if (saved > 0)
-        {
-            LogScreenshotEvent(cycleId, associateId, saved,
-                $"Batch screenshot upload: {saved} of {files.Count} saved (Pending review).");
-        }
-
-        await _db.SaveChangesAsync();
-        return new BatchScreenshotResult(results);
-    }
-
-    /// <summary>
     /// Loads (or creates) the attestation row for an upload, asserting access and the §7 upload rule.
     /// Throws KeyNotFoundException (tool/cycle missing) / UnauthorizedAccessException (no access) /
     /// InvalidOperationException (upload not allowed).
@@ -500,20 +417,14 @@ public class AttestationService
     }
 
     /// <summary>
-    /// §7 upload rules (WI-1): no-access rows (HadAccess == false) and not-used rows
-    /// (HadAccess == true && UsedThisCycle == false) are exempt and never carry a screenshot.
-    /// Undecided rows (UsedThisCycle == null) STAY uploadable — associates often upload before
-    /// toggling usage, and a fresh row is created with UsedThisCycle null.
+    /// §7 upload rule. Any row may carry a screenshot. For no-access rows (HadAccess == false) and
+    /// not-used rows (HadAccess == true && UsedThisCycle == false) the screenshot is OPTIONAL — the
+    /// written reason stays required and the optional image never gates submission or completion
+    /// (WI-1 / Work Order Task 1). Used and undecided rows are unchanged.
     /// After the cycle due date the ONLY allowed upload is re-uploading a currently-Rejected screenshot.
     /// </summary>
     private void EnsureUploadAllowed(ToolCycleAttestation att)
     {
-        if (!att.HadAccess)
-            throw new InvalidOperationException("This tool is marked as no access and does not require a screenshot.");
-
-        if (att.UsedThisCycle == false)
-            throw new InvalidOperationException("This tool is marked as not used and does not require a screenshot.");
-
         var cycle = _db.Cycles.AsNoTracking().First(c => c.CycleID == att.CycleID);
         var pastDue = DateOnly.FromDateTime(DateTime.Today) > cycle.DueDate;
         if (pastDue && att.ScreenshotStatus != "Rejected")
@@ -534,15 +445,6 @@ public class AttestationService
         att.ScreenshotReviewedBy = null;
         att.ScreenshotReviewedAt = null;
         att.ScreenshotRejectReason = null;
-    }
-
-    /// <summary>Splits a batch filename on the FIRST underscore into (clientId, toolPart).</summary>
-    private static (string? ClientId, string ToolPart) SplitBatchFileName(string fileName)
-    {
-        var name = Path.GetFileNameWithoutExtension(fileName ?? "");
-        var us = name.IndexOf('_');
-        if (us <= 0 || us == name.Length - 1) return (null, "");
-        return (name[..us], name[(us + 1)..]);
     }
 
     /// <summary>Adds an AttestationLogs row for a screenshot event. Summary is truncated to fit (100).</summary>
