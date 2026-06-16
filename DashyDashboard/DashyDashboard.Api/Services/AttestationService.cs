@@ -1,3 +1,4 @@
+using DashyDashboard.Api.Common;
 using DashyDashboard.Api.Data;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Models.DTOs;
@@ -222,77 +223,83 @@ public class AttestationService
     {
         await AssertCycleExistsAsync(cycleId);
 
-        var alreadySubmitted = await _db.ToolCycleAttestations.AsNoTracking()
-            .AnyAsync(tca => tca.AssociateId == associateId
-                          && tca.CycleID == cycleId
-                          && tca.AttestationStatus == "Submitted");
-        if (alreadySubmitted)
-            throw new InvalidOperationException("Attestation for this cycle has already been submitted.");
-
-        var missingRemark = await _db.ToolCycleAttestations.AsNoTracking()
-            .AnyAsync(tca => tca.CycleID == cycleId
-                          && tca.AssociateId == associateId
-                          && tca.HadAccess == false
-                          && (tca.Remarks == null || tca.Remarks.Trim() == ""));
-        if (missingRemark)
-            throw new InvalidOperationException("Add a remark for each tool you marked as 'No access' before submitting.");
-
-        // Screenshot gate (§7): every non-exempt row (HadAccess != false) that is being submitted
-        // must have a screenshot in Pending or Approved state. Rejected or NULL blocks submission.
-        // No-access rows (HadAccess == false) are exempt.
-        var screenshotBlocking = await _db.ToolCycleAttestations.AsNoTracking()
-            .Where(tca => tca.CycleID == cycleId
-                       && tca.AssociateId == associateId
-                       && tca.HadAccess
-                       && tca.UsedThisCycle.HasValue
-                       && (tca.ScreenshotStatus == null
-                           || !SubmittableScreenshotStatuses.Contains(tca.ScreenshotStatus)))
-            .Select(tca => new ScreenshotGateRow(tca.ClientID, tca.ToolID))
-            .ToListAsync();
-        if (screenshotBlocking.Count > 0)
-            throw new ScreenshotGateException(screenshotBlocking);
-
         var today = DateOnly.FromDateTime(DateTime.Today);
         var accessKeys = await _db.UserToolAccess.AsNoTracking()
             .Where(uta => uta.AssociateId == associateId
                        && uta.Access
                        && uta.GivenDate <= today
                        && (uta.ToDate == null || uta.ToDate >= today))
-            .Select(uta => new { uta.ClientID, uta.ToolID })
+            .Select(uta => new { ClientID = uta.ClientID!, uta.ToolID })
             .ToListAsync();
+
+        var accessKeySet = accessKeys
+            .Select(key => (key.ClientID, key.ToolID))
+            .ToHashSet();
+
+        var allRows = await _db.ToolCycleAttestations
+            .Where(tca => tca.AssociateId == associateId && tca.CycleID == cycleId)
+            .ToListAsync();
+
+        var activeRows = allRows
+            .Where(tca => accessKeySet.Contains((tca.ClientID, tca.ToolID)))
+            .ToList();
+
+        var activeRowsByKey = activeRows
+            .ToDictionary(tca => (tca.ClientID, tca.ToolID));
+
+        var unanswered = accessKeys
+            .Where(key => !activeRowsByKey.TryGetValue((key.ClientID, key.ToolID), out var row)
+                       || !ScreenshotCompletion.IsAnswered(row.HadAccess, row.UsedThisCycle))
+            .ToList();
+        if (unanswered.Count > 0)
+            throw new InvalidOperationException(
+                "Answer every currently active access tool before submitting.");
+
+        if (accessKeys.Count > 0
+            && activeRows.All(tca => tca.AttestationStatus == "Submitted"))
+        {
+            throw new InvalidOperationException("Attestation for this cycle has already been submitted.");
+        }
+
+        var missingNoAccessRemark = activeRows
+            .Any(tca => !tca.HadAccess
+                     && string.IsNullOrWhiteSpace(tca.Remarks));
+        if (missingNoAccessRemark)
+            throw new InvalidOperationException("Add a remark for each tool you marked as 'No access' before submitting.");
+
+        // Not-used remark gate (WI-1): a row the associate marked "Not used"
+        // (HadAccess == true && UsedThisCycle == false) must explain why — require a remark,
+        // mirroring the no-access remark gate above.
+        var missingNotUsedRemark = activeRows
+            .Any(tca => tca.HadAccess
+                     && tca.UsedThisCycle == false
+                     && string.IsNullOrWhiteSpace(tca.Remarks));
+        if (missingNotUsedRemark)
+            throw new InvalidOperationException("Add a remark for each tool you marked as 'Not used' before submitting.");
+
+        // Screenshot gate (§7, WI-1): only USED rows (HadAccess == true && UsedThisCycle == true)
+        // require a screenshot in Pending or Approved state. Rejected or NULL blocks submission.
+        // No-access rows (HadAccess == false) AND not-used rows (UsedThisCycle == false) are exempt.
+        var screenshotBlocking = activeRows
+            .Where(tca => tca.HadAccess
+                       && tca.UsedThisCycle == true
+                       && (tca.ScreenshotStatus == null
+                           || !SubmittableScreenshotStatuses.Contains(tca.ScreenshotStatus)))
+            .Select(tca => new ScreenshotGateRow(tca.ClientID, tca.ToolID))
+            .ToList();
+        if (screenshotBlocking.Count > 0)
+            throw new ScreenshotGateException(screenshotBlocking);
 
         var now = DateTime.UtcNow;
 
-        foreach (var key in accessKeys)
+        foreach (var att in activeRows)
         {
-            var att = await _db.ToolCycleAttestations
-                .FirstOrDefaultAsync(a =>
-                    a.AssociateId == associateId && a.CycleID == cycleId
-                    && a.ClientID == key.ClientID && a.ToolID == key.ToolID);
-
-            if (att is null)
-            {
-                att = new ToolCycleAttestation
-                {
-                    CycleID = cycleId, AssociateId = associateId,
-                    ClientID = key.ClientID, ToolID = key.ToolID
-                };
-                _db.ToolCycleAttestations.Add(att);
-            }
-
-            // Submit tools the user actually decided on: either answered usage, or declared no access.
-            if (att.UsedThisCycle.HasValue || att.HadAccess == false)
-            {
-                att.AttestationStatus = "Submitted";
-                att.SubmittedAt = now;
-                if (remarks != null) att.Remarks = remarks;
-            }
+            att.AttestationStatus = "Submitted";
+            att.SubmittedAt = now;
+            if (remarks != null) att.Remarks = remarks;
         }
 
-        var submittedRows = _db.ToolCycleAttestations.Local
-            .Where(a => a.AssociateId == associateId && a.CycleID == cycleId
-                     && a.AttestationStatus == "Submitted")
-            .ToList();
+        var submittedRows = activeRows;
 
         var user = await _db.Users.AsNoTracking()
             .FirstOrDefaultAsync(u => u.AssociateId == associateId);
@@ -331,10 +338,29 @@ public class AttestationService
                      && a.AttestationStatus == "Submitted")
             .ToListAsync();
 
+        // Soft reopen (WI-7): flip submitted rows back to editable ("Pending" — the only
+        // editable status the rest of the codebase knows) and clear SubmittedAt. KEEP answers,
+        // remarks and all screenshot fields / review states untouched.
         foreach (var row in rows)
         {
-            row.AttestationStatus = "InProgress";
+            row.AttestationStatus = "Pending";
             row.SubmittedAt = null;
+        }
+
+        if (rows.Count > 0)
+        {
+            var actor = await _db.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.AssociateId == actorAssociateId);
+            var actorName = actor is not null ? actor.FullName : actorAssociateId;
+            var summary = $"Reopened {targetAssociateId}'s attestation ({rows.Count} rows) by {actorName}";
+            _db.AttestationLogs.Add(new AttestationLog
+            {
+                CycleID = cycleId,
+                AssociateId = actorAssociateId, // log against the ACTOR (reviewer), like review events
+                SubmittedAt = DateTime.UtcNow,
+                ToolCount = rows.Count,
+                Summary = summary.Length > 100 ? summary[..100] : summary
+            });
         }
 
         await _db.SaveChangesAsync();
@@ -357,89 +383,6 @@ public class AttestationService
             $"Screenshot uploaded for {clientId}/{toolId} (Pending review).");
 
         await _db.SaveChangesAsync();
-    }
-
-    /// <summary>
-    /// Batch upload. Each file is named <c>{clientId}_{toolId}.ext</c> (split on the FIRST underscore;
-    /// clientIds never contain '_'). The tool part is matched against the caller's OWN attestation
-    /// rows in this cycle (by int ToolID string-form, then ToolName) BEFORE any disk path is composed.
-    /// Matched files flow through the same single-upload pipeline. Unmatched / disallowed / invalid
-    /// files are reported per-file; partial success is fine. Writes ONE log row with the saved count.
-    /// </summary>
-    public async Task<BatchScreenshotResult> UploadBatchAsync(
-        string associateId, int cycleId, IReadOnlyList<(string FileName, byte[] Bytes)> files)
-    {
-        await AssertCycleExistsAsync(cycleId);
-
-        // The caller's attestation rows for this cycle: the only legitimate upload targets.
-        var rows = await _db.ToolCycleAttestations
-            .Where(a => a.AssociateId == associateId && a.CycleID == cycleId)
-            .ToListAsync();
-
-        // Tool names for matching the filename's tool part against a human-readable name.
-        var toolNames = await _db.ClientTools.AsNoTracking()
-            .Where(ct => rows.Select(r => r.ToolID).Distinct().Contains(ct.ToolID))
-            .ToDictionaryAsync(ct => ct.ToolID, ct => ct.ToolName ?? "");
-
-        var results = new List<BatchScreenshotItemResult>();
-        var saved = 0;
-
-        foreach (var (fileName, bytes) in files)
-        {
-            var (clientId, toolPart) = SplitBatchFileName(fileName);
-            if (clientId is null)
-            {
-                results.Add(new BatchScreenshotItemResult(fileName, "unmatched",
-                    "Name must be {clientId}_{toolId}.ext"));
-                continue;
-            }
-
-            // Match against the caller's own rows: clientId exact, tool part = ToolID (string form)
-            // or the tool's name (case-insensitive). This binds to a validated DB row before any
-            // disk path is built.
-            var match = rows.FirstOrDefault(r =>
-                string.Equals(r.ClientID, clientId, StringComparison.OrdinalIgnoreCase)
-                && (string.Equals(r.ToolID.ToString(), toolPart, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(toolNames.GetValueOrDefault(r.ToolID, ""), toolPart, StringComparison.OrdinalIgnoreCase)));
-
-            if (match is null)
-            {
-                results.Add(new BatchScreenshotItemResult(fileName, "unmatched",
-                    "No matching tool access for this cycle."));
-                continue;
-            }
-
-            try
-            {
-                EnsureUploadAllowed(match);
-            }
-            catch (InvalidOperationException ex)
-            {
-                results.Add(new BatchScreenshotItemResult(fileName, "notAllowed", ex.Message));
-                continue;
-            }
-
-            try
-            {
-                ApplyUpload(match, associateId, cycleId, match.ClientID, match.ToolID, bytes);
-                saved++;
-                results.Add(new BatchScreenshotItemResult(fileName, "saved", null));
-            }
-            catch (ArgumentException)
-            {
-                results.Add(new BatchScreenshotItemResult(fileName, "invalidImage",
-                    "File is not a valid image."));
-            }
-        }
-
-        if (saved > 0)
-        {
-            LogScreenshotEvent(cycleId, associateId, saved,
-                $"Batch screenshot upload: {saved} of {files.Count} saved (Pending review).");
-        }
-
-        await _db.SaveChangesAsync();
-        return new BatchScreenshotResult(results);
     }
 
     /// <summary>
@@ -474,14 +417,14 @@ public class AttestationService
     }
 
     /// <summary>
-    /// §7 upload rules: no-access rows (HadAccess == false) are exempt and never carry a screenshot.
+    /// §7 upload rule. Any row may carry a screenshot. For no-access rows (HadAccess == false) and
+    /// not-used rows (HadAccess == true && UsedThisCycle == false) the screenshot is OPTIONAL — the
+    /// written reason stays required and the optional image never gates submission or completion
+    /// (WI-1 / Work Order Task 1). Used and undecided rows are unchanged.
     /// After the cycle due date the ONLY allowed upload is re-uploading a currently-Rejected screenshot.
     /// </summary>
     private void EnsureUploadAllowed(ToolCycleAttestation att)
     {
-        if (!att.HadAccess)
-            throw new InvalidOperationException("This tool is marked as no access and does not require a screenshot.");
-
         var cycle = _db.Cycles.AsNoTracking().First(c => c.CycleID == att.CycleID);
         var pastDue = DateOnly.FromDateTime(DateTime.Today) > cycle.DueDate;
         if (pastDue && att.ScreenshotStatus != "Rejected")
@@ -502,15 +445,6 @@ public class AttestationService
         att.ScreenshotReviewedBy = null;
         att.ScreenshotReviewedAt = null;
         att.ScreenshotRejectReason = null;
-    }
-
-    /// <summary>Splits a batch filename on the FIRST underscore into (clientId, toolPart).</summary>
-    private static (string? ClientId, string ToolPart) SplitBatchFileName(string fileName)
-    {
-        var name = Path.GetFileNameWithoutExtension(fileName ?? "");
-        var us = name.IndexOf('_');
-        if (us <= 0 || us == name.Length - 1) return (null, "");
-        return (name[..us], name[(us + 1)..]);
     }
 
     /// <summary>Adds an AttestationLogs row for a screenshot event. Summary is truncated to fit (100).</summary>

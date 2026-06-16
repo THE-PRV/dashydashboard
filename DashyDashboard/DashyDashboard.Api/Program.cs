@@ -72,6 +72,28 @@ builder.Services.AddRateLimiter(opt =>
 
 var app = builder.Build();
 
+// Dev-only demo seeder (WI-10). Runs in Development when DeveloperMode:EnableDemoSeedData is true.
+// SeedData also enforces the configured demo database name and only writes DEMO-prefixed rows.
+// Wrapped so missing fixtures or another seed failure never prevents the API from starting.
+if (app.Environment.IsDevelopment()
+    && app.Configuration.GetValue<bool>("DeveloperMode:EnableDemoSeedData"))
+{
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var screenshots = scope.ServiceProvider.GetRequiredService<ScreenshotStorageService>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("DemoSeed");
+        await DashyDashboard.Api.Data.SeedData.EnsureSeededAsync(db, screenshots, app.Configuration, logger);
+    }
+    catch (Exception ex)
+    {
+        app.Services.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("DemoSeed")
+            .LogError(ex, "Demo seed failed; continuing startup.");
+    }
+}
+
 // Redirect the sub-application root without a trailing slash (e.g. /dashydashboard) to
 // /dashydashboard/ so the SPA's relative asset URLs (Vite base './') resolve under the
 // sub-path instead of the site root. IIS does not add the slash itself for an in-process app.
@@ -127,7 +149,7 @@ app.Use(async (ctx, next) =>
     {
         ctx.Response.Headers.Append("Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; " +
-            "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';");
+            "font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self';");
     }
     await next();
 });

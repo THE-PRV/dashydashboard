@@ -1,16 +1,29 @@
-// Shared atoms — ported from the prototype's ui.jsx
-import React, { useEffect, useRef, useState } from 'react';
-import brandLogo from '../assets/broadridge-logo.svg';
+// ─────────────────────────────────────────────────────────────────────────────
+// "The Ledger" core primitives — see DESIGN.md (binding contract).
+// Every export that existed before the redesign keeps its name + prop API;
+// visuals are re-skinned to the paper/ink language. New primitives (Stamp,
+// Toasts, Modal, Drawer, EmptyState, Skeleton, Tooltip, KpiCard,
+// SegmentedControl, SortHeader, CycleRuler) live alongside.
+// No hex literals here — colors come from CSS vars in index.css.
+// ─────────────────────────────────────────────────────────────────────────────
+import React, {
+  createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState,
+} from 'react';
+import { createPortal } from 'react-dom';
 
-const ICONS = {
+// ── Icons ────────────────────────────────────────────────────────────────────
+// Inline 24×24 stroke paths. Extend this map rather than importing icon libs.
+export const ICONS = {
   search:   <path d="M11 3a8 8 0 1 0 5.2 14.1l3.85 3.85 1.4-1.4-3.85-3.85A8 8 0 0 0 11 3Zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z" />,
   check:    <path d="M5 12.5 9.5 17 19 7" />,
   x:        <path d="M5 5l14 14M19 5L5 19" />,
   chevdown: <path d="M5 8.5 12 15.5l7-7" />,
+  chevup:   <path d="M5 15.5 12 8.5l7 7" />,
   chevright:<path d="M9 5l7 7-7 7" />,
   chevleft: <path d="M15 5l-7 7 7 7" />,
   filter:   <path d="M3 5h18l-7 9v5l-4 2v-7L3 5z" />,
   plus:     <path d="M12 5v14M5 12h14" />,
+  minus:    <path d="M5 12h14" />,
   history:  <path d="M3 3v6h6M3.5 9a9 9 0 1 1-.2 6M12 7v5l3.5 2" />,
   edit:     <path d="M4 20h4l10-10-4-4L4 16v4z M14 6l4 4" />,
   user:     <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4 0-7 2-7 5v1h14v-1c0-3-3-5-7-5Z" />,
@@ -35,10 +48,33 @@ const ICONS = {
   download: <path d="M12 4v12M7 11l5 5 5-5M4 18v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" />,
   image:    <path d="M4 4h16v16H4z M9 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M5 18l5-6 4 4 2-2 4 5" />,
   refresh:  <path d="M3 12a9 9 0 0 1 15.3-6.4L21 8M21 3v5h-5 M21 12a9 9 0 0 1-15.3 6.4L3 16M3 21v-5h5" />,
+  // ── Ledger additions ──
+  circle:   <circle cx="12" cy="12" r="8" />,
+  half:     <><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor" stroke="none" /></>,
+  alert:    <path d="M12 3.5 2.7 19.5h18.6L12 3.5ZM12 10v4M12 16.8v.01" />,
+  info:     <path d="M12 4a8 8 0 1 0 8 8 8 8 0 0 0-8-8Zm0 3.5v.01M12 11v5" />,
+  calendar: <path d="M4 6h16v15H4zM4 10h16M8 3v4M16 3v4" />,
+  key:      <path d="M14 4a6 6 0 0 0-5.8 7.5L3 16.7V21h4.3l1.2-1.2v-2h2l1.5-1.5A6 6 0 1 0 14 4Zm2 5a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" />,
+  menu:     <path d="M4 6h16M4 12h16M4 18h16" />,
+  panel:    <path d="M4 4h16v16H4zM9.5 4v16M13 10l-1.8 2 1.8 2" />,
+  eye:      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Zm9.5 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />,
+  trash:    <path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5" />,
+  sort:     <path d="M8 8 12 4l4 4M8 16l4 4 4-4" />,
 };
 
+// Spinner used by Button's loading state (open arc + .spin rotation).
+function Spinner({ size = 13 }) {
+  return (
+    <svg className="spin" width={size} height={size} viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"
+         style={{ flex: 'none' }}>
+      <path d="M12 3a9 9 0 1 1-9 9" />
+    </svg>
+  );
+}
+
 // Small hook: closes a popover when the user clicks outside it.
-function useClickOutside(ref, onClose) {
+export function useClickOutside(ref, onClose) {
   useEffect(() => {
     function onDown(e) {
       if (ref.current && !ref.current.contains(e.target)) onClose();
@@ -60,22 +96,27 @@ export function Icon({ name, size = 16, stroke = 1.6, fill, style, className }) 
   );
 }
 
+// ── Avatar — initials on a warm paper tint (DESIGN §8) ──────────────────────
 export function Avatar({ initials, size = 28, accent }) {
-  const hue = (initials.charCodeAt(0) + initials.charCodeAt(1 % initials.length)) * 17 % 360;
-  const bg = accent ?? `oklch(0.62 0.13 ${hue})`;
+  const safe = (initials || '??').slice(0, 2);
+  const n = ((safe.charCodeAt(0) + safe.charCodeAt(safe.length - 1)) % 6) + 1;
   return (
     <div style={{
       width: size, height: size, borderRadius: 999,
-      background: bg, color: '#fff',
+      background: accent ?? `var(--avatar-${n}-bg)`,
+      color: accent ? 'var(--accent-fg)' : `var(--avatar-${n}-fg)`,
+      boxShadow: accent ? 'none' : 'inset 0 0 0 1px var(--border-subtle)',
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      fontWeight: 600, fontSize: size * 0.4, letterSpacing: '-0.02em',
-      flex: 'none',
-    }}>{initials}</div>
+      fontWeight: 600, fontSize: Math.round(size * 0.38), letterSpacing: '0.01em',
+      fontFamily: 'var(--font-sans)',
+      flex: 'none', userSelect: 'none',
+    }}>{safe}</div>
   );
 }
 
+// ── Badge — legacy API, rendered as a soft chip (DESIGN §8) ─────────────────
 export function Badge({ children, variant = 'neutral', size = 'md' }) {
-  const PAD = size === 'sm' ? '1px 6px' : '2px 8px';
+  const PAD = size === 'sm' ? '1px 7px' : '2px 8px';
   const FS = size === 'sm' ? 10.5 : 11.5;
   const tones = {
     primary:   { fg: 'var(--badge-primary-fg)',   bg: 'var(--badge-primary-bg)',   dot: 'var(--badge-primary-dot)' },
@@ -83,48 +124,182 @@ export function Badge({ children, variant = 'neutral', size = 'md' }) {
     used:      { fg: 'var(--badge-used-fg)',      bg: 'var(--badge-used-bg)',      dot: 'var(--badge-used-dot)' },
     notused:   { fg: 'var(--badge-notused-fg)',   bg: 'var(--badge-notused-bg)',   dot: 'var(--badge-notused-dot)' },
     pending:   { fg: 'var(--badge-pending-fg)',   bg: 'var(--badge-pending-bg)',   dot: 'var(--badge-pending-dot)' },
-    danger:    { fg: 'var(--danger-fg)', bg: 'var(--danger-bg)', dot: 'var(--danger-fg)' },
-    neutral:   { fg: 'var(--text-muted)', bg: 'var(--surface-2)', dot: 'var(--text-muted)' },
-  }[variant] ?? { fg: 'var(--text-muted)', bg: 'var(--surface-2)', dot: 'var(--text-muted)' };
+    danger:    { fg: 'var(--danger)',  bg: 'var(--danger-bg)',  dot: 'var(--danger)' },
+    success:   { fg: 'var(--success)', bg: 'var(--success-bg)', dot: 'var(--success)' },
+    warning:   { fg: 'var(--warning)', bg: 'var(--warning-bg)', dot: 'var(--warning)' },
+    info:      { fg: 'var(--accent)',  bg: 'var(--accent-glow)', dot: 'var(--accent)' },
+    neutral:   { fg: 'var(--text-muted)', bg: 'var(--surface-2)', dot: 'var(--text-faint)' },
+  }[variant] ?? { fg: 'var(--text-muted)', bg: 'var(--surface-2)', dot: 'var(--text-faint)' };
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
       padding: PAD, borderRadius: 999, background: tones.bg, color: tones.fg,
-      fontSize: FS, fontWeight: 500, lineHeight: 1.3, letterSpacing: '0.005em',
+      fontSize: FS, fontWeight: 500, lineHeight: 1.35, letterSpacing: '0.01em',
       whiteSpace: 'nowrap',
     }}>
-      <span style={{ width: 6, height: 6, borderRadius: 999, background: tones.dot, flex: 'none' }} />
+      <span style={{ width: 5, height: 5, borderRadius: 999, background: tones.dot, flex: 'none' }} />
       {children}
     </span>
   );
 }
 
+// ── WI-6 status taxonomy (server-computed enum) ─────────────────────────────
+// The string keys are the verbatim values the API emits on team/detail/admin
+// DTOs; the frontend only maps state → chip, never re-derives the logic.
+// `variant` is the legacy Badge tone (kept for compat); `tone`/`icon` are the
+// ledger mapping per DESIGN §3 (status is never color alone — always icon too).
+export const STATUS_META = {
+  NotStarted:       { label: 'Not started',       variant: 'neutral', tone: 'neutral', icon: 'circle' },
+  InProgress:       { label: 'In progress',       variant: 'info',    tone: 'info',    icon: 'half'   },
+  AwaitingApproval: { label: 'Awaiting approval', variant: 'pending', tone: 'warning', icon: 'clock'  },
+  ActionNeeded:     { label: 'Action needed',     variant: 'danger',  tone: 'danger',  icon: 'alert'  },
+  Complete:         { label: 'Complete',          variant: 'used',    tone: 'success', icon: 'check'  },
+};
+
+// Resolve a raw status string to its meta. Unknown → NotStarted tone, raw value
+// as label (a new server state degrades gracefully instead of vanishing).
+export function statusMeta(status) {
+  const meta = STATUS_META[status];
+  if (meta) return meta;
+  return { ...STATUS_META.NotStarted, label: status || STATUS_META.NotStarted.label };
+}
+
+const CHIP_TONES = {
+  neutral: { fg: 'var(--text-muted)', bg: 'var(--surface-2)' },
+  info:    { fg: 'var(--accent)',     bg: 'var(--accent-glow)' },
+  warning: { fg: 'var(--warning)',    bg: 'var(--warning-bg)' },
+  danger:  { fg: 'var(--danger)',     bg: 'var(--danger-bg)' },
+  success: { fg: 'var(--success)',    bg: 'var(--success-bg)' },
+};
+
+// Five-state member status as a soft chip: icon + label, tinted bg, no heavy
+// border (stamps stay special for review verdicts — DESIGN §5).
+export function StatusChip({ status, size = 'md' }) {
+  const { label, tone, icon } = statusMeta(status);
+  const t = CHIP_TONES[tone] ?? CHIP_TONES.neutral;
+  const sm = size === 'sm';
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      padding: sm ? '1px 7px' : '2px 9px', borderRadius: 999,
+      background: t.bg, color: t.fg,
+      fontSize: sm ? 10.5 : 11.5, fontWeight: 500, lineHeight: 1.4,
+      whiteSpace: 'nowrap',
+    }}>
+      <Icon name={icon} size={sm ? 10 : 12} stroke={2} />
+      {label}
+    </span>
+  );
+}
+
+// ── Stamp — the signature status element (DESIGN §5) ────────────────────────
+// <Stamp tone="success|danger|warning|info|neutral" label="APPROVED" icon animate />
+// Uppercase mono, 1.5px solid border in the tone color, tone-bg fill. Pass
+// `animate` when the status just changed in-session to play the stamp settle.
+const STAMP_TONES = {
+  success: { fg: 'var(--success)',    bg: 'var(--success-bg)', icon: 'check' },
+  danger:  { fg: 'var(--danger)',     bg: 'var(--danger-bg)',  icon: 'x' },
+  warning: { fg: 'var(--warning)',    bg: 'var(--warning-bg)', icon: 'clock' },
+  info:    { fg: 'var(--accent)',     bg: 'var(--accent-glow)', icon: 'info' },
+  neutral: { fg: 'var(--text-muted)', bg: 'var(--surface-2)',  icon: 'minus' },
+};
+export function Stamp({ tone = 'neutral', label, icon = true, animate = false, title, style }) {
+  const t = STAMP_TONES[tone] ?? STAMP_TONES.neutral;
+  const iconName = typeof icon === 'string' ? icon : (icon ? t.icon : null);
+  return (
+    <span className={animate ? 'stamp-in' : undefined} title={title} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      padding: '2px 8px', borderRadius: 4,
+      border: `1.5px solid ${t.fg}`, background: t.bg, color: t.fg,
+      fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 500,
+      letterSpacing: '0.08em', textTransform: 'uppercase', lineHeight: 1.5,
+      whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums',
+      ...style,
+    }}>
+      {iconName && <Icon name={iconName} size={11} stroke={2.4} />}
+      {label}
+    </span>
+  );
+}
+
+// ── SectionHeader — the 11px uppercase ledger label row ─────────────────────
+// Optional `right` slot renders inline at the end of the row (counts, actions).
+// Optional `rule` adds the 1px ledger underline (DESIGN §4).
+export function SectionHeader({ children, right, rule = false, style }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 10,
+      ...(rule ? { borderBottom: '1px solid var(--rule)', paddingBottom: 6 } : null),
+      ...style,
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
+        textTransform: 'uppercase', color: 'var(--text-muted)',
+      }}>
+        {children}
+      </div>
+      {right != null && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>{right}</div>}
+    </div>
+  );
+}
+
+// ── Card — flat paper panel, hairline border, soft shadow ───────────────────
+export function Card({ children, pad = 16, radius, interactive = false, onClick, style }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={interactive ? () => setHovered(true) : undefined}
+      onMouseLeave={interactive ? () => setHovered(false) : undefined}
+      style={{
+        background: 'var(--surface)',
+        border: `1px solid ${interactive && hovered ? 'var(--border-hover)' : 'var(--border)'}`,
+        borderRadius: radius ?? 'var(--radius-card)',
+        boxShadow: 'var(--shadow-sm)',
+        padding: pad,
+        cursor: interactive ? 'pointer' : undefined,
+        transition: 'border-color .15s ease-out',
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ── TriToggle — Used / Not used as an explicit segmented control ────────────
+// Same API as before: value true|false|null, onChange(next|null).
 export function TriToggle({ value, onChange, size = 'md', labels, disabled = false, style }) {
   const opts = [
-    { v: true,  label: labels?.[0] ?? 'Used',     icon: 'check' },
-    { v: false, label: labels?.[1] ?? 'Not used', icon: 'x' },
+    { v: true,  label: labels?.[0] ?? 'Used',     icon: 'check', bg: 'var(--toggle-used-bg)',    fg: 'var(--toggle-used-fg)' },
+    { v: false, label: labels?.[1] ?? 'Not used', icon: 'x',     bg: 'var(--toggle-notused-bg)', fg: 'var(--toggle-notused-fg)' },
   ];
   const H = size === 'sm' ? 24 : 28;
   return (
-    <div style={{
+    <div role="group" aria-label="Usage attestation" style={{
       display: 'inline-flex', gap: 2, padding: 2,
-      background: 'var(--surface-2)', borderRadius: 8,
+      background: 'var(--surface)', borderRadius: 'var(--radius)',
       border: '1px solid var(--border)',
+      opacity: disabled ? 0.6 : 1,
       ...style,
     }}>
-      {opts.map(({ v, label, icon }) => {
+      {opts.map(({ v, label, icon, bg, fg }) => {
         const active = value === v;
         return (
-          <button key={String(v)} disabled={disabled} onClick={() => { if (!disabled) onChange(active ? null : v); }}
+          <button key={String(v)} type="button" disabled={disabled} aria-pressed={active}
+            onClick={() => { if (!disabled) onChange(active ? null : v); }}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
+              display: 'inline-flex', alignItems: 'center', gap: 5,
               height: H, padding: `0 ${size === 'sm' ? 8 : 10}px`,
               border: 0, cursor: disabled ? 'not-allowed' : 'pointer',
-              background: active ? (v ? 'var(--toggle-used-bg)' : 'var(--toggle-notused-bg)') : 'transparent',
-              color: active ? (v ? 'var(--toggle-used-fg)' : 'var(--toggle-notused-fg)') : 'var(--text-muted)',
+              background: active ? bg : 'transparent',
+              color: active ? fg : 'var(--text-muted)',
+              boxShadow: active ? `inset 0 0 0 1px color-mix(in oklab, ${fg}, transparent 60%)` : 'none',
               fontWeight: active ? 600 : 500, fontSize: 12,
-              borderRadius: 6, transition: 'background .12s, color .12s',
-              fontFamily: 'inherit',
+              borderRadius: 'calc(var(--radius) - 2px)',
+              transition: 'background .15s ease-out, color .15s ease-out',
+              fontFamily: 'inherit', whiteSpace: 'nowrap',
             }}>
             <Icon name={icon} size={12} stroke={2.2} />
             {label}
@@ -135,69 +310,107 @@ export function TriToggle({ value, onChange, size = 'md', labels, disabled = fal
   );
 }
 
-export function Progress({ value, max = 1, color, height = 4 }) {
-  const pct = Math.max(0, Math.min(1, value / max));
+// ── Progress — animated, tone-aware ─────────────────────────────────────────
+// `color` (legacy) wins over `tone` ('accent'|'success'|'warning'|'danger').
+export function Progress({ value, max = 1, color, tone = 'accent', height = 4 }) {
+  const pct = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+  const toneColor = {
+    accent: 'var(--accent)', success: 'var(--success)',
+    warning: 'var(--warning)', danger: 'var(--danger)',
+  }[tone] ?? 'var(--accent)';
   return (
-    <div style={{ width: '100%', height, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
-      <div style={{ width: `${pct * 100}%`, height: '100%', background: color || 'var(--accent)', transition: 'width .25s' }} />
+    <div role="progressbar" aria-valuemin={0} aria-valuemax={max} aria-valuenow={Math.min(value, max)}
+      style={{ width: '100%', height, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
+      <div style={{
+        width: `${pct * 100}%`, height: '100%', borderRadius: 999,
+        background: color || toneColor, transition: 'width .4s ease-out',
+      }} />
     </div>
   );
 }
 
-export function Button({ variant = 'outline', size = 'md', icon, children, onClick, style, type = 'button', disabled }) {
-  const [hovered, setHovered] = React.useState(false);
+// ── Button — primary / outline / ghost / danger · sm / md · loading ─────────
+export function Button({
+  variant = 'outline', size = 'md', icon, children, onClick, style,
+  type = 'button', disabled, loading = false, title, className, 'aria-label': ariaLabel,
+}) {
+  const [hovered, setHovered] = useState(false);
   const H = size === 'sm' ? 26 : 32;
   const variants = {
     primary: {
       bg: hovered ? 'var(--accent-2)' : 'var(--accent)',
       fg: 'var(--accent-fg)',
       border: hovered ? 'var(--accent-2)' : 'var(--accent)',
+      weight: 600,
     },
     outline: {
       bg: hovered ? 'var(--surface-2)' : 'var(--surface)',
       fg: 'var(--text)',
-      border: 'var(--border)',
+      border: hovered ? 'var(--border-hover)' : 'var(--border)',
+      weight: 500,
     },
     ghost: {
       bg: hovered ? 'var(--surface-2)' : 'transparent',
       fg: 'var(--text-muted)',
       border: 'transparent',
+      weight: 500,
+    },
+    danger: {
+      bg: hovered ? 'color-mix(in oklab, var(--danger-bg), var(--danger) 8%)' : 'var(--danger-bg)',
+      fg: 'var(--danger)',
+      border: 'var(--danger-border)',
+      weight: 600,
     },
   };
   const v = variants[variant] ?? variants.outline;
+  const isDisabled = disabled || loading;
   return (
     <button
       type={type}
       onClick={onClick}
-      disabled={disabled}
+      disabled={isDisabled}
+      title={title}
+      aria-label={ariaLabel}
+      aria-busy={loading || undefined}
+      className={className}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
         height: H, padding: `0 ${size === 'sm' ? 10 : 12}px`,
         background: v.bg, color: v.fg, border: `1px solid ${v.border}`,
-        borderRadius: 8, fontFamily: 'inherit', fontSize: 13, fontWeight: 500,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        transition: 'background .12s, border-color .12s',
+        borderRadius: 'var(--radius)', fontFamily: 'inherit',
+        fontSize: size === 'sm' ? 12 : 13, fontWeight: v.weight,
+        cursor: isDisabled ? 'not-allowed' : 'pointer',
+        opacity: disabled && !loading ? 0.55 : 1,
+        transition: 'background .15s ease-out, border-color .15s ease-out',
         whiteSpace: 'nowrap', ...style,
       }}
     >
-      {icon && <Icon name={icon} size={14} />}
+      {loading ? <Spinner size={size === 'sm' ? 11 : 13} /> : (icon && <Icon name={icon} size={size === 'sm' ? 13 : 14} />)}
       {children}
     </button>
   );
 }
 
-export function SearchBar({ value, onChange, placeholder = 'Search tools…', width }) {
+// ── SearchBar ────────────────────────────────────────────────────────────────
+export function SearchBar({ value, onChange, placeholder = 'Search tools…', width, style }) {
+  const [focused, setFocused] = useState(false);
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8, width: width ?? 'auto',
-      height: 32, padding: '0 10px', borderRadius: 8,
-      background: 'var(--surface)', border: '1px solid var(--border)',
+      height: 32, padding: '0 10px', borderRadius: 'var(--radius)',
+      background: 'var(--surface)',
+      border: `1px solid ${focused ? 'var(--accent)' : 'var(--border)'}`,
+      boxShadow: focused ? '0 0 0 3px var(--accent-glow)' : 'none',
       color: 'var(--text-muted)',
+      transition: 'border-color .15s ease-out, box-shadow .15s ease-out',
+      ...style,
     }}>
       <Icon name="search" size={14} />
       <input value={value || ''} onChange={(e) => onChange?.(e.target.value)} placeholder={placeholder}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        aria-label={placeholder}
         style={{
           flex: 1, minWidth: 0, height: '100%', border: 0, background: 'transparent',
           outline: 'none', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit',
@@ -206,141 +419,623 @@ export function SearchBar({ value, onChange, placeholder = 'Search tools…', wi
   );
 }
 
-function CycleMenu({ cycle, cycles, onCycle }) {
+// ── SegmentedControl — exclusive option picker (DESIGN §8) ──────────────────
+// options: [{ id, label, icon? }] · value: active id · onChange(id)
+export function SegmentedControl({ options = [], value, onChange, size = 'md', ariaLabel, style }) {
+  const H = size === 'sm' ? 24 : 28;
+  return (
+    <div role="radiogroup" aria-label={ariaLabel} style={{
+      display: 'inline-flex', gap: 2, padding: 2,
+      background: 'var(--surface-2)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', ...style,
+    }}>
+      {options.map((opt) => {
+        const active = value === opt.id;
+        return (
+          <button key={opt.id} type="button" role="radio" aria-checked={active}
+            onClick={() => onChange?.(opt.id)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              height: H, padding: `0 ${size === 'sm' ? 8 : 11}px`,
+              border: 0, borderRadius: 'calc(var(--radius) - 2px)',
+              background: active ? 'var(--surface)' : 'transparent',
+              color: active ? 'var(--text)' : 'var(--text-muted)',
+              boxShadow: active ? 'var(--shadow-sm), inset 0 0 0 1px var(--border)' : 'none',
+              fontFamily: 'inherit', fontSize: size === 'sm' ? 11.5 : 12,
+              fontWeight: active ? 600 : 500, cursor: 'pointer',
+              transition: 'background .15s ease-out, color .15s ease-out',
+              whiteSpace: 'nowrap',
+            }}>
+            {opt.icon && <Icon name={opt.icon} size={12} stroke={2} />}
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── KpiCard — overline label + Fraunces numeral + optional sub/delta ────────
+// <KpiCard label="Tools left" value={7} sub="of 31 total" delta={{ text:'-3 today', tone:'success' }} />
+export function KpiCard({ label, value, sub, delta, tone, style }) {
+  const toneColor = CHIP_TONES[tone]?.fg;
+  return (
+    <Card pad={18} style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, ...style }}>
+      <div style={{
+        fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 500, letterSpacing: '0.1em',
+        textTransform: 'uppercase', color: 'var(--text-faint)', whiteSpace: 'nowrap',
+        overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, minWidth: 0 }}>
+        <span style={{
+          fontFamily: 'var(--font-display)', fontSize: 42, fontWeight: 540,
+          lineHeight: 1, color: toneColor ?? 'var(--text)',
+          fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em',
+        }}>{value}</span>
+        {delta && (
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500,
+            color: CHIP_TONES[delta.tone]?.fg ?? 'var(--text-muted)',
+            fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+          }}>{delta.text ?? delta}</span>
+        )}
+      </div>
+      {sub && <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>{sub}</div>}
+    </Card>
+  );
+}
+
+// ── Skeleton — shimmer placeholder block ────────────────────────────────────
+export function Skeleton({ width = '100%', height = 14, radius, style }) {
+  return <div className="skeleton" aria-hidden="true"
+    style={{ width, height, borderRadius: radius ?? 'var(--radius)', flex: 'none', ...style }} />;
+}
+
+// ── EmptyState — Fraunces heading + muted line + optional action ────────────
+export function EmptyState({ icon = 'search', title, message, action, style }) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',
+      gap: 8, padding: '48px 24px', ...style,
+    }}>
+      <div style={{
+        width: 44, height: 44, borderRadius: 999, marginBottom: 6,
+        background: 'var(--surface-2)', border: '1px solid var(--border)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: 'var(--text-faint)',
+      }}>
+        <Icon name={icon} size={19} />
+      </div>
+      <div style={{
+        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 560,
+        lineHeight: 1.1, color: 'var(--text)',
+      }}>{title}</div>
+      {message && <div style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 380, lineHeight: 1.5 }}>{message}</div>}
+      {action && <div style={{ marginTop: 10 }}>{action}</div>}
+    </div>
+  );
+}
+
+// ── Tooltip — 350ms delay, ink panel ────────────────────────────────────────
+// Wraps its child in an inline-flex span; shows on hover/focus.
+export function Tooltip({ label, children, side = 'top', delay = 350, style }) {
+  const [open, setOpen] = useState(false);
+  const timer = useRef(null);
+  const show = () => { clearTimeout(timer.current); timer.current = setTimeout(() => setOpen(true), delay); };
+  const hide = () => { clearTimeout(timer.current); setOpen(false); };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const pos = {
+    top:    { bottom: 'calc(100% + 7px)', left: '50%', transform: 'translateX(-50%)' },
+    bottom: { top: 'calc(100% + 7px)', left: '50%', transform: 'translateX(-50%)' },
+    left:   { right: 'calc(100% + 7px)', top: '50%', transform: 'translateY(-50%)' },
+    right:  { left: 'calc(100% + 7px)', top: '50%', transform: 'translateY(-50%)' },
+  }[side] ?? {};
+  return (
+    <span onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}
+      style={{ position: 'relative', display: 'inline-flex', ...style }}>
+      {children}
+      {open && label && (
+        <span role="tooltip" className="pop-in" style={{
+          position: 'absolute', zIndex: 1200, ...pos,
+          background: 'var(--text)', color: 'var(--bg)',
+          fontSize: 11, fontWeight: 500, lineHeight: 1.4, fontFamily: 'var(--font-sans)',
+          padding: '4px 8px', borderRadius: 4, whiteSpace: 'nowrap',
+          boxShadow: 'var(--shadow-pop)', pointerEvents: 'none',
+        }}>{label}</span>
+      )}
+    </span>
+  );
+}
+
+// ── Focus trap shared by Modal + Drawer ─────────────────────────────────────
+const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+function useFocusTrap(active, panelRef, onClose) {
+  useEffect(() => {
+    if (!active) return undefined;
+    const previous = document.activeElement;
+    const panel = panelRef.current;
+    const els = panel?.querySelectorAll(FOCUSABLE);
+    (els && els.length ? els[0] : panel)?.focus?.();
+    function onKey(e) {
+      if (e.key === 'Escape') { e.stopPropagation(); onClose?.(); return; }
+      if (e.key !== 'Tab' || !panelRef.current) return;
+      const focusables = Array.from(panelRef.current.querySelectorAll(FOCUSABLE));
+      if (!focusables.length) { e.preventDefault(); return; }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', onKey, true);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.body.style.overflow = prevOverflow;
+      previous?.focus?.();
+    };
+  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+function OverlayHeader({ id, title, onClose }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+      padding: '14px 16px', borderBottom: '1px solid var(--border)', flex: 'none',
+    }}>
+      <div id={id} style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', minWidth: 0 }}>{title}</div>
+      <Button variant="ghost" size="sm" icon="x" onClick={onClose} aria-label="Close dialog"
+        style={{ padding: '0 6px' }} />
+    </div>
+  );
+}
+
+// ── Modal — focus-trapped dialog (DESIGN §8) ────────────────────────────────
+// <Modal open onClose title footer width> children scroll inside (max 90vh).
+export function Modal({ open, onClose, title, children, footer, width = 520, bodyPad = 16 }) {
+  const panelRef = useRef(null);
+  const titleId = useId();
+  useFocusTrap(open, panelRef, onClose);
+  if (!open) return null;
+  return createPortal(
+    <div className="overlay-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(16,19,26,.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+      }}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        className="overlay-pop"
+        style={{
+          width: '100%', maxWidth: width, maxHeight: '90vh',
+          display: 'flex', flexDirection: 'column',
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-pop)',
+          outline: 'none',
+        }}>
+        <OverlayHeader id={titleId} title={title} onClose={onClose} />
+        <div style={{ padding: bodyPad, overflowY: 'auto', minHeight: 0 }}>{children}</div>
+        {footer && (
+          <div style={{
+            display: 'flex', justifyContent: 'flex-end', gap: 8, flex: 'none',
+            padding: '12px 16px', borderTop: '1px solid var(--border)',
+          }}>{footer}</div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Drawer — right-side detail panel (DESIGN §8) ────────────────────────────
+export function Drawer({ open, onClose, title, children, footer, width = 460 }) {
+  const panelRef = useRef(null);
+  const titleId = useId();
+  useFocusTrap(open, panelRef, onClose);
+  if (!open) return null;
+  return createPortal(
+    <div className="overlay-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(16,19,26,.5)',
+        display: 'flex', justifyContent: 'flex-end',
+      }}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        className="drawer-pop"
+        style={{
+          width: `min(${width}px, 94vw)`, height: '100%',
+          display: 'flex', flexDirection: 'column',
+          background: 'var(--surface)', borderLeft: '1px solid var(--border)',
+          boxShadow: 'var(--shadow-pop)', outline: 'none',
+        }}>
+        <OverlayHeader id={titleId} title={title} onClose={onClose} />
+        <div style={{ padding: 16, overflowY: 'auto', minHeight: 0, flex: 1 }}>{children}</div>
+        {footer && (
+          <div style={{
+            display: 'flex', justifyContent: 'flex-end', gap: 8, flex: 'none',
+            padding: '12px 16px', borderTop: '1px solid var(--border)',
+          }}>{footer}</div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Toasts — stacked top-right, aria-live polite (DESIGN §8) ────────────────
+// Wrap the app in <ToastProvider>. Components call:
+//   const toasts = useToasts();
+//   toasts.success('Saved'); toasts.error('Failed', { title: 'Upload' });
+//   toasts.push({ tone, message, title?, duration? }) → id; toasts.dismiss(id)
+// Errors/blockers stay 6s, the rest 3.5s. Safe no-op outside a provider.
+const ToastContext = createContext(null);
+const NOOP_TOASTS = {
+  push: () => 0, dismiss: () => {},
+  success: () => 0, error: () => 0, warning: () => 0, info: () => 0,
+};
+
+const TOAST_ICON = { success: 'check', danger: 'alert', warning: 'clock', info: 'info', neutral: 'info' };
+
+export function ToastHost({ toasts, onDismiss }) {
+  return createPortal(
+    <div aria-live="polite" style={{
+      position: 'fixed', top: 16, right: 16, zIndex: 1400,
+      display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 380, width: 'calc(100vw - 32px)',
+      pointerEvents: 'none',
+    }}>
+      {toasts.map((t) => {
+        const tone = CHIP_TONES[t.tone] ?? CHIP_TONES.neutral;
+        return (
+          <div key={t.id} role="status" className="toast" style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderLeft: `3px solid ${tone.fg}`,
+            borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-pop)',
+            padding: '10px 10px 10px 12px', pointerEvents: 'auto',
+          }}>
+            <span style={{ color: tone.fg, marginTop: 1, flex: 'none' }}>
+              <Icon name={TOAST_ICON[t.tone] ?? 'info'} size={15} stroke={2} />
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {t.title && <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{t.title}</div>}
+              <div style={{ fontSize: 12.5, color: t.title ? 'var(--text-muted)' : 'var(--text)', lineHeight: 1.45, overflowWrap: 'break-word' }}>
+                {t.message}
+              </div>
+            </div>
+            <button type="button" onClick={() => onDismiss(t.id)} aria-label="Dismiss notification"
+              style={{
+                border: 0, background: 'transparent', color: 'var(--text-faint)',
+                cursor: 'pointer', padding: 2, display: 'inline-flex', flex: 'none', borderRadius: 4,
+              }}>
+              <Icon name="x" size={13} stroke={2} />
+            </button>
+          </div>
+        );
+      })}
+    </div>,
+    document.body,
+  );
+}
+
+export function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const seq = useRef(0);
+  const timers = useRef(new Map());
+
+  const dismiss = useCallback((id) => {
+    setToasts((list) => list.filter((t) => t.id !== id));
+    const timer = timers.current.get(id);
+    if (timer) { clearTimeout(timer); timers.current.delete(id); }
+  }, []);
+
+  const push = useCallback(({ tone = 'info', message, title, duration }) => {
+    const id = ++seq.current;
+    const ms = duration ?? (tone === 'danger' ? 6000 : 3500);
+    setToasts((list) => [...list.slice(-4), { id, tone, message, title }]);
+    timers.current.set(id, setTimeout(() => dismiss(id), ms));
+    return id;
+  }, [dismiss]);
+
+  useEffect(() => () => { timers.current.forEach(clearTimeout); timers.current.clear(); }, []);
+
+  const api = useMemo(() => ({
+    push,
+    dismiss,
+    success: (message, opts) => push({ tone: 'success', message, ...opts }),
+    error:   (message, opts) => push({ tone: 'danger', message, ...opts }),
+    warning: (message, opts) => push({ tone: 'warning', message, ...opts }),
+    info:    (message, opts) => push({ tone: 'info', message, ...opts }),
+  }), [push, dismiss]);
+
+  return (
+    <ToastContext.Provider value={api}>
+      {children}
+      <ToastHost toasts={toasts} onDismiss={dismiss} />
+    </ToastContext.Provider>
+  );
+}
+
+export function useToasts() {
+  return useContext(ToastContext) ?? NOOP_TOASTS;
+}
+
+// ── SortHeader — <th> with aria-sort + direction affordance (DESIGN §8) ─────
+// <SortHeader label="Name" active={sortKey==='name'} dir={sortDir} onSort={...} />
+export function SortHeader({ label, children, active = false, dir = 'asc', onSort, align = 'left', width, style, band = false }) {
+  const ariaSort = active ? (dir === 'desc' ? 'descending' : 'ascending') : 'none';
+  // `band` opts into the flat header-strip look (mono caps on a --surface-2 band
+  // with a hairline rule) so the header reads as a deliberate band, matching the
+  // associate tool table.
+  const thBand = band ? { background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' } : null;
+  return (
+    <th aria-sort={ariaSort} style={{ padding: 0, textAlign: align, width, ...thBand, ...style }}>
+      <button type="button" onClick={onSort}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: band ? '9px 0' : '6px 0', border: 0, background: 'transparent', cursor: 'pointer',
+          fontFamily: band ? 'var(--font-mono)' : 'inherit',
+          fontSize: band ? 10.5 : 11, fontWeight: 600,
+          letterSpacing: band ? '0.08em' : '0.06em', textTransform: 'uppercase',
+          color: active ? 'var(--text)' : (band ? 'var(--text-faint)' : 'var(--text-muted)'),
+        }}>
+        {label ?? children}
+        {active
+          ? <Icon name={dir === 'desc' ? 'chevdown' : 'chevup'} size={11} stroke={2.4} />
+          : <Icon name="sort" size={11} stroke={2} style={{ opacity: 0.4 }} />}
+      </button>
+    </th>
+  );
+}
+
+// ── CycleRuler — time elapsed start→due with a tick at "today" (DESIGN §7) ──
+// Feed it the CycleDto App already loads: { cycleName, startDate, endDate,
+// dueDate, daysLeft }. Track shifts accent → warning (≤50% time left) → danger
+// (overdue). Dates are ISO yyyy-mm-dd strings.
+function parseIsoDate(s) {
+  if (!s) return null;
+  const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function fmtShort(d) {
+  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase() : '';
+}
+
+export function CycleRuler({ cycle, style }) {
+  if (!cycle) return null;
+  const start = parseIsoDate(cycle.startDate);
+  const due = parseIsoDate(cycle.dueDate);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  let pct = null;
+  if (start && due && due > start) {
+    pct = Math.max(0, Math.min(1, (today - start) / (due - start)));
+  }
+  const daysLeft = cycle.daysLeft ?? (due ? Math.round((due - today) / 86400000) : 0);
+  const overdue = daysLeft < 0;
+  const leftFrac = pct == null ? 1 : 1 - pct;
+  const toneColor = overdue ? 'var(--danger)' : (leftFrac > 0.5 ? 'var(--accent)' : 'var(--warning)');
+  const fillPct = overdue ? 100 : (pct == null ? 0 : pct * 100);
+
+  const label = overdue
+    ? `OVERDUE BY ${Math.abs(daysLeft)} DAY${Math.abs(daysLeft) === 1 ? '' : 'S'}`
+    : `${daysLeft} DAY${daysLeft === 1 ? '' : 'S'} LEFT`;
+
+  return (
+    <div style={{ ...style }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6,
+        fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500,
+        letterSpacing: '0.08em', textTransform: 'uppercase',
+        color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap', overflow: 'hidden',
+      }}>
+        <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          CYCLE {cycle.cycleName}
+        </span>
+        {due && <><span aria-hidden="true">·</span><span>DUE {fmtShort(due)}</span></>}
+        <span aria-hidden="true">·</span>
+        <span style={{ color: toneColor, fontWeight: 500 }}>{label}</span>
+      </div>
+      <div aria-hidden="true" style={{
+        position: 'relative', height: 3, borderRadius: 999,
+        background: 'var(--border)',
+      }}>
+        <div style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0,
+          width: `${fillPct}%`, borderRadius: 999,
+          background: toneColor, transition: 'width .4s ease-out',
+        }} />
+        {pct != null && !overdue && (
+          <span title="Today" style={{
+            position: 'absolute', top: -3, height: 9, width: 2, borderRadius: 1,
+            left: `calc(${pct * 100}% - 1px)`,
+            background: toneColor,
+            boxShadow: '0 0 0 2px var(--bg)',
+          }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── CycleMenu — cycle picker popover (used by AppShell's header) ────────────
+export function CycleMenu({ cycle, cycles, onCycle, align = 'right' }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useClickOutside(ref, () => setOpen(false));
 
   const hasMenu = Array.isArray(cycles) && cycles.length > 0 && typeof onCycle === 'function';
+  if (!cycle) return null;
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} style={{ position: 'relative', flex: 'none' }}>
       <button
+        type="button"
         onClick={() => hasMenu && setOpen((v) => !v)}
         disabled={!hasMenu}
+        aria-haspopup={hasMenu ? 'listbox' : undefined}
+        aria-expanded={hasMenu ? open : undefined}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 8,
-          height: 28, padding: '0 10px', borderRadius: 999,
-          background: 'var(--surface-2)', border: '1px solid var(--border)',
-          color: 'var(--text-muted)', fontSize: 11.5, fontWeight: 500,
-          cursor: hasMenu ? 'pointer' : 'default', fontFamily: 'inherit',
+          height: 28, padding: '0 10px', borderRadius: 'var(--radius)',
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          color: 'var(--text-muted)', cursor: hasMenu ? 'pointer' : 'default',
+          fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500,
+          letterSpacing: '0.02em', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
         }}
       >
-        <Icon name="clock" size={12} />
+        <Icon name="calendar" size={12} />
         <span style={{ color: 'var(--text)' }}>{cycle.cycleName}</span>
         <span style={{ width: 1, height: 12, background: 'var(--border)' }} />
-        <span>Due {cycle.dueDate}</span>
+        <span>DUE {fmtShort(parseIsoDate(cycle.dueDate)) || cycle.dueDate}</span>
         <span style={{
-          padding: '1px 6px', borderRadius: 999, fontSize: 10.5, fontWeight: 600,
-          background: 'var(--warning-bg)', color: 'var(--warning-fg)',
-        }}>{cycle.daysLeft}d left</span>
+          padding: '0 6px', borderRadius: 4, fontSize: 10.5, fontWeight: 500,
+          border: `1px solid ${cycle.daysLeft < 0 ? 'var(--danger-border)' : 'var(--warning-border)'}`,
+          background: cycle.daysLeft < 0 ? 'var(--danger-bg)' : 'var(--warning-bg)',
+          color: cycle.daysLeft < 0 ? 'var(--danger)' : 'var(--warning)',
+        }}>{cycle.daysLeft < 0 ? `${-cycle.daysLeft}D OVER` : `${cycle.daysLeft}D LEFT`}</span>
         {hasMenu && <Icon name="chevdown" size={11} style={{ color: 'var(--text-muted)' }} />}
       </button>
 
       {open && hasMenu && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50,
-          minWidth: 280,
-          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
-          boxShadow: '0 12px 32px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.06)',
+        <div className="pop-in" style={{
+          position: 'absolute', top: 'calc(100% + 6px)', [align]: 0, zIndex: 60,
+          minWidth: 300,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-pop)',
           overflow: 'hidden',
         }}>
           <div style={{
             padding: '8px 12px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em',
             textTransform: 'uppercase', color: 'var(--text-muted)',
-            background: 'var(--surface-2)', borderBottom: '1px solid var(--border)',
+            background: 'var(--surface-2)', borderBottom: '1px solid var(--rule)',
           }}>Switch cycle</div>
-          {cycles.map((c) => {
-            const active = c.cycleID === cycle.cycleID;
-            return (
-              <button key={c.cycleID}
-                onClick={() => { onCycle(c); setOpen(false); }}
-                style={{
-                  display: 'flex', width: '100%', textAlign: 'left',
-                  padding: '10px 12px', gap: 10, alignItems: 'center',
-                  background: active ? 'color-mix(in oklab, var(--accent), transparent 92%)' : 'transparent',
-                  border: 0, borderBottom: '1px solid var(--border-subtle)',
-                  cursor: 'pointer', fontFamily: 'inherit',
-                }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{c.cycleName}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {c.startDate} → {c.endDate} · Due {c.dueDate}
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {cycles.map((c) => {
+              const active = c.cycleID === cycle.cycleID;
+              return (
+                <button key={c.cycleID} type="button"
+                  onClick={() => { onCycle(c); setOpen(false); }}
+                  style={{
+                    display: 'flex', width: '100%', textAlign: 'left',
+                    padding: '10px 12px', gap: 10, alignItems: 'center',
+                    background: active ? 'var(--accent-glow)' : 'transparent',
+                    border: 0, borderBottom: '1px solid var(--border-subtle)',
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 12.5, fontWeight: 600, color: 'var(--text)',
+                      fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                    }}>{c.cycleName}</div>
+                    <div style={{
+                      fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2,
+                      fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      {c.startDate} → {c.endDate} · DUE {c.dueDate}
+                    </div>
                   </div>
-                </div>
-                <span style={{
-                  fontSize: 10.5, fontWeight: 600, padding: '1px 6px', borderRadius: 999,
-                  background: c.daysLeft < 0 ? 'var(--surface-2)' : 'var(--warning-bg)',
-                  color:      c.daysLeft < 0 ? 'var(--text-muted)' : 'var(--warning-fg)',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {c.daysLeft < 0 ? `${-c.daysLeft}d ago` : `${c.daysLeft}d left`}
-                </span>
-                {active && <Icon name="check" size={14} style={{ color: 'var(--accent)' }} />}
-              </button>
-            );
-          })}
+                  <span style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 500,
+                    padding: '0 6px', borderRadius: 4, whiteSpace: 'nowrap',
+                    border: `1px solid ${c.daysLeft < 0 ? 'var(--border)' : 'var(--warning-border)'}`,
+                    background: c.daysLeft < 0 ? 'var(--surface-2)' : 'var(--warning-bg)',
+                    color: c.daysLeft < 0 ? 'var(--text-muted)' : 'var(--warning)',
+                  }}>
+                    {c.daysLeft < 0 ? `${-c.daysLeft}D AGO` : `${c.daysLeft}D LEFT`}
+                  </span>
+                  {active && <Icon name="check" size={14} style={{ color: 'var(--accent)' }} />}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function ProfileMenu({ user, isManager, onLogout }) {
+// ── ProfileMenu — identity + sign-out popover ───────────────────────────────
+// `direction="up"` pops the menu above the trigger (rail bottom usage);
+// `compact` renders an avatar-only trigger (collapsed rail).
+export function ProfileMenu({ user, isManager, onLogout, direction = 'down', compact = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useClickOutside(ref, () => setOpen(false));
 
   const fullName = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || 'User';
   const initials = fullName.slice(0, 2).toUpperCase();
+  const vert = direction === 'up' ? { bottom: 'calc(100% + 8px)' } : { top: 'calc(100% + 6px)' };
 
   return (
     <div ref={ref} style={{ position: 'relative', flex: 'none' }}>
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={compact ? `Account · ${fullName}` : undefined}
         style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 10px 4px 4px',
-          borderRadius: 999, border: '1px solid var(--border)', background: 'var(--surface)',
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: compact ? 3 : '4px 10px 4px 4px',
+          width: compact ? undefined : '100%',
+          borderRadius: compact ? 999 : 'var(--radius)',
+          border: '1px solid var(--border)', background: 'var(--surface)',
           cursor: 'pointer', fontFamily: 'inherit',
         }}
       >
         <Avatar initials={initials} size={24} />
-        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1, textAlign: 'left' }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap' }}>{fullName}</span>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>ID · {user.associateId}</span>
-        </div>
-        <Icon name="chevdown" size={12}
-          style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }} />
+        {!compact && (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15, textAlign: 'left', minWidth: 0, flex: 1 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fullName}</span>
+              <span style={{
+                fontSize: 9.5, color: 'var(--text-faint)', whiteSpace: 'nowrap',
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.04em', fontVariantNumeric: 'tabular-nums',
+              }}>ID {user.associateId}</span>
+            </div>
+            <Icon name={direction === 'up' ? 'chevup' : 'chevdown'} size={12}
+              style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s ease-out' }} />
+          </>
+        )}
       </button>
 
       {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 50,
+        <div role="menu" className="pop-in" style={{
+          // Rail menus (direction 'up', incl. collapsed/compact) sit against the LEFT
+          // screen edge, so anchor left:0 and grow rightward. A header menu (direction
+          // 'down') anchors right:0. Anchoring right:0 in the rail overflowed the
+          // viewport's left edge and clipped the popover (the avatar got cut off).
+          position: 'absolute', ...vert,
+          ...((direction === 'up' || compact) ? { left: 0 } : { right: 0 }),
+          zIndex: 60,
           minWidth: 260,
-          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
-          boxShadow: '0 12px 32px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.06)',
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-pop)',
           overflow: 'hidden',
         }}>
           <div style={{ padding: '14px 14px 12px', display: 'flex', gap: 12, alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
             <Avatar initials={initials} size={40} />
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{fullName}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>Associate ID · {user.associateId}</div>
-              <div style={{ marginTop: 6 }}>
-                <Badge variant={isManager ? 'primary' : 'secondary'} size="sm">
-                  {isManager ? 'Manager' : 'Analyst'}
-                </Badge>
+              <div style={{
+                fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2,
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.04em', fontVariantNumeric: 'tabular-nums',
+              }}>ASSOCIATE ID {user.associateId}</div>
+              <div style={{ marginTop: 7 }}>
+                <Stamp tone={isManager ? 'info' : 'neutral'} icon={false}
+                  label={user.superUserRole ? String(user.superUserRole) : (isManager ? 'Manager' : 'Analyst')} />
               </div>
             </div>
           </div>
           <button
+            type="button"
+            role="menuitem"
             onClick={() => { setOpen(false); onLogout?.(); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 10,
               width: '100%', padding: '11px 14px',
               background: 'transparent', border: 0, cursor: 'pointer',
               fontFamily: 'inherit', fontSize: 13, fontWeight: 500,
-              color: 'var(--danger-fg)', textAlign: 'left',
+              color: 'var(--danger)', textAlign: 'left',
             }}
           >
             <Icon name="logout" size={15} />
@@ -352,83 +1047,17 @@ function ProfileMenu({ user, isManager, onLogout }) {
   );
 }
 
-export function TopBar({ user, cycle, cycles, onCycle, onLogout, search, onSearch, isManager, isSuperAdmin = false, role, onRole, dark, onDark }) {
-  const canOpenUserDirectory = user?.superUserRole === 'Admin';
-
+// ── TopBar — Phase 1 COMPAT SHIM ────────────────────────────────────────────
+// The app chrome (logo, role nav, cycle picker, theme toggle, profile) moved
+// into <AppShell>. The old views still mount <TopBar> as their first child, so
+// this now renders only the piece the shell can't own — the view's search box —
+// and renders nothing at all when the view doesn't search. Phase 2 view agents:
+// delete your <TopBar> usage (and this shim once no view imports it).
+export function TopBar({ search, onSearch }) {
+  if (typeof onSearch !== 'function') return null;
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 16,
-      padding: '14px 24px',
-      borderBottom: '1px solid var(--side-border)', background: 'var(--side-bg)',
-      flex: 'none',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 'none' }}>
-        <img src={brandLogo} alt="Broadridge" style={{ height: 19, display: 'block', filter: 'brightness(0) invert(1)' }} />
-        <span style={{ width: 1, height: 20, background: 'var(--side-border)' }} />
-        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--side-faint)', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Access Review</span>
-      </div>
-
-      {cycle && <CycleMenu cycle={cycle} cycles={cycles} onCycle={onCycle} />}
-
-      {/* View toggle — only shown to managers */}
-      {isManager && onRole && (
-        <div style={{
-          display: 'inline-flex', padding: 2,
-          background: 'var(--side-pill-bg)', border: '1px solid var(--side-pill-border)', borderRadius: 8,
-          gap: 2,
-        }}>
-          {[
-            ...(isSuperAdmin ? [{ id: 'superadmin', label: 'Admin Dashboard' }] : []),
-            { id: 'agent',   label: 'Associate view' },
-            { id: 'manager', label: 'Manager view' },
-            { id: 'access',  label: 'Access' },
-            ...(canOpenUserDirectory ? [{ id: 'admin', label: 'Users' }] : []),
-          ].map((opt) => {
-            const active = role === opt.id;
-            return (
-              <button
-                key={opt.id}
-                onClick={() => onRole(opt.id)}
-                style={{
-                  height: 28, padding: '0 12px',
-                  border: 0, borderRadius: 6, cursor: 'pointer',
-                  background: active ? 'var(--side-pill-active-bg)' : 'transparent',
-                  color: active ? 'var(--side-pill-active-fg)' : 'var(--side-pill-fg)',
-                  fontFamily: 'inherit', fontSize: 12, fontWeight: active ? 600 : 500,
-                  letterSpacing: '-0.01em',
-                  transition: 'background .12s, color .12s',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <div style={{ flex: 1 }} />
-
-      {onSearch && <SearchBar value={search} onChange={onSearch} width={260} />}
-
-      {/* Dark mode toggle */}
-      {onDark && (
-        <button
-          onClick={() => onDark(!dark)}
-          title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-          style={{
-            width: 32, height: 32, borderRadius: 8,
-            border: '1px solid var(--border)', background: 'var(--surface)',
-            color: 'var(--text-muted)', cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            flex: 'none', transition: 'background .12s, border-color .12s',
-          }}
-        >
-          <Icon name={dark ? 'sun' : 'moon'} size={14} />
-        </button>
-      )}
-
-      {user && <ProfileMenu user={user} isManager={isManager} onLogout={onLogout} />}
+    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '14px 24px 0', flex: 'none' }}>
+      <SearchBar value={search} onChange={onSearch} width={280} />
     </div>
   );
 }

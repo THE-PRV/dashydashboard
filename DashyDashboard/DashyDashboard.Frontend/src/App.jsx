@@ -5,6 +5,8 @@ import AccessManagementView from './views/AccessManagementView.jsx';
 import UserManagementView from './views/UserManagementView.jsx';
 import AdminView from './views/AdminView.jsx';
 import LoginPage from './views/LoginPage.jsx';
+import AppShell from './components/AppShell.jsx';
+import { Button, Stamp, ToastProvider } from './components/ui.jsx';
 import { getCurrentCycle, getAllCycles } from './api/cycles.js';
 import {
   clearDevSessionUserId,
@@ -13,6 +15,19 @@ import {
   setDevSessionUserId,
 } from './api/auth.js';
 import { asAssociateId } from './lib/contracts.js';
+
+const THEME_KEY = 'dashy.theme';
+
+function initialDark() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'dark') return true;
+    if (saved === 'light') return false;
+  } catch { /* no-op */ }
+  return typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : false;
+}
 
 // Roles may arrive in any casing from the DB ("admin", "ADMIN", ...). Canonicalize
 // once here so every case-sensitive comparison downstream (tabs, AdminView) just works.
@@ -39,6 +54,23 @@ function deriveRole(user) {
   return user.isManager ? 'manager' : 'agent';
 }
 
+// ── Full-screen states, in the ledger language ──────────────────────────────
+
+function LedgerMark() {
+  return (
+    <div style={{ textAlign: 'center', userSelect: 'none' }}>
+      <div style={{
+        fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 560,
+        lineHeight: 1.1, color: 'var(--text)', letterSpacing: '-0.01em',
+      }}>Attest</div>
+      <div style={{
+        marginTop: 8, fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 500,
+        letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-faint)',
+      }}>Broadridge · Access Review</div>
+    </div>
+  );
+}
+
 function LoadingScreen({ label }) {
   return (
     <div style={{
@@ -48,25 +80,14 @@ function LoadingScreen({ label }) {
       alignItems: 'center',
       justifyContent: 'center',
       background: 'var(--bg)',
-      gap: 16,
+      gap: 24,
     }}>
-      <div style={{
-        width: 48,
-        height: 48,
-        borderRadius: 12,
-        background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontWeight: 700,
-        fontSize: 24,
-        color: '#fff',
-        animation: 'pulse 1.4s ease-in-out infinite',
-      }}>
-        B
-      </div>
-      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{label}</div>
-      <style>{'@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }'}</style>
+      <LedgerMark />
+      <div className="skeleton" style={{ width: 140, height: 3, borderRadius: 999 }} aria-hidden="true" />
+      <div role="status" style={{
+        fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500,
+        letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)',
+      }}>{label}</div>
     </div>
   );
 }
@@ -81,59 +102,31 @@ function ErrorScreen({ title, message, onRetry, onLogout }) {
       background: 'var(--bg)',
       padding: '24px 16px',
     }}>
-      <div style={{
+      <div className="overlay-pop" style={{
         width: '100%',
-        maxWidth: 420,
+        maxWidth: 440,
         background: 'var(--surface)',
         border: '1px solid var(--border)',
-        borderRadius: 16,
-        boxShadow: '0 8px 40px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06)',
-        padding: '28px 24px',
+        borderRadius: 'var(--radius-card)',
+        boxShadow: 'var(--shadow-pop)',
+        padding: '26px 24px 24px',
         display: 'flex',
         flexDirection: 'column',
+        alignItems: 'flex-start',
         gap: 12,
       }}>
-        <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>{title}</div>
+        <Stamp tone="danger" icon="alert" label="Attention" animate />
+        <div style={{
+          fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 560,
+          lineHeight: 1.15, color: 'var(--text)',
+        }}>{title}</div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>{message}</div>
-        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-          <button
-            type="button"
-            onClick={onRetry}
-            style={{
-              height: 38,
-              padding: '0 14px',
-              borderRadius: 8,
-              border: '1px solid var(--accent)',
-              background: 'var(--accent)',
-              color: 'var(--accent-fg)',
-              fontSize: 13,
-              fontWeight: 600,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            Try again
-          </button>
-          {onLogout && (
-            <button
-              type="button"
-              onClick={onLogout}
-              style={{
-                height: 38,
-                padding: '0 14px',
-                borderRadius: 8,
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-                color: 'var(--text)',
-                fontSize: 13,
-                fontWeight: 600,
-                fontFamily: 'inherit',
-                cursor: 'pointer',
-              }}
-            >
-              Sign out
-            </button>
-          )}
+        <div style={{
+          width: '100%', borderTop: '1px solid var(--border-subtle)',
+          paddingTop: 14, marginTop: 4, display: 'flex', gap: 8,
+        }}>
+          <Button variant="primary" icon="refresh" onClick={onRetry}>Try again</Button>
+          {onLogout && <Button variant="outline" icon="logout" onClick={onLogout}>Sign out</Button>}
         </div>
       </div>
     </div>
@@ -143,7 +136,7 @@ function ErrorScreen({ title, message, onRetry, onLogout }) {
 export default function App() {
   const [authUser, setAuthUser] = useState(null);
   const [role, setRole] = useState('agent');
-  const [dark, setDark] = useState(false);
+  const [dark, setDarkState] = useState(initialDark);
   const [cycles, setCycles] = useState([]);
   const [cycle, setCycle] = useState(null);
   const [authError, setAuthError] = useState('');
@@ -153,6 +146,12 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   }, [dark]);
+
+  // Theme persists to localStorage 'dashy.theme'; first run follows the OS.
+  const setDark = useCallback((next) => {
+    setDarkState(next);
+    try { localStorage.setItem(THEME_KEY, next ? 'dark' : 'light'); } catch { /* no-op */ }
+  }, []);
 
   const applyUser = useCallback((response) => {
     const user = normalizeUser(response);
@@ -252,12 +251,12 @@ export default function App() {
     });
   }, []);
 
-  if (restoring) {
-    return <LoadingScreen label="Checking your access..." />;
-  }
+  let screen;
 
-  if (!authUser) {
-    return (
+  if (restoring) {
+    screen = <LoadingScreen label="Checking your access" />;
+  } else if (!authUser) {
+    screen = (
       <LoginPage
         onLogin={handleLogin}
         error={authError}
@@ -265,10 +264,8 @@ export default function App() {
         canUsePasswordLogin={DEV_LOGIN_ENABLED}
       />
     );
-  }
-
-  if (appError) {
-    return (
+  } else if (appError) {
+    screen = (
       <ErrorScreen
         title="We could not load the dashboard"
         message={appError}
@@ -276,24 +273,8 @@ export default function App() {
         onLogout={handleLogout}
       />
     );
-  }
-
-  const sharedTopBarProps = {
-    user: authUser,
-    cycle,
-    cycles,
-    onCycle: handleCycleChange,
-    onLogout: handleLogout,
-    isManager: authUser.isManager,
-    isSuperAdmin: !!authUser.superUserRole,
-    role,
-    onRole: setRole,
-    dark,
-    onDark: setDark,
-  };
-
-  if (!cycle) {
-    return (
+  } else if (!cycle) {
+    screen = (
       <ErrorScreen
         title="No review cycle is available"
         message="The dashboard could not find an active attestation cycle yet."
@@ -301,27 +282,43 @@ export default function App() {
         onLogout={handleLogout}
       />
     );
-  }
+  } else {
+    // Every view keeps receiving the exact prop set it had before the redesign.
+    const sharedViewProps = {
+      user: authUser,
+      cycle,
+      cycles,
+      onCycle: handleCycleChange,
+      onLogout: handleLogout,
+      isManager: authUser.isManager,
+      isSuperAdmin: !!authUser.superUserRole,
+      role,
+      onRole: setRole,
+      dark,
+      onDark: setDark,
+    };
 
-  if (role === 'superadmin') {
-    return (
-      <AdminView
-        {...sharedTopBarProps}
-        superUserRole={authUser.superUserRole}
-        superUserDept={authUser.superUserDept}
-        superUserDepts={authUser.superUserDepts}
-      />
+    // Phase 2: AdminView now renders content only, inside the shared AppShell
+    // like every other role (DESIGN §10 — the bespoke navy sidebar is gone).
+    screen = (
+      <AppShell {...sharedViewProps}>
+        <div style={{ height: '100%', minHeight: 0 }}>
+          {role === 'superadmin' && (
+            <AdminView
+              {...sharedViewProps}
+              superUserRole={authUser.superUserRole}
+              superUserDept={authUser.superUserDept}
+              superUserDepts={authUser.superUserDepts}
+            />
+          )}
+          {role === 'agent' && <AgentView {...sharedViewProps} />}
+          {role === 'manager' && <ManagerView {...sharedViewProps} />}
+          {role === 'access' && <AccessManagementView {...sharedViewProps} />}
+          {role === 'admin' && <UserManagementView {...sharedViewProps} />}
+        </div>
+      </AppShell>
     );
   }
 
-  return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        {role === 'agent' && <AgentView {...sharedTopBarProps} />}
-        {role === 'manager' && <ManagerView {...sharedTopBarProps} />}
-        {role === 'access' && <AccessManagementView {...sharedTopBarProps} />}
-        {role === 'admin' && <UserManagementView {...sharedTopBarProps} />}
-      </div>
-    </div>
-  );
+  return <ToastProvider>{screen}</ToastProvider>;
 }

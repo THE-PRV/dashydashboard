@@ -1,4 +1,4 @@
-// Browser-side screenshot compression. ALL upload paths (single, paste, batch) pass a
+// Browser-side screenshot compression. ALL upload paths (single, paste) pass a
 // File/Blob through this before hitting the API — the server only validates, it never
 // re-encodes. Downscales to <=1600px on the long edge (never upscales) and re-encodes
 // as webp at quality 0.75.
@@ -69,7 +69,7 @@ export function compressImage(file) {
 
 /**
  * Compress a Blob and wrap it back into a File so it can be appended to FormData with a
- * sensible name (the server's batch endpoint matches on filename). Always emits a .webp
+ * sensible name. Always emits a .webp
  * extension since the output is re-encoded as image/webp.
  *
  * @param {Blob} file - source image.

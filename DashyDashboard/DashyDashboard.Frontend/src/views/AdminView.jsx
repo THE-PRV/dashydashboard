@@ -1,47 +1,119 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import AdminDonut, { statusOf } from '../components/AdminDonut.jsx';
-import { getAdminDepartments, getDeptManagers, exportNonSubmitted, exportDisputes, addTool, addClient, getManagerTeam, getManagerMemberDetail } from '../api/admin.js';
+import {
+  getAdminDepartments, getDeptManagers, exportNonSubmitted, exportDisputes,
+  addTool, addClient, getManagerTeam, getManagerMemberDetail, getNonSubmitted,
+} from '../api/admin.js';
 import { getClientsAndTools, downloadScreenshotsZip } from '../api/manager.js';
 import { reopenAttestation } from '../api/attestations.js';
 import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
-import brandLogo from '../assets/broadridge-logo.svg';
+import FullScreenOverlay from '../components/FullScreenOverlay.jsx';
+import CycleGallery from '../components/CycleGallery.jsx';
+import {
+  StatusChip, SectionHeader, Card, Button, SearchBar, Modal,
+  EmptyState, Skeleton, Stamp, Badge, Icon, SortHeader, useToasts,
+  useClickOutside,
+} from '../components/ui.jsx';
+import { useBreadcrumbs, useHeaderActions } from '../components/AppShell.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AdminView — port of admin-dashboard-mockup.html to a live React component.
+// AdminView — "The Ledger" Phase 2. Renders CONTENT ONLY inside the shared
+// AppShell (the bespoke navy sidebar is gone, DESIGN §10). Navigation is
+// breadcrumb-driven: Overview → Department → Manager → Member, with an explicit
+// "← Back" affordance at every drill level. At-risk individuals surface at the
+// department level. Portfolio analytics use compact charts; tables use real
+// <table> semantics + SortHeader. Add Tool / Add Client / reopen confirm all use
+// the Modal primitive — no window.confirm / alert anywhere.
 //
-// Props:
-//   user           { associateId, firstName, lastName, isManager, superUserRole, superUserDept }
-//   cycle          { cycleID, cycleName, startDate, endDate, dueDate, daysLeft }
-//   cycles         Array of cycle objects
-//   onCycle        (cycle) => void
-//   onLogout       () => void
-//   dark           boolean
-//   onDark         (bool) => void
-//   superUserRole  "Admin" | "GFH" | "IFH"
-//   superUserDept  string | null
+// Props (unchanged from Phase 1): user, cycle, cycles, onCycle, onLogout, dark,
+//   onDark, superUserRole, superUserDept, superUserDepts, onRole, isManager.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Small inline SVG icon helper (mockup uses raw inline SVGs everywhere) ─────
-function Svg({ children, size = 16, stroke = 2, style }) {
+// Tone for the ledger status palette, keyed off completion percentage. Mirrors
+// AdminDonut.statusOf thresholds but maps to the icon+color status language.
+function pctTone(pct) {
+  if (pct >= 90) return { tone: 'success', icon: 'check', label: 'Completed' };
+  if (pct >= 75) return { tone: 'info', icon: 'half', label: 'On track' };
+  if (pct >= 50) return { tone: 'warning', icon: 'clock', label: 'Needs attention' };
+  return { tone: 'danger', icon: 'alert', label: 'At risk' };
+}
+
+function fmtDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
+}
+
+// Map the free-text Status strings the non-submitted endpoint emits
+// ("Not started" / "In progress" / "Awaiting approval" / "Action needed") to
+// the ledger icon+color language (DESIGN §3 — status is never color alone).
+// `rank` drives worst-first default ordering (lower = needs more attention).
+const NS_STATUS_META = {
+  'not started':       { tone: 'neutral', icon: 'circle', rank: 0 },
+  'in progress':       { tone: 'info',    icon: 'half',   rank: 1 },
+  'awaiting approval': { tone: 'warning', icon: 'clock',  rank: 2 },
+  'action needed':     { tone: 'danger',  icon: 'alert',  rank: 0 },
+};
+function nsStatusMeta(status) {
+  return NS_STATUS_META[(status || '').toLowerCase()]
+    ?? { tone: 'neutral', icon: 'circle', rank: 1 };
+}
+// Mirror ui.jsx CHIP_TONES (soft icon+label chip — DESIGN §3/§5).
+const NS_CHIP_TONES = {
+  neutral: { fg: 'var(--text-muted)', bg: 'var(--surface-2)' },
+  info:    { fg: 'var(--accent)',     bg: 'var(--accent-glow)' },
+  warning: { fg: 'var(--warning)',    bg: 'var(--warning-bg)' },
+  danger:  { fg: 'var(--danger)',     bg: 'var(--danger-bg)' },
+  success: { fg: 'var(--success)',    bg: 'var(--success-bg)' },
+};
+const EMPTY_DEPARTMENTS = [];
+
+// Generic sort helper for the data tables.
+function useSort(initialKey, initialDir = 'asc') {
+  const [sortKey, setSortKey] = useState(initialKey);
+  const [sortDir, setSortDir] = useState(initialDir);
+  const onSort = (key) => {
+    if (key === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+  return { sortKey, sortDir, onSort };
+}
+
+// Clickable table row with ledger hover tint (DESIGN §4) — used by the data
+// tables since index.css has no row-hover rule we can rely on.
+function HoverRow({ onActivate, children, style }) {
+  const [hover, setHover] = useState(false);
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={stroke}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{ flexShrink: 0, ...style }}
-      aria-hidden="true"
+    <tr
+      onClick={onActivate}
+      onKeyDown={(e) => { if (e.key === 'Enter') onActivate?.(); }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      tabIndex={0}
+      style={{
+        borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer',
+        background: hover ? 'var(--surface-2)' : 'transparent',
+        transition: 'background .15s ease-out',
+        ...style,
+      }}
     >
       {children}
-    </svg>
+    </tr>
   );
 }
 
-// ── Notifications builder (client-side, no API call) ──────────────────────────
+function sortRows(rows, key, dir, accessors) {
+  const get = accessors[key];
+  if (!get) return rows;
+  const sign = dir === 'desc' ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const av = get(a); const bv = get(b);
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * sign;
+    return String(av ?? '').localeCompare(String(bv ?? ''), undefined, { numeric: true }) * sign;
+  });
+}
+
+// ── Notifications builder (client-side, no API call) — unchanged trigger logic ─
 function buildNotifications(depts, cycle) {
   const items = [];
   const daysLeft = cycle?.daysLeft ?? 99;
@@ -51,10 +123,11 @@ function buildNotifications(depts, cycle) {
     depts.forEach((d) => {
       const pct = d.totalAssociates > 0 ? (d.submittedCount / d.totalAssociates) * 100 : 0;
       if (pct < 75) {
-        const st = statusOf(pct);
+        const st = pctTone(pct);
         items.push({
           key: d.departmentName,
-          varName: st.varName,
+          tone: st.tone,
+          icon: st.icon,
           title: `${d.departmentName} — ${st.label}`,
           desc: `${d.submittedCount} of ${d.totalAssociates} submitted (${Math.round(pct)}%). Due in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`,
           time: `${daysLeft}d left`,
@@ -67,7 +140,8 @@ function buildNotifications(depts, cycle) {
   const attention = items.length;
   items.push({
     key: '__reminder',
-    varName: '--st-ontrack',
+    tone: 'info',
+    icon: 'calendar',
     title: cycle?.cycleName ?? 'Current Cycle',
     desc: `${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining until due date. ${attention} department${attention === 1 ? '' : 's'} need attention.`,
     time: 'Reminder',
@@ -76,48 +150,50 @@ function buildNotifications(depts, cycle) {
   return items;
 }
 
-// ── Generic dropdown wrapper that closes on outside click ─────────────────────
-function useOutsideClose(ref, onClose, active) {
-  useEffect(() => {
-    if (!active) return undefined;
-    function onDown(e) {
-      if (ref.current && !ref.current.contains(e.target)) onClose();
-    }
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [ref, onClose, active]);
+// ── Identity line shared by manager/member rows (info popover replacement) ────
+function MetaPopover({ title, name, email }) {
+  return (
+    <div style={{ minWidth: 200 }}>
+      <div style={{
+        fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em',
+        textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6,
+      }}>{title}</div>
+      <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>{name}</div>
+      {email && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 7, fontSize: 12,
+          color: 'var(--text-muted)', marginTop: 6,
+        }}>
+          <Icon name="message" size={13} style={{ color: 'var(--text-faint)' }} />
+          <span style={{ fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}>{email}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function AdminView({
-  user,
-  cycle,
-  cycles,
-  onCycle,
-  onLogout,
-  dark,
-  onDark,
-  superUserRole,
-  superUserDept,
-  superUserDepts = [],
-  onRole,
-  isManager,
+  user, cycle, cycles, onLogout, dark, onDark,
+  superUserRole, superUserDept, superUserDepts = EMPTY_DEPARTMENTS,
 }) {
+  const toasts = useToasts();
+
   const [depts, setDepts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-
-  const [activeNav, setActiveNav] = useState('overview');
   const [search, setSearch] = useState('');
-  const [drillDept, setDrillDept] = useState(null);
 
-  // header dropdowns
-  const [showCycleMenu, setShowCycleMenu] = useState(false);
-  const [showNotifPanel, setShowNotifPanel] = useState(false);
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  // Breadcrumb-driven drill navigation.
+  const [drillDept, setDrillDept] = useState(null);     // dept object
+  const [drillManager, setDrillManager] = useState(null); // manager summary object
+  const [drillMember, setDrillMember] = useState(null);   // member summary object (overlay)
+
+  // Notifications.
+  const [showNotif, setShowNotif] = useState(false);
   const [notifRead, setNotifRead] = useState(false);
 
-  // modals / popovers
+  // Add Tool / Add Client modals.
   const [showAddTool, setShowAddTool] = useState(false);
   const [clients, setClients] = useState([]);
   const [addToolClientId, setAddToolClientId] = useState('');
@@ -125,68 +201,88 @@ export default function AdminView({
   const [addToolName, setAddToolName] = useState('');
   const [addToolError, setAddToolError] = useState(null);
   const [addToolSaving, setAddToolSaving] = useState(false);
+
   const [showAddClient, setShowAddClient] = useState(false);
   const [addClientId, setAddClientId] = useState('');
   const [addClientName, setAddClientName] = useState('');
   const [addClientError, setAddClientError] = useState(null);
   const [addClientSaving, setAddClientSaving] = useState(false);
-  const [toast, setToast] = useState(null);
-  const [gfhPopover, setGfhPopover] = useState(null);
 
-  // ── Data loading: on mount and whenever cycle.cycleID changes ──────────────
+  const isAdmin = superUserRole === 'Admin' || superUserRole === 'GFHDelegate';
+  const canAdd = superUserRole === 'GFH' || superUserRole === 'GFHDelegate' || superUserRole === 'Admin';
+
+  // ── Data loading ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!cycle?.cycleID) return undefined;
     let cancelled = false;
     setLoading(true);
     setError(null);
     getAdminDepartments(cycle.cycleID)
-      .then((data) => {
-        if (cancelled) return;
-        setDepts(Array.isArray(data) ? data : []);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(e.message || 'Failed to load department data.');
-        setDepts([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .then((data) => { if (!cancelled) setDepts(Array.isArray(data) ? data : []); })
+      .catch((e) => { if (!cancelled) { setError(e.message || 'Failed to load department data.'); setDepts([]); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [cycle?.cycleID]);
 
-  // Reset notification read-state when the cycle changes.
+  function refreshDepartments() {
+    if (!cycle?.cycleID) return;
+    getAdminDepartments(cycle.cycleID)
+      .then((data) => {
+        const next = Array.isArray(data) ? data : [];
+        setDepts(next);
+        setDrillDept((cur) => (cur ? next.find((d) => d.departmentName === cur.departmentName) ?? cur : cur));
+      })
+      .catch(() => {});
+  }
+
   useEffect(() => { setNotifRead(false); }, [cycle?.cycleID]);
 
-  // Close the GFH popover on scroll / resize to avoid drift.
+  // Client list for the Add Tool dropdown.
   useEffect(() => {
-    if (!gfhPopover) return undefined;
-    function close() { setGfhPopover(null); }
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [gfhPopover]);
-
-  // Fetch client list once for the Add Tool dropdown (GFH only)
-  useEffect(() => {
-    if (superUserRole !== 'GFH' && superUserRole !== 'GFHDelegate' && superUserRole !== 'Admin') return;
+    if (!canAdd) return;
     getClientsAndTools()
       .then((data) => {
         const list = Array.isArray(data) ? data : [];
         setClients(list);
         if (list.length > 0) setAddToolClientId(list[0].clientID);
       })
-      .catch(() => {}); // non-fatal
-  }, [superUserRole]);
+      .catch(() => {});
+  }, [canAdd]);
 
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(t);
-  }, [toast]);
+  // ── Scope + search + zero-tool filtering ────────────────────────────────────
+  const scopedDepts = useMemo(
+    () => (isAdmin
+      ? depts
+      : depts.filter((d) => superUserDepts.includes(d.departmentName))),
+    [depts, isAdmin, superUserDepts],
+  );
+  const q = search.trim().toLowerCase();
+  const filteredDepts = useMemo(
+    () => scopedDepts
+      .filter((d) => d.totalAssociates > 0)
+      .filter((d) => !q
+        || (d.departmentName ?? '').toLowerCase().includes(q)
+        || (d.gfhName ?? '').toLowerCase().includes(q)),
+    [q, scopedDepts],
+  );
+
+  // ── KPI aggregates ──────────────────────────────────────────────────────────
+  const totalUsers = scopedDepts.reduce((s, d) => s + (d.totalUsers ?? d.totalAssociates), 0);
+  const totalAssociates = scopedDepts.reduce((s, d) => s + d.totalAssociates, 0);
+  const submitted = scopedDepts.reduce((s, d) => s + d.submittedCount, 0);
+  const pending = totalAssociates - submitted;
+  const completionPct = totalAssociates > 0 ? Math.round((submitted / totalAssociates) * 100) : 0;
+  const atRiskCount = scopedDepts.filter((d) => {
+    const pct = d.totalAssociates > 0 ? (d.submittedCount / d.totalAssociates) * 100 : 0;
+    return pct < 50;
+  }).length;
+
+  // ── Notifications ───────────────────────────────────────────────────────────
+  const notifItems = useMemo(
+    () => buildNotifications(scopedDepts, cycle),
+    [cycle, scopedDepts],
+  );
+  const notifCount = notifRead ? 0 : Math.max(0, notifItems.length - 1);
 
   // ── Add Tool helpers ────────────────────────────────────────────────────────
   function openAddTool() {
@@ -196,16 +292,18 @@ export default function AdminView({
     setAddToolSaving(false);
     setShowAddTool(true);
   }
-
-  async function submitAddTool() {
-    if (!addToolClientId || !addToolDeptId || !addToolName.trim()) return;
+  async function submitAddTool({ keepOpen = false } = {}) {
+    if (!addToolClientId || !addToolDeptId || !addToolName.trim()) {
+      setAddToolError('Pick a client and department, and enter a tool name.');
+      return;
+    }
     setAddToolSaving(true);
     setAddToolError(null);
     try {
       const result = await addTool(addToolClientId, addToolName.trim(), addToolDeptId);
-      setShowAddTool(false);
+      toasts.success(`Tool "${result.toolName}" (${result.toolId}) added to ${addToolClientId}`, { title: 'Tool added' });
       setAddToolName('');
-      setToast(`Tool "${result.toolName}" (${result.toolId}) added to ${addToolClientId}`);
+      if (!keepOpen) setShowAddTool(false);
     } catch (e) {
       setAddToolError(e.message || 'Failed to add tool. Please try again.');
     } finally {
@@ -221,21 +319,21 @@ export default function AdminView({
     setAddClientSaving(false);
     setShowAddClient(true);
   }
-
-  async function submitAddClient() {
-    if (!addClientId.trim() || !addClientName.trim()) return;
+  async function submitAddClient({ keepOpen = false } = {}) {
+    if (!addClientId.trim() || !addClientName.trim()) {
+      setAddClientError('Enter both a client ID and a client name.');
+      return;
+    }
     setAddClientSaving(true);
     setAddClientError(null);
     try {
       const result = await addClient(addClientId.trim(), addClientName.trim());
-      setShowAddClient(false);
+      toasts.success(`Client "${result.clientName}" (${result.clientId}) added`, { title: 'Client added' });
+      const entry = { clientID: result.clientId, clientName: result.clientName };
+      setClients((prev) => (prev.some((c) => c.clientID === entry.clientID) ? prev : [...prev, entry]));
       setAddClientId('');
       setAddClientName('');
-      setToast(`Client "${result.clientName}" (${result.clientId}) added`);
-      const newEntry = { clientID: result.clientId, clientName: result.clientName };
-      setClients((prev) =>
-        prev.some((c) => c.clientID === newEntry.clientID) ? prev : [...prev, newEntry]
-      );
+      if (!keepOpen) setShowAddClient(false);
     } catch (e) {
       setAddClientError(e.message || 'Failed to add client. Please try again.');
     } finally {
@@ -243,1267 +341,637 @@ export default function AdminView({
     }
   }
 
-  // ── Scope filtering ─────────────────────────────────────────────────────────
-  const isAdmin = superUserRole === 'Admin' || superUserRole === 'GFHDelegate';
-  const scopedDepts = isAdmin
-    ? depts
-    : depts.filter((d) => superUserDepts.includes(d.departmentName));
+  // ── Breadcrumbs (clickable ancestors) ───────────────────────────────────────
+  const rootLabel = isAdmin ? 'Admin' : `${superUserRole} View`;
+  const crumbs = useMemo(() => {
+    const items = [{ label: rootLabel, onClick: () => { setDrillDept(null); setDrillManager(null); setDrillMember(null); } }];
+    if (drillDept) items.push({ label: drillDept.departmentName, onClick: () => { setDrillManager(null); setDrillMember(null); } });
+    if (drillManager) items.push({ label: drillManager.fullName, onClick: () => setDrillMember(null) });
+    if (drillMember) items.push({ label: drillMember.fullName });
+    return items;
+  }, [rootLabel, drillDept, drillManager, drillMember]);
+  useBreadcrumbs(crumbs);
 
-  // ── Search + zero-tool filtering ─────────────────────────────────────────
-  const q = search.trim().toLowerCase();
-  const filteredDepts = scopedDepts
-    .filter((d) => d.totalAssociates > 0)
-    .filter((d) => !q || (d.departmentName ?? '').toLowerCase().includes(q) || (d.gfhName ?? '').toLowerCase().includes(q));
-
-  // ── KPI band aggregates (computed over the scoped set) ──────────────────────
-  const totalUsers = scopedDepts.reduce((s, d) => s + (d.totalUsers ?? d.totalAssociates), 0);
-  const totalAssociates = scopedDepts.reduce((s, d) => s + d.totalAssociates, 0);
-  const submitted = scopedDepts.reduce((s, d) => s + d.submittedCount, 0);
-  const pending = totalAssociates - submitted;
-  const completionPct = totalAssociates > 0 ? Math.round((submitted / totalAssociates) * 100) : 0;
-  const atRiskCount = scopedDepts.filter((d) => {
-    const pct = d.totalAssociates > 0 ? (d.submittedCount / d.totalAssociates) * 100 : 0;
-    return pct < 50;
-  }).length;
-
-  // ── Notifications ──────────────────────────────────────────────────────────
-  const notifItems = buildNotifications(scopedDepts, cycle);
-  const notifCount = notifRead ? 0 : Math.max(0, notifItems.length - 1);
-
-  // ── Page title ──────────────────────────────────────────────────────────────
-  const pageTitle = isAdmin
-    ? 'Admin Dashboard'
-    : `${user?.firstName ?? ''} ${user?.lastName ?? ''} — ${superUserRole} View`.trim();
-
-  const initials = `${(user?.firstName ?? 'U')[0] ?? 'U'}${(user?.lastName ?? '')[0] ?? ''}`.toUpperCase();
-
-  return (
-    <div style={{ display: 'flex', height: '100vh', background: 'var(--bg)', overflow: 'hidden' }}>
-      {/* ════════════ SIDEBAR ════════════ */}
-      <Sidebar
-        activeNav={activeNav}
-        onNav={setActiveNav}
-        onLogout={onLogout}
-        onRole={onRole}
-        isManager={isManager}
-        user={user}
-        superUserRole={superUserRole}
-        superUserDept={superUserDept}
-      />
-
-      {/* ════════════ MAIN AREA ════════════ */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-        {/* ──── TOPBAR ──── */}
-        <header
-          style={{
-            background: 'var(--surface)',
-            borderBottom: '1px solid var(--border)',
-            padding: '0 24px',
-            height: 56,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            flexShrink: 0,
-            position: 'relative',
-            zIndex: 30,
-          }}
-        >
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-            {pageTitle}
-          </h1>
-
-          <div style={{ flex: 1 }} />
-
-          {/* Search */}
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <Svg size={15} style={{ position: 'absolute', left: 11, color: 'var(--text-faint)', pointerEvents: 'none' }}>
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </Svg>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search departments…"
-              style={{
-                fontFamily: 'var(--font-sans)',
-                background: 'var(--surface-2)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                color: 'var(--text)',
-                padding: '8px 12px 8px 33px',
-                fontSize: 13,
-                width: 200,
-                outline: 'none',
-              }}
-            />
-          </div>
-
-          {/* Add Tool (GFH, GFH-Delegate, and Admin) */}
-          {(superUserRole === 'GFH' || superUserRole === 'GFHDelegate' || superUserRole === 'Admin') && (
-            <>
-              <button
-                onClick={() => openAddClient()}
-                style={{
-                  background: 'var(--accent)',
-                  color: 'var(--accent-fg)',
-                  border: 'none',
-                  borderRadius: 8,
-                  padding: '8px 14px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  fontFamily: 'var(--font-sans)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  cursor: 'pointer',
-                }}
-              >
-                <Svg size={15} stroke={2.4}>
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </Svg>
-                Add Client
-              </button>
-              <button
-                onClick={() => openAddTool()}
-                style={{
-                  background: 'var(--accent)',
-                  color: 'var(--accent-fg)',
-                  border: 'none',
-                  borderRadius: 8,
-                  padding: '8px 14px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  fontFamily: 'var(--font-sans)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  cursor: 'pointer',
-                }}
-              >
-                <Svg size={15} stroke={2.4}>
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </Svg>
-                Add Tool
-              </button>
-            </>
-          )}
-
-          {/* Cycle picker */}
-          <CyclePicker
-            cycle={cycle}
-            cycles={cycles}
-            onCycle={onCycle}
-            open={showCycleMenu}
-            setOpen={setShowCycleMenu}
-          />
-
-          {/* Notifications */}
-          <NotificationBell
-            items={notifItems}
-            count={notifCount}
-            open={showNotifPanel}
-            setOpen={setShowNotifPanel}
-            onOpened={() => setNotifRead(true)}
-            onMarkAll={() => setNotifRead(true)}
-          />
-
-          {/* Theme toggle */}
-          <button
-            onClick={() => onDark(!dark)}
-            title="Toggle theme"
-            style={iconBtnStyle}
-          >
-            {dark ? (
-              <Svg size={16}>
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-              </Svg>
-            ) : (
-              <Svg size={16}>
-                <circle cx="12" cy="12" r="5" />
-                <line x1="12" y1="1" x2="12" y2="3" />
-                <line x1="12" y1="21" x2="12" y2="23" />
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                <line x1="1" y1="12" x2="3" y2="12" />
-                <line x1="21" y1="12" x2="23" y2="12" />
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-              </Svg>
-            )}
-          </button>
-
-          {/* Profile */}
-          <ProfileMenu
-            initials={initials}
-            user={user}
-            superUserRole={superUserRole}
-            superUserDept={superUserDept}
-            open={showProfileMenu}
-            setOpen={setShowProfileMenu}
-            onLogout={onLogout}
-          />
-        </header>
-
-        {/* ──── SCROLLABLE CONTENT ──── */}
-        <main style={{ flex: 1, overflow: 'auto', padding: 24 }}>
-          {error && (
-            <div
-              style={{
-                marginBottom: 18,
-                padding: '12px 16px',
-                borderRadius: 'var(--radius)',
-                background: 'var(--st-risk-bg)',
-                color: 'var(--st-risk)',
-                border: '1px solid color-mix(in oklab, var(--st-risk) 35%, transparent)',
-                fontSize: 13,
-                fontWeight: 500,
-              }}
-            >
-              {error}
-            </div>
-          )}
-
-          {loading ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-muted)', fontSize: 14 }}>
-              Loading department data…
-            </div>
-          ) : drillDept ? (
-            <DrillDownSection
-              dept={drillDept}
-              cycle={cycle}
-              dark={dark}
-              superUserRole={superUserRole}
-              onBack={() => setDrillDept(null)}
-            />
-          ) : (
-            <>
-              {/* KPI band */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 24 }}>
-                <KpiCard eyebrow="Associates" value={totalUsers} unit={`${scopedDepts.length} depts`} />
-                <KpiCard eyebrow="Associate-Tools" value={totalAssociates} accent="var(--accent-2)" />
-                <KpiCard eyebrow="Submitted" value={submitted} unit={`${completionPct}%`} accent="var(--st-completed)" />
-                <KpiCard eyebrow="Pending" value={pending} unit="open" />
-                <KpiCard eyebrow="At Risk Depts" value={atRiskCount} unit={`of ${scopedDepts.length}`} accent="var(--st-risk)" />
-              </div>
-
-              {/* Section header */}
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '4px 0 14px' }}>
-                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
-                  Departments
-                </span>
-                <span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
-                  {filteredDepts.length} {filteredDepts.length === 1 ? 'department' : 'departments'} · {cycle?.cycleName ?? ''}
-                </span>
-              </div>
-
-              {/* Department grid */}
-              {filteredDepts.length === 0 ? (
-                <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '40px 0', textAlign: 'center' }}>
-                  {q ? 'No departments match your search.' : 'No departments to display for this scope.'}
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
-                  {filteredDepts.map((dept) => (
-                    <DeptCard
-                      key={dept.departmentName}
-                      dept={dept}
-                      dark={dark}
-                      onDrill={setDrillDept}
-                      onInfo={setGfhPopover}
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </main>
-      </div>
-
-      {/* ════════════ GFH INFO POPOVER ════════════ */}
-      {gfhPopover && <GfhPopover info={gfhPopover} onClose={() => setGfhPopover(null)} />}
-
-      {/* ════════════ ADD TOOL MODAL ════════════ */}
-      {showAddTool && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 200,
-            background: 'rgba(0,0,0,.52)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onClick={() => !addToolSaving && setShowAddTool(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'var(--surface)', borderRadius: 14, padding: '28px 28px 24px',
-              width: 380, border: '1px solid var(--border)', boxShadow: 'var(--shadow-lift-h)',
-            }}
-          >
-            <h2 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-              Add Tool
-            </h2>
-            <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-muted)' }}>
-              The tool will be available for all managers in this department to assign to associates.
-            </p>
-
-            {/* Client select */}
-            <label style={{ display: 'block', marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
-                Client
-              </div>
-              <select
-                value={addToolClientId}
-                onChange={(e) => setAddToolClientId(e.target.value)}
-                disabled={addToolSaving}
-                style={{
-                  width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-                  borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-                  fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
-                  cursor: addToolSaving ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {clients.length === 0 && <option value="">Loading clients…</option>}
-                {clients.map((c) => (
-                  <option key={c.clientID} value={c.clientID}>
-                    {c.clientName} ({c.clientID})
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {/* Department select */}
-            <label style={{ display: 'block', marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
-                Department
-              </div>
-              <select
-                value={addToolDeptId}
-                onChange={(e) => setAddToolDeptId(Number(e.target.value))}
-                disabled={addToolSaving}
-                style={{
-                  width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-                  borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-                  fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
-                  cursor: addToolSaving ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {depts.length === 0 && <option value={0}>Loading departments…</option>}
-                {depts.map((d) => (
-                  <option key={d.departmentID} value={d.departmentID}>
-                    {d.departmentName}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {/* Tool name input */}
-            <label style={{ display: 'block', marginBottom: 18 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
-                Tool Name
-              </div>
-              <input
-                type="text"
-                value={addToolName}
-                onChange={(e) => setAddToolName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submitAddTool()}
-                placeholder="e.g. Trade Analytics Suite"
-                disabled={addToolSaving}
-                maxLength={100}
-                style={{
-                  width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-                  borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-                  fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
-                  boxSizing: 'border-box',
-                }}
-              />
-            </label>
-
-            {/* Inline error */}
-            {addToolError && (
-              <div style={{
-                marginBottom: 14, padding: '10px 12px', borderRadius: 8,
-                background: 'var(--st-risk-bg)', color: 'var(--st-risk)',
-                fontSize: 12.5, fontWeight: 500,
-                border: '1px solid color-mix(in oklab, var(--st-risk) 28%, transparent)',
-              }}>
-                {addToolError}
-              </div>
-            )}
-
-            {/* Action buttons */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button
-                onClick={() => setShowAddTool(false)}
-                disabled={addToolSaving}
-                style={{
-                  background: 'transparent', color: 'var(--text-muted)',
-                  border: '1px solid var(--border)', borderRadius: 8,
-                  padding: '9px 16px', fontSize: 13, fontWeight: 500,
-                  fontFamily: 'var(--font-sans)', cursor: addToolSaving ? 'not-allowed' : 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitAddTool}
-                disabled={addToolSaving || !addToolClientId || !addToolDeptId || !addToolName.trim()}
-                style={{
-                  background: !addToolSaving && addToolClientId && addToolDeptId && addToolName.trim() ? 'var(--accent)' : 'var(--surface-2)',
-                  color: !addToolSaving && addToolClientId && addToolDeptId && addToolName.trim() ? 'var(--accent-fg)' : 'var(--text-muted)',
-                  border: '1px solid transparent', borderRadius: 8,
-                  padding: '9px 16px', fontSize: 13, fontWeight: 600,
-                  fontFamily: 'var(--font-sans)',
-                  cursor: addToolSaving || !addToolClientId || !addToolDeptId || !addToolName.trim() ? 'not-allowed' : 'pointer',
-                  transition: 'background .15s ease, color .15s ease',
-                }}
-              >
-                {addToolSaving ? 'Adding…' : 'Add Tool'}
-              </button>
-            </div>
-          </div>
-        </div>
+  // ── Header actions: search + add buttons + notifications + theme ────────────
+  const headerNode = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {!drillDept && (
+        <SearchBar value={search} onChange={setSearch} placeholder="Search departments…" width={190}
+          style={{ height: 28 }} />
       )}
-
-      {/* ════════════ ADD CLIENT MODAL ════════════ */}
-      {showAddClient && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 200,
-            background: 'rgba(0,0,0,.52)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onClick={() => !addClientSaving && setShowAddClient(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'var(--surface)', borderRadius: 14, padding: '28px 28px 24px',
-              width: 380, border: '1px solid var(--border)', boxShadow: 'var(--shadow-lift-h)',
-            }}
-          >
-            <h2 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-              Add Client
-            </h2>
-            <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-muted)' }}>
-              The client will be available for tool assignment and attestation cycles.
-            </p>
-
-            {/* Client ID input */}
-            <label style={{ display: 'block', marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
-                Client ID
-              </div>
-              <input
-                type="text"
-                value={addClientId}
-                onChange={(e) => setAddClientId(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submitAddClient()}
-                placeholder="e.g. DTC-US or 0039"
-                disabled={addClientSaving}
-                maxLength={50}
-                style={{
-                  width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-                  borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-                  fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
-                  boxSizing: 'border-box',
-                }}
-              />
-            </label>
-
-            {/* Client Name input */}
-            <label style={{ display: 'block', marginBottom: 18 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
-                Client Name
-              </div>
-              <input
-                type="text"
-                value={addClientName}
-                onChange={(e) => setAddClientName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submitAddClient()}
-                placeholder="e.g. DTC United States"
-                disabled={addClientSaving}
-                maxLength={200}
-                style={{
-                  width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-                  borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-                  fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
-                  boxSizing: 'border-box',
-                }}
-              />
-            </label>
-
-            {/* Inline error */}
-            {addClientError && (
-              <div style={{
-                marginBottom: 14, padding: '10px 12px', borderRadius: 8,
-                background: 'var(--st-risk-bg)', color: 'var(--st-risk)',
-                fontSize: 12.5, fontWeight: 500,
-                border: '1px solid color-mix(in oklab, var(--st-risk) 28%, transparent)',
-              }}>
-                {addClientError}
-              </div>
-            )}
-
-            {/* Action buttons */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button
-                onClick={() => setShowAddClient(false)}
-                disabled={addClientSaving}
-                style={{
-                  background: 'transparent', color: 'var(--text-muted)',
-                  border: '1px solid var(--border)', borderRadius: 8,
-                  padding: '9px 16px', fontSize: 13, fontWeight: 500,
-                  fontFamily: 'var(--font-sans)', cursor: addClientSaving ? 'not-allowed' : 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitAddClient}
-                disabled={addClientSaving || !addClientId.trim() || !addClientName.trim()}
-                style={{
-                  background: !addClientSaving && addClientId.trim() && addClientName.trim() ? 'var(--accent)' : 'var(--surface-2)',
-                  color: !addClientSaving && addClientId.trim() && addClientName.trim() ? 'var(--accent-fg)' : 'var(--text-muted)',
-                  border: '1px solid transparent', borderRadius: 8,
-                  padding: '9px 16px', fontSize: 13, fontWeight: 600,
-                  fontFamily: 'var(--font-sans)',
-                  cursor: addClientSaving || !addClientId.trim() || !addClientName.trim() ? 'not-allowed' : 'pointer',
-                  transition: 'background .15s ease, color .15s ease',
-                }}
-              >
-                {addClientSaving ? 'Adding…' : 'Add Client'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Toast notification */}
-      {toast && (
-        <div
-          className="toast"
-          style={{
-            position: 'fixed', bottom: 24, right: 24, zIndex: 300,
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 10, padding: '12px 18px',
-            boxShadow: 'var(--shadow-lift-h)',
-            display: 'flex', alignItems: 'center', gap: 10,
-            fontSize: 13, color: 'var(--text)', maxWidth: 360,
-          }}
-        >
-          <span style={{ color: 'var(--st-completed)', flexShrink: 0 }}>
-            <Svg size={16}><polyline points="20 6 9 17 4 12" /></Svg>
-          </span>
-          <span>{toast}</span>
-          <span onClick={() => setToast(null)} style={{ marginLeft: 'auto', color: 'var(--text-faint)', cursor: 'pointer', flexShrink: 0 }}>
-            <Svg size={14}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></Svg>
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared style for the topbar icon buttons.
-const iconBtnStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: 36,
-  height: 36,
-  background: 'var(--surface-2)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)',
-  color: 'var(--text-muted)',
-  cursor: 'pointer',
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SIDEBAR
-// ─────────────────────────────────────────────────────────────────────────────
-function Sidebar({ activeNav, onNav, onLogout, onRole, isManager, user, superUserRole, superUserDept }) {
-  const navItems = [
-    {
-      id: 'overview',
-      label: 'Overview',
-      icon: (
+      {canAdd && (
         <>
-          <rect x="3" y="3" width="7" height="9" />
-          <rect x="14" y="3" width="7" height="5" />
-          <rect x="14" y="12" width="7" height="9" />
-          <rect x="3" y="16" width="7" height="5" />
+          <Button size="sm" variant="outline" icon="plus" onClick={openAddClient}>Client</Button>
+          <Button size="sm" variant="primary" icon="plus" onClick={openAddTool}>Tool</Button>
         </>
-      ),
-    },
-  ];
-
-  return (
-    <aside
-      style={{
-        width: 240,
-        flexShrink: 0,
-        background: 'var(--side-bg)',
-        borderRight: '1px solid var(--side-edge)',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Logo row */}
-      <div style={{ padding: '22px 18px 18px', borderBottom: '1px solid var(--side-border)' }}>
-        <img src={brandLogo} alt="Broadridge" style={{ height: 26, display: 'block', filter: 'brightness(0) invert(1)' }} />
-        <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--side-faint)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>
-          Access Review · BPO
-        </div>
-      </div>
-
-      {/* Nav */}
-      <nav style={{ padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--side-faint)', padding: '4px 10px 6px' }}>
-          Workspace
-        </div>
-        {navItems.map((item) => {
-          const active = activeNav === item.id;
-          return (
-            <div
-              key={item.id}
-              onClick={() => onNav(item.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 11,
-                padding: '10px 14px',
-                borderRadius: 8,
-                color: active ? 'var(--side-active-text)' : 'var(--side-text-muted)',
-                fontSize: 13,
-                fontWeight: active ? 600 : 500,
-                cursor: 'pointer',
-                userSelect: 'none',
-                background: active ? 'var(--side-active-bg)' : 'transparent',
-              }}
-            >
-              <Svg size={17} style={{ color: active ? 'var(--side-active-text)' : 'var(--side-faint)' }}>
-                {item.icon}
-              </Svg>
-              {item.label}
-            </div>
-          );
-        })}
-      </nav>
-
-      {/* Spacer */}
-      <div style={{ flex: 1 }} />
-
-      {/* Associate View escape hatch — available to every user (own attestations) */}
-      {onRole && (
-        <div style={{ padding: '0 12px 8px', borderTop: '1px solid var(--side-border)', paddingTop: 8, marginTop: 4 }}>
-          <div
-            onClick={() => onRole('agent')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 11,
-              padding: '10px 14px', borderRadius: 8,
-              color: 'var(--side-text-muted)', fontSize: 13, fontWeight: 500,
-              cursor: 'pointer', userSelect: 'none',
-            }}
-          >
-            <Svg size={17} style={{ color: 'var(--side-faint)' }}>
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </Svg>
-            Associate View
-          </div>
-        </div>
       )}
-
-      {/* Team View escape hatch — only for users who are also managers */}
-      {isManager && onRole && (
-        <div style={{ padding: '0 12px 8px', borderTop: '1px solid var(--side-border)', paddingTop: 8, marginTop: 4 }}>
-          <div
-            onClick={() => onRole('manager')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 11,
-              padding: '10px 14px', borderRadius: 8,
-              color: 'var(--side-text-muted)', fontSize: 13, fontWeight: 500,
-              cursor: 'pointer', userSelect: 'none',
-            }}
-          >
-            <Svg size={17} style={{ color: 'var(--side-faint)' }}>
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M23 21v-2a4 4 0 0 1-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </Svg>
-            Team View
-          </div>
-        </div>
-      )}
-
-      {/* Sign out */}
-      <div style={{ padding: '4px 12px 8px' }}>
-        <div
-          onClick={onLogout}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 11,
-            padding: '10px 14px',
-            borderRadius: 8,
-            color: 'var(--side-text-muted)',
-            fontSize: 13,
-            fontWeight: 500,
-            cursor: 'pointer',
-            userSelect: 'none',
-          }}
-        >
-          <Svg size={17} style={{ color: 'var(--side-faint)' }}>
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-            <polyline points="16 17 21 12 16 7" />
-            <line x1="21" y1="12" x2="9" y2="12" />
-          </Svg>
-          Sign Out
-        </div>
-      </div>
-
-      {/* Role badge (replaces the demo switcher from the mockup) */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--side-border)' }}>
-        <div style={{ fontSize: 10, color: 'var(--side-faint)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>
-          Logged in as
-        </div>
-        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--side-text)' }}>
-          {user?.firstName} {user?.lastName}
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--side-role)', marginTop: 2 }}>
-          {superUserRole}
-          {superUserDept ? ` · ${superUserDept}` : ''}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CYCLE PICKER
-// ─────────────────────────────────────────────────────────────────────────────
-function CyclePicker({ cycle, cycles, onCycle, open, setOpen }) {
-  const ref = useRef(null);
-  useOutsideClose(ref, () => setOpen(false), open);
-
-  const list = Array.isArray(cycles) ? cycles : [];
-
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 9,
-          background: 'var(--surface-2)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)',
-          padding: '7px 11px',
-          cursor: 'pointer',
-          color: 'var(--text)',
-          fontSize: 13,
-          fontWeight: 500,
-          fontFamily: 'var(--font-sans)',
-        }}
-      >
-        <span style={{ fontSize: 11, color: 'var(--text-faint)', letterSpacing: '0.04em' }}>CYCLE</span>
-        <span style={{ fontFamily: 'var(--font-mono)' }}>{cycle?.cycleName ?? '—'}</span>
-        <Svg size={14} stroke={2.2} style={{ color: 'var(--text-faint)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .18s ease' }}>
-          <polyline points="6 9 12 15 18 9" />
-        </Svg>
-      </button>
-
-      {open && (
-        <div
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 'calc(100% + 8px)',
-            minWidth: 240,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 12,
-            boxShadow: 'var(--shadow-lift)',
-            padding: 6,
-            zIndex: 60,
-          }}
-        >
-          {list.map((c) => {
-            const sel = c.cycleID === cycle?.cycleID;
-            return (
-              <div
-                key={c.cycleID}
-                onClick={() => { onCycle(c); setOpen(false); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 10,
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  fontSize: 13,
-                  color: sel ? 'var(--accent)' : 'var(--text-muted)',
-                  cursor: 'pointer',
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
-                  <Svg size={14} style={{ color: 'var(--text-faint)' }}>
-                    <rect x="3" y="4" width="18" height="18" rx="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
-                  </Svg>
-                  <span>{c.cycleName}</span>
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
-                  {c.daysLeft != null && (
-                    <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                      {c.daysLeft < 0 ? `${-c.daysLeft}d ago` : `${c.daysLeft}d left`}
-                    </span>
-                  )}
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: sel ? 'var(--accent)' : 'var(--text-faint)' }} />
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <NotificationBell items={notifItems} count={notifCount} open={showNotif} setOpen={setShowNotif}
+        onOpened={() => setNotifRead(true)} onMarkAll={() => setNotifRead(true)} />
     </div>
   );
-}
+  useHeaderActions(headerNode, [search, drillDept, canAdd, showNotif, notifCount, notifItems]);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NOTIFICATION BELL + PANEL
-// ─────────────────────────────────────────────────────────────────────────────
-function NotificationBell({ items, count, open, setOpen, onOpened, onMarkAll }) {
-  const ref = useRef(null);
-  useOutsideClose(ref, () => setOpen(false), open);
-
-  function toggle() {
-    setOpen((v) => {
-      const next = !v;
-      if (next) onOpened();
-      return next;
-    });
-  }
-
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <div style={{ position: 'relative' }}>
-        <button onClick={toggle} title="Notifications" style={iconBtnStyle}>
-          <Svg size={16}>
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-          </Svg>
-        </button>
-        {count > 0 && (
-          <span
-            style={{
-              position: 'absolute',
-              top: 2,
-              right: 2,
-              minWidth: 16,
-              height: 16,
-              borderRadius: 8,
-              padding: '0 3px',
-              background: 'var(--st-risk)',
-              color: '#fff',
-              fontSize: 9,
-              fontWeight: 700,
-              lineHeight: '16px',
-              textAlign: 'center',
-              border: '1.5px solid var(--surface-2)',
-              fontFamily: 'var(--font-mono)',
-            }}
-          >
-            {count}
-          </span>
+    <div style={{ height: '100%', overflowY: 'auto' }}>
+      <div style={{ padding: 'clamp(16px, 3vw, 24px)', maxWidth: 1400, margin: '0 auto' }}>
+        {error && (
+          <Card pad={0} style={{
+            marginBottom: 18, padding: '11px 14px', background: 'var(--danger-bg)',
+            borderColor: 'var(--danger-border)', display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <Icon name="alert" size={15} stroke={2} style={{ color: 'var(--danger)', flex: 'none' }} />
+            <span style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 500 }}>{error}</span>
+          </Card>
+        )}
+
+        {/* The member detail is a FullScreenOverlay that floats ON TOP of the
+            manager-team table, so the manager level stays mounted under it. */}
+        {loading ? (
+          <OverviewSkeleton />
+        ) : drillManager ? (
+          <ManagerTeamSection
+            mgr={drillManager} cycle={cycle} dark={dark} superUserRole={superUserRole}
+            onBack={() => setDrillManager(null)}
+            onOpenMember={setDrillMember}
+            onReviewed={refreshDepartments}
+          />
+        ) : drillDept ? (
+          <DrillDownSection
+            dept={drillDept} cycle={cycle} dark={dark} superUserRole={superUserRole}
+            onBack={() => setDrillDept(null)}
+            onOpenManager={setDrillManager}
+            onReviewed={refreshDepartments}
+          />
+        ) : (
+          <OverviewSection
+            depts={filteredDepts} scopedCount={scopedDepts.length}
+            totalUsers={totalUsers} totalAssociates={totalAssociates}
+            submitted={submitted} pending={pending} completionPct={completionPct}
+            atRiskCount={atRiskCount} cycle={cycle} dark={dark} hasQuery={!!q}
+            onDrill={setDrillDept}
+          />
         )}
       </div>
 
-      {open && (
-        <div
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: 'calc(100% + 8px)',
-            minWidth: 280,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 12,
-            boxShadow: 'var(--shadow-lift)',
-            zIndex: 60,
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid var(--border-subtle)' }}>
-            <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Notifications</span>
-            <span onClick={onMarkAll} style={{ fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
-              Mark all read
-            </span>
-          </div>
-          <div>
-            {items.map((n, i) => (
-              <div
-                key={n.key}
-                style={{
-                  display: 'flex',
-                  gap: 10,
-                  padding: '12px 14px',
-                  borderBottom: i < items.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                }}
-              >
-                <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 4, background: `var(${n.varName})` }} />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>{n.title}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>{n.desc}</div>
-                  <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 4 }}>{n.time}</div>
+      {/* Member detail overlay */}
+      {drillMember && drillManager && (
+        <AssociateDetailOverlay
+          mgr={drillManager} member={drillMember} cycle={cycle} dark={dark}
+          superUserRole={superUserRole}
+          onClose={() => setDrillMember(null)}
+          onReopened={refreshDepartments}
+          onReviewed={refreshDepartments}
+        />
+      )}
+
+      {/* ── Add Tool modal ── */}
+      <AddToolModal
+        open={showAddTool} onClose={() => !addToolSaving && setShowAddTool(false)}
+        clients={clients} depts={depts}
+        clientId={addToolClientId} setClientId={setAddToolClientId}
+        deptId={addToolDeptId} setDeptId={setAddToolDeptId}
+        name={addToolName} setName={setAddToolName}
+        error={addToolError} saving={addToolSaving}
+        onSubmit={submitAddTool}
+      />
+
+      {/* ── Add Client modal ── */}
+      <AddClientModal
+        open={showAddClient} onClose={() => !addClientSaving && setShowAddClient(false)}
+        clientId={addClientId} setClientId={setAddClientId}
+        name={addClientName} setName={setAddClientName}
+        error={addClientError} saving={addClientSaving}
+        onSubmit={submitAddClient}
+      />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OVERVIEW — KPI band + department cards
+// ─────────────────────────────────────────────────────────────────────────────
+function OverviewSection({
+  depts, scopedCount, totalUsers, totalAssociates, submitted, pending,
+  completionPct, atRiskCount, cycle, dark, hasQuery, onDrill,
+}) {
+  return (
+    <div className="stagger" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {depts.length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
+          gap: 16, alignItems: 'stretch',
+        }}>
+          <Card pad={20} style={{ minWidth: 0 }}>
+            <SectionHeader
+              rule
+              right={<span style={{
+                fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)',
+                fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0,
+              }}>{cycle?.cycleName ?? ''}</span>}
+            >
+              Portfolio progress
+            </SectionHeader>
+
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)',
+              gap: 24, alignItems: 'center', padding: '20px 0 18px',
+            }}>
+              <AdminDonut pct={completionPct} size={150} strokeWidth={13} dark={dark} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 560,
+                  color: 'var(--text)', lineHeight: 1.08, letterSpacing: '-0.02em',
+                }}>
+                  {submitted.toLocaleString()} of {totalAssociates.toLocaleString()}
+                </div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>
+                  tool attestations submitted
+                </div>
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gap: 10, marginTop: 18,
+                }}>
+                  <PortfolioMetric label="People" value={totalUsers} />
+                  <PortfolioMetric label="Open" value={pending} tone="warning" />
+                  <PortfolioMetric label="Watchlist" value={atRiskCount} suffix={`/${scopedCount}`} />
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
+
+            <DeptCompletionChart depts={depts} onDrill={onDrill} />
+          </Card>
+
+          {cycle?.cycleID && (
+            <NeedsAttentionPanel depts={depts} cycleId={cycle.cycleID} onDrill={onDrill} />
+          )}
         </div>
       )}
-    </div>
-  );
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PROFILE MENU
-// ─────────────────────────────────────────────────────────────────────────────
-function ProfileMenu({ initials, user, superUserRole, superUserDept, open, setOpen, onLogout }) {
-  const ref = useRef(null);
-  useOutsideClose(ref, () => setOpen(false), open);
-
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 9,
-          background: 'transparent',
-          border: '1px solid transparent',
-          borderRadius: 'var(--radius)',
-          padding: '4px 6px',
-          cursor: 'pointer',
-        }}
+      {/* Section header */}
+      <SectionHeader rule
+        right={<span style={{
+          fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0,
+        }}>{depts.length} {depts.length === 1 ? 'department' : 'departments'} · {cycle?.cycleName ?? ''}</span>}
       >
-        <div
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: '50%',
-            background: 'linear-gradient(135deg, #1f8fff, #0b62d6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 13,
-          }}
-        >
-          {initials}
-        </div>
-        <Svg size={14} stroke={2.2} style={{ color: 'var(--text-faint)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .18s ease' }}>
-          <polyline points="6 9 12 15 18 9" />
-        </Svg>
-      </button>
+        Departments
+      </SectionHeader>
 
-      {open && (
-        <div
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: 'calc(100% + 8px)',
-            minWidth: 210,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            boxShadow: 'var(--shadow-lift)',
-            padding: 6,
-            zIndex: 60,
-          }}
-        >
-          <div style={{ padding: '9px 10px 11px', borderBottom: '1px solid var(--border-subtle)', marginBottom: 5 }}>
-            <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>
-              {user?.firstName} {user?.lastName}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-              {superUserRole}
-              {superUserDept ? ` · ${superUserDept}` : ''}
-            </div>
-          </div>
-          <div
-            onClick={() => { setOpen(false); onLogout?.(); }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '8px 10px',
-              borderRadius: 6,
-              fontSize: 13,
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-            }}
-          >
-            <Svg size={15}>
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </Svg>
-            Sign out
-          </div>
+      {depts.length === 0 ? (
+        <EmptyState
+          icon={hasQuery ? 'search' : 'grid'}
+          title={hasQuery ? 'No matches' : 'Nothing to review'}
+          message={hasQuery ? 'No departments match your search for this cycle.' : 'No departments are in scope for this cycle yet.'}
+        />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 14, alignItems: 'start' }}>
+          {depts.map((dept) => <DeptCard key={dept.departmentName} dept={dept} dark={dark} onDrill={onDrill} />)}
         </div>
       )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KPI CARD
-// ─────────────────────────────────────────────────────────────────────────────
-function KpiCard({ eyebrow, value, unit, accent }) {
+function PortfolioMetric({ label, value, suffix, tone }) {
+  const color = tone === 'warning' ? 'var(--warning)' : 'var(--text)';
   return (
-    <div
-      style={{
-        background: 'var(--surface-elev)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-card)',
-        boxShadow: '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
-        position: 'relative',
-        overflow: 'hidden',
-        padding: '18px 20px',
-      }}
-    >
-      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2, background: accent ?? 'var(--accent)' }} />
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
-        {eyebrow}
-      </div>
-      <div style={{ fontSize: 34, lineHeight: 1, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>
-        {value}
-        {unit != null && <span style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 600, marginLeft: 8 }}>{unit}</span>}
+    <div style={{
+      borderLeft: '1px solid var(--rule)', paddingLeft: 10, minWidth: 0,
+    }}>
+      <div style={{
+        fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
+        textTransform: 'uppercase', color: 'var(--text-faint)',
+      }}>{label}</div>
+      <div style={{
+        marginTop: 4, fontFamily: 'var(--font-display)', fontSize: 24,
+        lineHeight: 1, color, fontVariantNumeric: 'tabular-nums',
+      }}>
+        {Number(value).toLocaleString()}
+        {suffix && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{suffix}</span>}
       </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DEPARTMENT CARD
+// TASK D — Department completion bar chart
+// One horizontal bar per department (submitted/total %), colored by the shared
+// pctTone/--st-* status palette, with mono % labels. div-bars in the ledger
+// style; sorted worst-first so the laggards read top-down. Clicking a row drills.
 // ─────────────────────────────────────────────────────────────────────────────
-function DeptCard({ dept, dark, onDrill, onInfo }) {
-  const [hover, setHover] = useState(false);
-  const pct = dept.totalAssociates > 0
-    ? Math.round((dept.submittedCount / dept.totalAssociates) * 100)
-    : 0;
-  const st = statusOf(pct);
-
-  const badgeBg = `var(${st.varName}-bg)`;
-  const badgeFg = `var(${st.varName})`;
-
-  const hasBreakdown = dept.clientBreakdown && dept.clientBreakdown.length > 0;
+function DeptCompletionChart({ depts, onDrill }) {
+  const rows = useMemo(() => (
+    depts
+      .map((d) => {
+        const pct = d.totalAssociates > 0 ? Math.round((d.submittedCount / d.totalAssociates) * 100) : 0;
+        return { dept: d, name: d.departmentName, pct, submitted: d.submittedCount, total: d.totalAssociates };
+      })
+      .sort((a, b) => a.pct - b.pct || a.name.localeCompare(b.name))
+  ), [depts]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-    <div
-      onClick={() => onDrill(dept)}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        background: 'var(--surface-elev)',
-        border: `1px solid ${hover ? 'color-mix(in oklab, var(--accent), var(--border) 55%)' : 'var(--border)'}`,
-        borderRadius: hasBreakdown
-          ? 'var(--radius-card) var(--radius-card) 0 0'
-          : 'var(--radius-card)',
-        boxShadow: hover
-          ? '0 1px 0 var(--hairline) inset, var(--shadow-lift-h)'
-          : '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
-        position: 'relative',
-        overflow: 'hidden',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 20,
-        padding: '22px 24px',
-        minHeight: 160,
-        transition: 'border-color .18s ease, box-shadow .18s ease',
-      }}
-    >
-      {/* Left: name + GFH */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100%' }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text)', letterSpacing: '-0.01em', marginBottom: 4 }}>
-            {dept.departmentName}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>GFH: {dept.gfhName}</span>
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                onInfo({
-                  deptName: dept.departmentName,
-                  name: dept.gfhName,
-                  email: dept.gfhEmail,
-                  office: dept.office,
-                  rect: e.currentTarget.getBoundingClientRect(),
-                });
-              }}
+    <div style={{ borderTop: '1px solid var(--rule)', paddingTop: 14 }}>
+      <SectionHeader style={{ marginBottom: 12 }}
+        right={<span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0 }}>submitted / total</span>}>
+        Department comparison
+      </SectionHeader>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rows.map((r) => {
+          const toneVar = `var(${statusOf(r.pct).varName})`;
+          return (
+            <button
+              key={r.name} type="button" onClick={() => onDrill(r.dept)}
+              aria-label={`${r.name}: ${r.pct}% complete, ${r.submitted} of ${r.total} submitted. Open department.`}
               style={{
-                width: 18,
-                height: 18,
-                borderRadius: '50%',
-                border: '1px solid var(--border)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--text-faint)',
-                cursor: 'pointer',
-                flexShrink: 0,
-              }}
-            >
-              <Svg size={10} stroke={2.4}>
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </Svg>
+                display: 'grid', gridTemplateColumns: 'minmax(120px, 1.35fr) 3fr auto',
+                alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
+                border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', padding: '2px 0',
+              }}>
+              <span style={{
+                fontSize: 12.5, fontWeight: 600, color: 'var(--text)',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>{r.name}</span>
+              <span style={{ position: 'relative', height: 10, borderRadius: 999, background: 'var(--surface-2)', overflow: 'hidden' }}>
+                <span style={{
+                  position: 'absolute', inset: 0, width: `${r.pct}%`, background: toneVar,
+                  borderRadius: 'var(--radius)', transition: 'width .4s ease-out',
+                }} />
+              </span>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end',
+                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: 96,
+              }}>
+                <span style={{ color: 'var(--text-faint)' }}>{r.submitted}/{r.total}</span>
+                <b style={{ color: toneVar, fontWeight: 600, minWidth: 38, textAlign: 'right' }}>{r.pct}%</b>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TASK C — "Needs attention" panel
+// Lazily fetches the non-submitted/at-risk associates for the in-scope
+// departments shown on the overview (Promise.all over those depts only — the
+// perf guard), tags each row with its department, merges, and renders a sortable
+// real <table>. Worst-first by default (lowest %, "Not started" / "Action
+// needed" first). A failed per-dept fetch is skipped, not fatal.
+// ─────────────────────────────────────────────────────────────────────────────
+function NeedsAttentionPanel({ depts, cycleId, onDrill }) {
+  const [rows, setRows] = useState(null);   // null = not loaded yet
+  const [loading, setLoading] = useState(false);
+
+  // Re-key the fetch on the exact set of shown depts + cycle so a search filter
+  // or cycle change re-pulls only the now-visible departments.
+  const deptKey = useMemo(() => depts.map((d) => d.departmentName).join('|'), [depts]);
+
+  useEffect(() => {
+    if (!cycleId || depts.length === 0) { setRows([]); return undefined; }
+    let cancelled = false;
+    setLoading(true);
+    setRows(null);
+    // PERF GUARD: only the departments currently shown on the overview, fetched
+    // in parallel. Each dept fetch is independently caught → a single failure is
+    // skipped (empty list) instead of blowing up the whole panel.
+    Promise.all(
+      depts.map((d) =>
+        getDeptManagers(d.departmentName, cycleId)
+          .then((data) => {
+            const gfhName = data?.gfhName || d.gfhName || null;
+            return (data?.managers ?? []).map((m) => {
+              const total = m.totalTools ?? m.totalAssociates ?? 0;
+              const submitted = m.submittedCount ?? 0;
+              const pct = total > 0 ? Math.round((submitted / total) * 100) : 0;
+              return {
+                associateId: m.associateId,
+                name: m.fullName || m.managerName || 'Unnamed manager',
+                departmentName: d.departmentName,
+                gfhName,
+                total,
+                submitted,
+                open: Math.max(0, total - submitted),
+                pct,
+              };
+            });
+          })
+          .catch(() => [])
+      )
+    )
+      .then((groups) => {
+        if (!cancelled) {
+          // Only managers whose teams still have work outstanding this cycle.
+          setRows(groups.flat().filter((m) => m.total > 0 && m.open > 0));
+          setLoading(false);
+        }
+      })
+      .catch(() => { if (!cancelled) { setRows([]); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [deptKey, cycleId]);
+
+  const sorted = useMemo(() => {
+    return [...(rows ?? [])].sort((a, b) =>
+      (a.pct - b.pct)              // worst completion first
+      || (b.open - a.open)         // then the most still open
+      || String(a.name).localeCompare(String(b.name)));
+  }, [rows]);
+  const visibleRows = sorted.slice(0, 5);
+
+  const deptByName = useMemo(() => {
+    const m = {};
+    depts.forEach((d) => { m[d.departmentName] = d; });
+    return m;
+  }, [depts]);
+
+  return (
+    <Card pad={0} style={{ overflow: 'hidden', height: '100%', minHeight: 0 }}>
+      <div style={{ padding: '16px 18px 12px' }}>
+        <SectionHeader
+          right={!loading && rows ? (
+            <span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', textTransform: 'none', letterSpacing: 0 }}>
+              {sorted.length} {sorted.length === 1 ? 'manager' : 'managers'}
+            </span>
+          ) : undefined}>
+          Needs attention
+        </SectionHeader>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+          Managers whose teams are furthest from finishing this cycle.
+        </div>
+      </div>
+
+      {loading || rows === null ? (
+        <div style={{ padding: '0 18px 16px', display: 'flex', flexDirection: 'column', gap: 10 }} aria-busy="true">
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} height={40} />)}
+        </div>
+      ) : sorted.length === 0 ? (
+        <EmptyState icon="check" title="Every team's on track"
+          message="No managers in the shown departments have outstanding work this cycle."
+          style={{ padding: '32px 24px' }} />
+      ) : (
+        <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          {visibleRows.map((r, i) => {
+            const dept = deptByName[r.departmentName];
+            const st = statusOf(r.pct);
+            return (
+              <button
+                key={`${r.departmentName}::${r.associateId}::${i}`}
+                type="button"
+                onClick={() => dept && onDrill(dept)}
+                title={dept ? `Open ${r.departmentName}` : undefined}
+                style={{
+                  display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto',
+                  gap: 12, width: '100%', padding: '11px 18px', textAlign: 'left',
+                  border: 0, borderBottom: '1px solid var(--border-subtle)',
+                  background: 'transparent', cursor: dept ? 'pointer' : 'default', fontFamily: 'inherit',
+                }}
+              >
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block', fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {r.name}
+                  </span>
+                  <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {r.departmentName}{r.gfhName ? ` · GFH ${r.gfhName}` : ''}
+                  </span>
+                </span>
+                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                  <span style={{
+                    fontFamily: 'var(--font-mono)', color: `var(${st.varName})`, fontSize: 13, fontWeight: 600,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>{r.pct}%</span>
+                  <span style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)',
+                    fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                  }}>{r.open} of {r.total} open</span>
+                </span>
+              </button>
+            );
+          })}
+          {sorted.length > visibleRows.length && (
+            <div style={{
+              padding: '10px 18px', fontSize: 11.5, color: 'var(--text-faint)',
+              fontFamily: 'var(--font-mono)', textAlign: 'center',
+            }}>
+              Showing {visibleRows.length} of {sorted.length} managers behind
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function OverviewSkeleton() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 16 }}>
+        {Array.from({ length: 2 }).map((_, i) => (
+          <Card key={i} pad={20} style={{ display: 'flex', flexDirection: 'column', gap: 14, minHeight: 360 }}>
+            <Skeleton width={130} height={12} />
+            <Skeleton width="100%" height={1} />
+            <Skeleton width="100%" height={i === 0 ? 170 : 250} />
+          </Card>
+        ))}
+      </div>
+      <Skeleton width={160} height={13} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 14 }}>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Card key={i} pad={20} style={{ display: 'flex', gap: 16, alignItems: 'center', minHeight: 140 }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <Skeleton width="70%" height={15} />
+              <Skeleton width="50%" height={11} />
+              <Skeleton width={90} height={20} radius={999} />
+            </div>
+            <Skeleton width={96} height={96} radius={999} />
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Department card — paper surface, hairline rule, mono numerals ────────────
+function DeptCard({ dept, dark, onDrill }) {
+  const [gfhOpen, setGfhOpen] = useState(false);
+  const gfhRef = useRef(null);
+  useClickOutside(gfhRef, () => setGfhOpen(false));
+
+  const pct = dept.totalAssociates > 0 ? Math.round((dept.submittedCount / dept.totalAssociates) * 100) : 0;
+  const st = pctTone(pct);
+  const allBreakdown = dept.clientBreakdown && dept.clientBreakdown.length > 0 ? dept.clientBreakdown : [];
+  const breakdown = allBreakdown
+    .slice()
+    .sort((a, b) => {
+      const aPct = a.total > 0 ? a.submitted / a.total : 0;
+      const bPct = b.total > 0 ? b.submitted / b.total : 0;
+      return aPct - bPct;
+    })
+    .slice(0, 3);
+  const hiddenClients = Math.max(0, allBreakdown.length - breakdown.length);
+
+  return (
+    <Card pad={0} interactive onClick={() => onDrill(dept)} style={{ display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '18px 20px' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)', letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {dept.departmentName}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)', marginTop: 3, position: 'relative' }} ref={gfhRef}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>GFH: {dept.gfhName}</span>
+              <button type="button" aria-label="GFH contact details"
+                onClick={(e) => { e.stopPropagation(); setGfhOpen((v) => !v); }}
+                style={{
+                  width: 17, height: 17, borderRadius: 999, border: '1px solid var(--border)',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'var(--text-faint)', cursor: 'pointer', flex: 'none', background: 'transparent', padding: 0,
+                }}>
+                <Icon name="info" size={11} stroke={2} />
+              </button>
+              {gfhOpen && (
+                <div className="pop-in" onClick={(e) => e.stopPropagation()} style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 60,
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-pop)', padding: 14,
+                }}>
+                  <MetaPopover title="Global Functional Head" name={dept.gfhName} email={dept.gfhEmail} />
+                  {dept.office && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-muted)', marginTop: 7 }}>
+                      <Icon name="briefcase" size={13} style={{ color: 'var(--text-faint)' }} />
+                      <span>{dept.office}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 2 }}>
+            <Stamp tone={st.tone} icon={st.icon} label={st.label} />
+            <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+              <b style={{ color: 'var(--text)', fontWeight: 600 }}>{dept.submittedCount}</b> / {dept.totalAssociates}
             </span>
           </div>
         </div>
 
-        <div style={{ flex: 1 }} />
-
-        {/* Footer: status badge + count */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '4px 9px',
-              borderRadius: 999,
-              fontSize: 11.5,
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              background: badgeBg,
-              color: badgeFg,
-            }}
-          >
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: badgeFg }} />
-            {st.label}
-          </span>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-            <b style={{ color: 'var(--text)', fontWeight: 600 }}>{dept.submittedCount}</b> of {dept.totalAssociates}
-          </span>
+        <div style={{ flex: 'none' }}>
+          <AdminDonut pct={pct} size={104} strokeWidth={10} dark={dark} />
         </div>
       </div>
 
-      {/* Right: donut */}
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <AdminDonut pct={pct} size={120} strokeWidth={11} dark={dark} />
-      </div>
-
-    </div>
-
-      {/* Per-client breakdown — shown below the card, not clickable for drill */}
-      {hasBreakdown && (
-        <div style={{
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          borderTop: 'none',
-          borderRadius: '0 0 var(--radius-card) var(--radius-card)',
-          padding: '4px 24px 16px',
-        }}>
-          {dept.clientBreakdown.map((c) => {
+      {breakdown.length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '2px 20px 14px' }}>
+          {breakdown.map((c) => {
             const cpct = c.total > 0 ? Math.round((c.submitted / c.total) * 100) : 0;
             const cst = statusOf(cpct);
             return (
-              <div key={c.clientId} style={{ paddingTop: 14, marginTop: 10, borderTop: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>{c.clientName} ({c.clientId})</span>
-                  <span style={{ fontSize: 11, color: `var(${cst.varName})`, fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+              <div key={c.clientId} style={{ paddingTop: 12, marginTop: 8, borderTop: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 5 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.clientName} ({c.clientId})</span>
+                  <span style={{ fontSize: 11, color: `var(${cst.varName})`, fontFamily: 'var(--font-mono)', fontWeight: 600, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                     {c.submitted}/{c.total} · {cpct}%
                   </span>
                 </div>
-                <div style={{ height: 4, borderRadius: 2, background: 'var(--surface-2)', overflow: 'hidden' }}>
-                  <div style={{
-                    height: '100%',
-                    width: `${cpct}%`,
-                    background: `var(${cst.varName})`,
-                    borderRadius: 2,
-                    transition: 'width 0.6s ease',
-                  }} />
+                <div style={{ height: 4, borderRadius: 999, background: 'var(--surface-2)', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${cpct}%`, background: `var(${cst.varName})`, borderRadius: 999, transition: 'width .4s ease-out' }} />
                 </div>
               </div>
             );
           })}
-
+          {hiddenClients > 0 && (
+            <div style={{
+              marginTop: 12, fontSize: 11, color: 'var(--text-faint)',
+              fontFamily: 'var(--font-mono)',
+            }}>
+              +{hiddenClients} more client{hiddenClients === 1 ? '' : 's'} in department view
+            </div>
+          )}
         </div>
       )}
-    </div>
+    </Card>
+  );
+}
+
+// ── A reusable "← Back" affordance for every drill level ─────────────────────
+function BackButton({ label, onClick }) {
+  return (
+    <Button variant="ghost" size="sm" icon="chevleft" onClick={onClick} style={{ marginBottom: 16, paddingLeft: 6 }}>
+      {label}
+    </Button>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GFH INFO POPOVER
+// NOTIFICATION BELL + PANEL — ledger cards
 // ─────────────────────────────────────────────────────────────────────────────
-function GfhPopover({ info, onClose }) {
+function NotificationBell({ items, count, open, setOpen, onOpened, onMarkAll }) {
   const ref = useRef(null);
-  useOutsideClose(ref, onClose, true);
+  useClickOutside(ref, () => setOpen(false));
 
-  // Position relative to the clicked info icon, clamped to the viewport.
-  const PW = 226;
-  const rect = info.rect;
-  let left = rect.left;
-  let top = rect.bottom + 8;
-  if (left + PW > window.innerWidth - 12) left = window.innerWidth - PW - 12;
-  left = Math.max(12, left);
-  top = Math.max(12, top);
+  function toggle() {
+    setOpen((v) => { const next = !v; if (next) onOpened(); return next; });
+  }
 
   return (
-    <div
-      ref={ref}
-      style={{
-        position: 'fixed',
-        zIndex: 80,
-        left,
-        top,
-        minWidth: PW,
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        boxShadow: 'var(--shadow-lift)',
-        padding: '14px 15px',
-      }}
-    >
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 8 }}>
-        Global Functional Head
-      </div>
-      <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>{info.name}</div>
-      {info.email && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', marginTop: 7 }}>
-          <Svg size={13} style={{ color: 'var(--text-faint)' }}>
-            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-            <polyline points="22,6 12,13 2,6" />
-          </Svg>
-          <span style={{ fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{info.email}</span>
-        </div>
-      )}
-      {info.office && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', marginTop: 7 }}>
-          <Svg size={13} style={{ color: 'var(--text-faint)' }}>
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-            <circle cx="12" cy="10" r="3" />
-          </Svg>
-          <span>{info.office}</span>
+    <div ref={ref} style={{ position: 'relative', flex: 'none' }}>
+      <button type="button" onClick={toggle} aria-label={`Notifications${count > 0 ? ` (${count} need attention)` : ''}`}
+        style={{
+          position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 28, height: 28, borderRadius: 'var(--radius)',
+          border: '1px solid var(--border)', background: 'var(--surface)',
+          color: 'var(--text-muted)', cursor: 'pointer',
+        }}>
+        <Icon name="bell" size={15} />
+        {count > 0 && (
+          <span style={{
+            position: 'absolute', top: -5, right: -5, minWidth: 15, height: 15, borderRadius: 999,
+            padding: '0 3px', background: 'var(--danger)', color: 'var(--accent-fg)',
+            fontSize: 9, fontWeight: 700, lineHeight: '15px', textAlign: 'center',
+            border: '1.5px solid var(--surface)', fontFamily: 'var(--font-mono)',
+          }}>{count}</span>
+        )}
+      </button>
+
+      {open && (
+        <div className="pop-in" style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 8px)', zIndex: 60, width: 320,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-pop)', overflow: 'hidden',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '10px 14px', borderBottom: '1px solid var(--rule)', background: 'var(--surface-2)',
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Notifications</span>
+            <button type="button" onClick={onMarkAll} style={{
+              border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 11.5, color: 'var(--accent)', fontWeight: 500, padding: 0,
+            }}>Mark all read</button>
+          </div>
+          <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+            {items.map((n, i) => {
+              const toneFg = { success: 'var(--success)', warning: 'var(--warning)', danger: 'var(--danger)', info: 'var(--accent)' }[n.tone] ?? 'var(--text-muted)';
+              return (
+                <div key={n.key} style={{
+                  display: 'flex', gap: 10, padding: '12px 14px',
+                  borderBottom: i < items.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+                }}>
+                  <span style={{ color: toneFg, marginTop: 1, flex: 'none' }}>
+                    <Icon name={n.icon} size={15} stroke={2} />
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>{n.title}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.45 }}>{n.desc}</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>{n.time}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -1511,880 +979,624 @@ function GfhPopover({ info, onClose }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DRILL-DOWN SECTION
+// ADD TOOL / ADD CLIENT modals (Modal primitive, "Add another" affordance)
 // ─────────────────────────────────────────────────────────────────────────────
-function DrillDownSection({ dept, onBack, cycle, dark, superUserRole }) {
+const fieldLabelStyle = {
+  display: 'block', fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
+  textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6,
+};
+const inputStyle = {
+  width: '100%', boxSizing: 'border-box', background: 'var(--surface)',
+  border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+  color: 'var(--text)', padding: '8px 11px', fontSize: 13, fontFamily: 'var(--font-sans)',
+  outline: 'none',
+};
+
+function FieldError({ children }) {
+  if (!children) return null;
+  return (
+    <div role="alert" style={{
+      display: 'flex', alignItems: 'center', gap: 7, marginTop: 14,
+      padding: '9px 11px', borderRadius: 'var(--radius)',
+      background: 'var(--danger-bg)', border: '1px solid var(--danger-border)',
+      fontSize: 13, color: 'var(--danger)', fontWeight: 500,
+    }}>
+      <Icon name="alert" size={14} stroke={2} style={{ flex: 'none' }} />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function AddToolModal({ open, onClose, clients, depts, clientId, setClientId, deptId, setDeptId, name, setName, error, saving, onSubmit }) {
+  return (
+    <Modal open={open} onClose={onClose} title="Add tool" width={420}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="outline" onClick={() => onSubmit({ keepOpen: true })} disabled={saving} loading={saving}>Add &amp; add another</Button>
+          <Button variant="primary" onClick={() => onSubmit()} disabled={saving} loading={saving}>Add tool</Button>
+        </>
+      )}>
+      <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        The tool becomes available for managers in this department to assign to associates.
+      </p>
+      <label style={{ display: 'block', marginBottom: 14 }}>
+        <span style={fieldLabelStyle}>Client</span>
+        <select value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={saving}
+          style={{ ...inputStyle, cursor: saving ? 'not-allowed' : 'pointer' }}>
+          {clients.length === 0 && <option value="">Loading clients…</option>}
+          {clients.map((c) => <option key={c.clientID} value={c.clientID}>{c.clientName} ({c.clientID})</option>)}
+        </select>
+      </label>
+      <label style={{ display: 'block', marginBottom: 14 }}>
+        <span style={fieldLabelStyle}>Department</span>
+        <select value={deptId} onChange={(e) => setDeptId(Number(e.target.value))} disabled={saving}
+          style={{ ...inputStyle, cursor: saving ? 'not-allowed' : 'pointer' }}>
+          {depts.length === 0 && <option value={0}>Loading departments…</option>}
+          {depts.map((d) => <option key={d.departmentID} value={d.departmentID}>{d.departmentName}</option>)}
+        </select>
+      </label>
+      <label style={{ display: 'block' }}>
+        <span style={fieldLabelStyle}>Tool name</span>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && onSubmit()} placeholder="e.g. Trade Analytics Suite"
+          disabled={saving} maxLength={100} style={inputStyle} aria-invalid={!!error} />
+      </label>
+      <FieldError>{error}</FieldError>
+    </Modal>
+  );
+}
+
+function AddClientModal({ open, onClose, clientId, setClientId, name, setName, error, saving, onSubmit }) {
+  return (
+    <Modal open={open} onClose={onClose} title="Add client" width={420}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="outline" onClick={() => onSubmit({ keepOpen: true })} disabled={saving} loading={saving}>Add &amp; add another</Button>
+          <Button variant="primary" onClick={() => onSubmit()} disabled={saving} loading={saving}>Add client</Button>
+        </>
+      )}>
+      <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        The client becomes available for tool assignment and attestation cycles.
+      </p>
+      <label style={{ display: 'block', marginBottom: 14 }}>
+        <span style={fieldLabelStyle}>Client ID</span>
+        <input type="text" value={clientId} onChange={(e) => setClientId(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && onSubmit()} placeholder="e.g. DTC-US or 0039"
+          disabled={saving} maxLength={50} style={inputStyle} aria-invalid={!!error} />
+      </label>
+      <label style={{ display: 'block' }}>
+        <span style={fieldLabelStyle}>Client name</span>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && onSubmit()} placeholder="e.g. DTC United States"
+          disabled={saving} maxLength={200} style={inputStyle} aria-invalid={!!error} />
+      </label>
+      <FieldError>{error}</FieldError>
+    </Modal>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRILL-DOWN: DEPARTMENT — managers table + at-risk individuals + exception exports
+// ─────────────────────────────────────────────────────────────────────────────
+function DrillDownSection({ dept, onBack, cycle, dark, superUserRole, onOpenManager, onReviewed }) {
+  const toasts = useToasts();
   const [managers, setManagers] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [mgrPopover, setMgrPopover] = useState(null);
-  const [drillManager, setDrillManager] = useState(null);  // selected manager -> associate sub-view
-  const [clientFilter, setClientFilter] = useState('');  // '' = all clients
-  const [exporting, setExporting] = React.useState(false);
-  const [exportingDisputes, setExportingDisputes] = React.useState(false);
-  const [downloadingZip, setDownloadingZip] = React.useState(false);
+  const [clientFilter, setClientFilter] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [exportingDisputes, setExportingDisputes] = useState(false);
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
 
-  async function handleExport() {
-    if (!dept?.departmentName || !cycle?.cycleID) return;
-    setExporting(true);
-    try { await exportNonSubmitted(dept.departmentName, cycle.cycleID); }
-    catch (e) { alert('Export failed: ' + e.message); }
-    finally { setExporting(false); }
+  // At-risk individuals (mandate #3) — fed from the non-submitted endpoint.
+  const [atRisk, setAtRisk] = useState(null);
+  const [atRiskOpen, setAtRiskOpen] = useState(false);
+  const [atRiskLoading, setAtRiskLoading] = useState(false);
+  const atRiskSort = useSort('completionPct', 'asc');
+
+  useEffect(() => { setClientFilter(''); }, [dept?.departmentName]);
+
+  useEffect(() => {
+    if (!dept?.departmentName || !cycle?.cycleID) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    getDeptManagers(dept.departmentName, cycle.cycleID, clientFilter || undefined)
+      .then((data) => { if (!cancelled) { setManagers(data); setLoading(false); } })
+      .catch((e) => { if (!cancelled) { setError(e.message || 'Failed to load managers.'); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [dept?.departmentName, cycle?.cycleID, clientFilter]);
+
+  // Lazy-load the at-risk list when the panel is first expanded.
+  function toggleAtRisk() {
+    const next = !atRiskOpen;
+    setAtRiskOpen(next);
+    if (next && atRisk === null && !atRiskLoading && dept?.departmentName && cycle?.cycleID) {
+      setAtRiskLoading(true);
+      getNonSubmitted(dept.departmentName, cycle.cycleID)
+        .then((rows) => setAtRisk(Array.isArray(rows) ? rows : []))
+        .catch(() => setAtRisk([]))
+        .finally(() => setAtRiskLoading(false));
+    }
   }
 
-  async function handleExportDisputes() {
+  async function runExport(fn, setBusy, label) {
     if (!dept?.departmentName || !cycle?.cycleID) return;
-    setExportingDisputes(true);
-    try { await exportDisputes(dept.departmentName, cycle.cycleID); }
-    catch (e) { alert('Export failed: ' + e.message); }
-    finally { setExportingDisputes(false); }
+    setBusy(true);
+    try { await fn(dept.departmentName, cycle.cycleID); }
+    catch (e) { toasts.error(`${label} failed: ${e.message}`); }
+    finally { setBusy(false); }
   }
-
   async function handleDownloadZip() {
     if (!cycle?.cycleID) return;
     setDownloadingZip(true);
     try { await downloadScreenshotsZip(cycle.cycleID); }
-    catch (e) { alert('Download failed: ' + e.message); }
+    catch (e) { toasts.error(`Download failed: ${e.message}`); }
     finally { setDownloadingZip(false); }
   }
 
-  // Reset client filter + manager drilldown whenever the department changes
-  useEffect(() => { setClientFilter(''); setDrillManager(null); }, [dept?.departmentName]);
-
-  useEffect(() => {
-    if (!dept?.departmentName || !cycle?.cycleID) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getDeptManagers(dept.departmentName, cycle.cycleID, clientFilter || undefined).then((data) => {
-      if (!cancelled) { setManagers(data); setLoading(false); }
-    }).catch((e) => {
-      if (!cancelled) { setError(e.message || 'Failed to load managers.'); setLoading(false); }
-    });
-    return () => { cancelled = true; };
-  }, [dept?.departmentName, cycle?.cycleID, clientFilter]);
-
-  const deptPct = dept.totalAssociates > 0
-    ? Math.round((dept.submittedCount / dept.totalAssociates) * 100)
-    : 0;
-  const deptSt = statusOf(deptPct);
-
-  // Close manager popover on outside click
-  useEffect(() => {
-    if (!mgrPopover) return;
-    function close() { setMgrPopover(null); }
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [mgrPopover]);
-
-  // Manager drilldown sub-view: list this manager's direct reports
-  if (drillManager) {
-    return (
-      <ManagerTeamSection
-        mgr={drillManager}
-        cycle={cycle}
-        dark={dark}
-        superUserRole={superUserRole}
-        onBack={() => setDrillManager(null)}
-      />
-    );
-  }
+  const deptPct = dept.totalAssociates > 0 ? Math.round((dept.submittedCount / dept.totalAssociates) * 100) : 0;
+  const visibleManagers = (managers?.managers ?? []).filter((m) => m.totalAssociates > 0);
 
   return (
-    <div>
-      {/* Breadcrumb */}
-      <button
-        onClick={onBack}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 7,
-          background: 'transparent', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: '7px 13px 7px 10px',
-          color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 500,
-          fontFamily: 'var(--font-sans)', cursor: 'pointer', marginBottom: 18,
-        }}
-      >
-        <Svg size={15}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></Svg>
-        All Departments
-      </button>
+    <div className="stagger">
+      <BackButton label="All departments" onClick={onBack} />
+
+      {/* Department header — paper card, donut, completion */}
+      <Card style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 4 }}>Department</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 560, color: 'var(--text)', lineHeight: 1.1 }}>{dept.departmentName}</div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 6 }}>GFH: {managers?.gfhName || dept.gfhName || '—'}</div>
+          <div style={{ marginTop: 14 }}>
+            <StackedBar submitted={dept.submittedCount} total={dept.totalAssociates} />
+          </div>
+        </div>
+        <div style={{ flex: 'none' }}>
+          <AdminDonut pct={deptPct} size={104} strokeWidth={11} dark={dark} />
+        </div>
+      </Card>
 
       {/* Client filter */}
       {managers?.availableClients?.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>
-            Filter by client:
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Filter by client</span>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <button
-              onClick={() => setClientFilter('')}
-              style={{
-                padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: clientFilter === '' ? 600 : 400,
-                border: '1px solid var(--border)',
-                background: clientFilter === '' ? 'var(--accent)' : 'var(--surface-2)',
-                color: clientFilter === '' ? 'var(--accent-fg)' : 'var(--text-muted)',
-                cursor: 'pointer',
-              }}
-            >
-              All clients
-            </button>
+            <FilterChip active={clientFilter === ''} onClick={() => setClientFilter('')}>All clients</FilterChip>
             {managers.availableClients.map((c) => (
-              <button
-                key={c.clientId}
-                onClick={() => setClientFilter(c.clientId)}
-                style={{
-                  padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: clientFilter === c.clientId ? 600 : 400,
-                  border: '1px solid var(--border)',
-                  background: clientFilter === c.clientId ? 'var(--accent)' : 'var(--surface-2)',
-                  color: clientFilter === c.clientId ? 'var(--accent-fg)' : 'var(--text-muted)',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                }}
-              >
+              <FilterChip key={c.clientId} active={clientFilter === c.clientId} onClick={() => setClientFilter(c.clientId)}>
                 {c.clientName} ({c.clientId})
-              </button>
+              </FilterChip>
             ))}
           </div>
         </div>
       )}
 
-      {/* Dept header card */}
-      <div style={{
-        background: 'var(--surface-elev)', border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-card)', padding: '24px 28px',
-        marginBottom: 24, boxShadow: '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
-        display: 'flex', alignItems: 'center', gap: 28, position: 'relative', overflow: 'hidden',
-      }}>
-        {/* Left: meta */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 5 }}>
-            Department
-          </div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-            {dept.departmentName}
-          </div>
-          {managers && (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-              GFH: {managers.gfhName || dept.gfhName || '—'}
+      {/* At-risk individuals — expandable, fed from non-submitted endpoint */}
+      <Card pad={0} style={{ marginBottom: 16, overflow: 'hidden' }}>
+        <button type="button" onClick={toggleAtRisk} aria-expanded={atRiskOpen}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+            padding: '14px 18px', border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+          <Icon name="alert" size={16} stroke={2} style={{ color: 'var(--danger)', flex: 'none' }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)' }}>Needs attention</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              Associates who have not finished attesting{managers?.incompleteCount != null ? ` · ${managers.incompleteCount}` : ''}
             </div>
-          )}
-
-          {/* Stacked bar */}
-          <div style={{ marginTop: 18, padding: '20px 24px', marginBottom: 16, background: 'var(--surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 6, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              Completion breakdown
-            </div>
-            <StackedBar submitted={dept.submittedCount} total={dept.totalAssociates} />
           </div>
-        </div>
+          <Icon name={atRiskOpen ? 'chevup' : 'chevdown'} size={14} style={{ color: 'var(--text-muted)' }} />
+        </button>
+        {atRiskOpen && (
+          <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            {atRiskLoading ? (
+              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={16} />)}
+              </div>
+            ) : !atRisk || atRisk.length === 0 ? (
+              <EmptyState icon="check" title="All clear" message="Everyone in this department has finished attesting." style={{ padding: '28px 24px' }} />
+            ) : (
+              <AtRiskTable rows={atRisk} sort={atRiskSort} />
+            )}
+          </div>
+        )}
+      </Card>
 
-        {/* Right: donut */}
-        <div style={{ flexShrink: 0 }}>
-          <AdminDonut pct={deptPct} size={96} strokeWidth={10} dark={dark} />
-        </div>
-
-        {/* Bottom status rail */}
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: `var(--border)` }} />
-      </div>
-
-      {/* Manager grid or loading */}
       {loading ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '32px 0', textAlign: 'center' }}>
-          Loading managers…
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={48} />)}
         </div>
       ) : error ? (
-        <div style={{ color: 'var(--st-risk)', fontSize: 13, padding: '12px 0' }}>{error}</div>
+        <EmptyState icon="alert" title="Could not load managers" message={error} />
       ) : (
         <>
-          {/* Exception Exports card */}
-          <div style={{
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-lift)',
-            padding: '18px 20px', marginBottom: 16,
-          }}>
-            {/* Card header */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 14 }}>
-              <Svg size={14} style={{ color: 'var(--text-muted)' }}>
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </Svg>
-              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.02em', color: 'var(--text)' }}>
-                Exception Exports
-              </span>
-            </div>
+          {/* Exception exports */}
+          <ExceptionExports
+            incompleteCount={managers?.incompleteCount ?? 0}
+            disputeCount={managers?.disputeCount ?? 0}
+            cycleId={cycle?.cycleID}
+            exporting={exporting} exportingDisputes={exportingDisputes} downloadingZip={downloadingZip}
+            onExport={() => runExport(exportNonSubmitted, setExporting, 'Export')}
+            onExportDisputes={() => runExport(exportDisputes, setExportingDisputes, 'Export')}
+            onDownloadZip={handleDownloadZip}
+            onOpenGallery={() => setGalleryOpen(true)}
+          />
 
-            {/* Row 1: Incomplete submissions */}
-            <div title="Associates in this department who have not finished attesting all of their assigned tools for this cycle." style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{
-                  width: 34, height: 34, borderRadius: '50%',
-                  background: 'color-mix(in oklab, var(--accent), transparent 88%)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                }}>
-                  <Svg size={16} style={{ color: 'var(--accent)' }}>
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                  </Svg>
-                </div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>Incomplete submissions</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {managers?.incompleteCount ?? 0} associates
-                  </div>
-                </div>
-              </div>
-              <button
-                className="btn-lift"
-                onClick={handleExport}
-                disabled={exporting}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  background: 'transparent', border: '1px solid var(--accent)',
-                  color: 'var(--accent)', borderRadius: 6, padding: '7px 12px',
-                  fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
-                  cursor: exporting ? 'not-allowed' : 'pointer', opacity: exporting ? 0.7 : 1,
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                {exporting ? 'Exporting…' : 'Export'}
-              </button>
-            </div>
-
-            {/* Row 2: Access disputes */}
-            <div title="Tools an associate marked as 'No access' — they report not having access that the system shows as granted. Review and reconcile." style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{
-                  width: 34, height: 34, borderRadius: '50%',
-                  background: 'var(--danger-bg)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                }}>
-                  <Svg size={16} style={{ color: 'var(--danger-fg)' }}>
-                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                    <line x1="12" y1="9" x2="12" y2="13" />
-                    <line x1="12" y1="17" x2="12.01" y2="17" />
-                  </Svg>
-                </div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>Access disputes</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {managers?.disputeCount ?? 0} records
-                  </div>
-                </div>
-              </div>
-              <button
-                className="btn-lift"
-                onClick={handleExportDisputes}
-                disabled={exportingDisputes}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  background: 'transparent', border: '1px solid var(--accent)',
-                  color: 'var(--accent)', borderRadius: 6, padding: '7px 12px',
-                  fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
-                  cursor: exportingDisputes ? 'not-allowed' : 'pointer', opacity: exportingDisputes ? 0.7 : 1,
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                {exportingDisputes ? 'Exporting…' : 'Export'}
-              </button>
-            </div>
-
-            {/* Row 3: Screenshot archive */}
-            <div title="Download every screenshot uploaded for this cycle as a single .zip file." style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{
-                  width: 34, height: 34, borderRadius: '50%',
-                  background: 'color-mix(in oklab, var(--accent), transparent 88%)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                }}>
-                  <Svg size={16} style={{ color: 'var(--accent)' }}>
-                    <path d="M4 4h16v16H4z M9 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M5 18l5-6 4 4 2-2 4 5" />
-                  </Svg>
-                </div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text)' }}>Screenshot archive</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    All uploaded screenshots for cycle {cycle?.cycleID ?? '—'}
-                  </div>
-                </div>
-              </div>
-              <button
-                className="btn-lift"
-                onClick={handleDownloadZip}
-                disabled={downloadingZip}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  background: 'transparent', border: '1px solid var(--accent)',
-                  color: 'var(--accent)', borderRadius: 6, padding: '7px 12px',
-                  fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
-                  cursor: downloadingZip ? 'not-allowed' : 'pointer', opacity: downloadingZip ? 0.7 : 1,
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 4v12M7 11l5 5 5-5M4 18v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" />
-                </svg>
-                {downloadingZip ? 'Preparing…' : `Download all (cycle ${cycle?.cycleID ?? ''})`}
-              </button>
-            </div>
-
-            {/* Footer caption */}
-            <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10 }}>
-              Exports include records requiring review or action.
-            </div>
-          </div>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 12 }}>
-            Managers ({managers?.managers?.length ?? 0})
-          </div>
-          {(!managers?.managers?.length) ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>
-              No managers found for this department.
-            </div>
+          {/* Managers table */}
+          <SectionHeader rule style={{ margin: '4px 0 10px' }}
+            right={<span style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', textTransform: 'none', letterSpacing: 0 }}>{visibleManagers.length}</span>}>
+            Managers
+          </SectionHeader>
+          {visibleManagers.length === 0 ? (
+            <EmptyState icon="users" title="No managers" message="No managers with assigned tools were found for this department." />
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
-              {managers.managers.filter((m) => m.totalAssociates > 0).map((mgr) => (
-                <ManagerCard key={mgr.associateId} mgr={mgr} dark={dark} onInfo={setMgrPopover} onOpen={() => setDrillManager(mgr)} />
-              ))}
-            </div>
+            <ManagersTable managers={visibleManagers} onOpen={onOpenManager} />
           )}
         </>
       )}
 
-      {/* Manager info popover */}
-      {mgrPopover && (
-        <div
-          onClick={() => setMgrPopover(null)}
-          style={{
-            position: 'fixed', zIndex: 80,
-            left: Math.min(Math.max(12, mgrPopover.rect.left), window.innerWidth - 226 - 12),
-            top: mgrPopover.rect.bottom + 8,
-            minWidth: 226,
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lift)',
-            padding: '14px 15px',
-          }}
-        >
-          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 8 }}>
-            Manager
-          </div>
-          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>{mgrPopover.name}</div>
-          {mgrPopover.email && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', marginTop: 7 }}>
-              <Svg size={13} style={{ color: 'var(--text-faint)' }}>
-                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                <polyline points="22,6 12,13 2,6" />
-              </Svg>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{mgrPopover.email}</span>
-            </div>
-          )}
-        </div>
+      {galleryOpen && cycle?.cycleID && (
+        <CycleGallery cycleId={cycle.cycleID} cycleName={cycle.cycleName} onClose={() => setGalleryOpen(false)} onReviewed={onReviewed} />
       )}
     </div>
   );
 }
 
-// Stacked progress bar: submitted / remaining
+function FilterChip({ active, onClick, children }) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={active} style={{
+      padding: '4px 11px', borderRadius: 999, fontSize: 12, fontWeight: active ? 600 : 500,
+      border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+      background: active ? 'var(--accent)' : 'var(--surface)',
+      color: active ? 'var(--accent-fg)' : 'var(--text-muted)',
+      cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'inherit',
+    }}>{children}</button>
+  );
+}
+
+// ── At-risk individuals table ────────────────────────────────────────────────
+function AtRiskTable({ rows, sort }) {
+  const accessors = {
+    name: (r) => r.name, manager: (r) => r.managerName,
+    completionPct: (r) => r.completionPct, status: (r) => r.status,
+  };
+  const sorted = sortRows(rows, sort.sortKey, sort.sortDir, accessors);
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--rule)' }}>
+            <SortHeader label="Associate" active={sort.sortKey === 'name'} dir={sort.sortDir} onSort={() => sort.onSort('name')} style={{ padding: '0 16px' }} />
+            <SortHeader label="Manager" active={sort.sortKey === 'manager'} dir={sort.sortDir} onSort={() => sort.onSort('manager')} style={{ padding: '0 16px' }} />
+            <SortHeader label="Status" active={sort.sortKey === 'status'} dir={sort.sortDir} onSort={() => sort.onSort('status')} style={{ padding: '0 16px' }} />
+            <SortHeader label="Done" align="right" active={sort.sortKey === 'completionPct'} dir={sort.sortDir} onSort={() => sort.onSort('completionPct')} style={{ padding: '0 16px' }} />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r) => (
+            <tr key={r.associateId} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+              <td style={{ padding: '10px 16px' }}>
+                <div style={{ fontWeight: 500, color: 'var(--text)' }}>{r.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>ID {r.associateId}{r.email ? ` · ${r.email}` : ''}</div>
+              </td>
+              <td style={{ padding: '10px 16px', color: 'var(--text-muted)' }}>{r.managerName || '—'}</td>
+              <td style={{ padding: '10px 16px' }}>
+                <Badge variant={r.status === 'Action needed' ? 'danger' : r.status === 'Awaiting approval' ? 'warning' : 'neutral'}>{r.status}</Badge>
+              </td>
+              <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>{r.completionPct}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Managers table ───────────────────────────────────────────────────────────
+function ManagersTable({ managers, onOpen }) {
+  const sort = useSort('fullName', 'asc');
+  const withPct = managers.map((m) => {
+    const totalTools = m.totalTools ?? m.totalAssociates;
+    return { ...m, _totalTools: totalTools, _pct: totalTools > 0 ? Math.round((m.submittedCount / totalTools) * 100) : 0 };
+  });
+  const accessors = {
+    fullName: (m) => m.fullName, totalAssociates: (m) => m.totalAssociates,
+    submitted: (m) => m.submittedCount, _pct: (m) => m._pct,
+  };
+  const sorted = sortRows(withPct, sort.sortKey, sort.sortDir, accessors);
+  return (
+    <Card pad={0} style={{ overflow: 'hidden' }}>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--rule)' }}>
+              <SortHeader label="Manager" active={sort.sortKey === 'fullName'} dir={sort.sortDir} onSort={() => sort.onSort('fullName')} style={{ padding: '0 18px' }} />
+              <SortHeader label="Associates" align="right" active={sort.sortKey === 'totalAssociates'} dir={sort.sortDir} onSort={() => sort.onSort('totalAssociates')} style={{ padding: '0 18px' }} />
+              <SortHeader label="Submitted" align="right" active={sort.sortKey === 'submitted'} dir={sort.sortDir} onSort={() => sort.onSort('submitted')} style={{ padding: '0 18px' }} />
+              <SortHeader label="Progress" active={sort.sortKey === '_pct'} dir={sort.sortDir} onSort={() => sort.onSort('_pct')} style={{ padding: '0 18px' }} />
+              <th style={{ width: 40 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((m) => {
+              const st = pctTone(m._pct);
+              return (
+                <HoverRow key={m.associateId} onActivate={() => onOpen(m)}>
+                  <td style={{ padding: '11px 18px' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text)' }}>{m.fullName}</div>
+                    {m.email && <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{m.email}</div>}
+                  </td>
+                  <td style={{ padding: '11px 18px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{m.totalAssociates}</td>
+                  <td style={{ padding: '11px 18px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>{m.submittedCount}/{m._totalTools}</td>
+                  <td style={{ padding: '11px 18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <Stamp tone={st.tone} icon={st.icon} label={`${m._pct}%`} />
+                    </div>
+                  </td>
+                  <td style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--text-faint)' }}>
+                    <Icon name="chevright" size={15} />
+                  </td>
+                </HoverRow>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+// ── Exception exports panel — ledger rows ────────────────────────────────────
+function ExceptionExports({ incompleteCount, disputeCount, cycleId, exporting, exportingDisputes, downloadingZip, onExport, onExportDisputes, onDownloadZip, onOpenGallery }) {
+  const Row = ({ icon, tone, title, desc, action }) => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+        <span style={{
+          width: 32, height: 32, borderRadius: 999, flex: 'none',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          background: tone === 'danger' ? 'var(--danger-bg)' : 'var(--accent-glow)',
+          color: tone === 'danger' ? 'var(--danger)' : 'var(--accent)',
+        }}><Icon name={icon} size={15} stroke={2} /></span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{title}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{desc}</div>
+        </div>
+      </div>
+      {action}
+    </div>
+  );
+  return (
+    <Card style={{ marginBottom: 18 }}>
+      <SectionHeader>Exception exports</SectionHeader>
+      <Row icon="users" tone="info" title="Incomplete submissions" desc={`${incompleteCount} associates`}
+        action={<Button size="sm" variant="outline" icon="download" loading={exporting} onClick={onExport}>Export</Button>} />
+      <Row icon="alert" tone="danger" title="Access disputes" desc={`${disputeCount} records`}
+        action={<Button size="sm" variant="outline" icon="download" loading={exportingDisputes} onClick={onExportDisputes}>Export</Button>} />
+      <Row icon="image" tone="info" title="Screenshot archive" desc={`All uploads for cycle ${cycleId ?? '—'}`}
+        action={<Button size="sm" variant="outline" icon="download" loading={downloadingZip} onClick={onDownloadZip}>Export .zip</Button>} />
+      <Row icon="image" tone="info" title="Screenshot gallery" desc={`Browse uploads for cycle ${cycleId ?? '—'}`}
+        action={<Button size="sm" variant="outline" icon="eye" disabled={!cycleId} onClick={onOpenGallery}>View</Button>} />
+      <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 10 }}>Exports include records requiring review or action.</div>
+    </Card>
+  );
+}
+
+// ── Stacked progress bar ─────────────────────────────────────────────────────
 function StackedBar({ submitted, total }) {
   const pct = total > 0 ? (submitted / total) * 100 : 0;
   const inProg = total > 0 ? Math.min(100 - pct, Math.round((total - submitted) * 0.4 / total * 100)) : 0;
   const notStarted = Math.max(0, 100 - pct - inProg);
-
+  const Legend = ({ color, label }) => (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-muted)' }}>
+      <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} />{label}
+    </span>
+  );
   return (
     <div>
-      <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--surface-2)', gap: 1 }}>
-        <div style={{ width: `${pct}%`, background: 'var(--st-completed)', borderRadius: '4px 0 0 4px', transition: 'width 0.8s cubic-bezier(.4,0,.2,1)' }} />
-        <div style={{ width: `${inProg}%`, background: 'var(--st-ontrack)', transition: 'width 0.8s cubic-bezier(.4,0,.2,1)' }} />
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 6, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Completion breakdown</div>
+      <div style={{ display: 'flex', height: 8, borderRadius: 999, overflow: 'hidden', background: 'var(--surface-2)', gap: 1 }}>
+        <div style={{ width: `${pct}%`, background: 'var(--success)', transition: 'width .6s ease-out' }} />
+        <div style={{ width: `${inProg}%`, background: 'var(--accent)', transition: 'width .6s ease-out' }} />
         <div style={{ flex: 1, background: 'var(--surface-2)' }} />
       </div>
-      <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 11 }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-muted)' }}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--st-completed)' }} />
-          Submitted ({submitted})
-        </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-muted)' }}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--st-ontrack)' }} />
-          In Progress (~{Math.round(inProg * total / 100)})
-        </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-muted)' }}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--surface-2)' }} />
-          Not Started (~{Math.round(notStarted * total / 100)})
-        </span>
+      <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 11, flexWrap: 'wrap' }}>
+        <Legend color="var(--success)" label={`Submitted (${submitted})`} />
+        <Legend color="var(--accent)" label={`In progress (~${Math.round(inProg * total / 100)})`} />
+        <Legend color="var(--surface-2)" label={`Not started (~${Math.round(notStarted * total / 100)})`} />
       </div>
     </div>
   );
 }
 
-// Manager card in the drill-down grid
-function ManagerCard({ mgr, dark, onInfo, onOpen }) {
-  const [hover, setHover] = useState(false);
-  const totalTools = mgr.totalTools ?? mgr.totalAssociates;
-  const pct = totalTools > 0
-    ? Math.round((mgr.submittedCount / totalTools) * 100)
-    : 0;
-  const st = statusOf(pct);
-
-  return (
-    <div
-      onClick={onOpen}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        background: 'var(--surface-elev)', border: `1px solid ${hover ? 'color-mix(in oklab, var(--accent), var(--border) 55%)' : 'var(--border)'}`,
-        borderRadius: 'var(--radius-card)', boxShadow: '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
-        padding: '20px 22px', minHeight: 160,
-        display: 'flex', flexDirection: 'column', gap: 10, position: 'relative', overflow: 'hidden',
-        transition: 'border-color .18s ease', cursor: 'pointer',
-      }}
-    >
-      {/* Name row + info button */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>{mgr.fullName}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-            {mgr.totalAssociates} associate{mgr.totalAssociates !== 1 ? 's' : ''}
-            {mgr.totalTools != null && mgr.totalTools !== mgr.totalAssociates && (
-              <span style={{ color: 'var(--text-faint)' }}> / {mgr.totalTools} tools</span>
-            )}
-          </div>
-        </div>
-        {/* Info icon */}
-        <span
-          onClick={(e) => {
-            e.stopPropagation();
-            onInfo({ name: mgr.fullName, email: mgr.email, rect: e.currentTarget.getBoundingClientRect() });
-          }}
-          style={{
-            width: 22, height: 22, borderRadius: '50%', border: '1px solid var(--border)',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--text-faint)', cursor: 'pointer', flexShrink: 0,
-          }}
-        >
-          <Svg size={12} stroke={2.2}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="16" x2="12" y2="12" />
-            <line x1="12" y1="8" x2="12.01" y2="8" />
-          </Svg>
-        </span>
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <AdminDonut pct={pct} size={80} strokeWidth={9} dark={dark} />
-      </div>
-
-      {/* Status badge + count */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
-          borderRadius: 999, fontSize: 11.5, fontWeight: 600,
-          background: `var(${st.varName}-bg)`, color: `var(${st.varName})`,
-        }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: `var(${st.varName})` }} />
-          {st.label}
-        </span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-          {mgr.submittedCount}/{totalTools}
-        </span>
-      </div>
-
-    </div>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// MANAGER TEAM SUB-VIEW — associate list for a single manager (admin drilldown)
+// DRILL-DOWN: MANAGER — direct-reports table
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Map a TeamMemberDto / MemberDetailDto attestationStatus enum to a badge descriptor.
-const MEMBER_STATUS_META = {
-  Submitted: { label: 'Submitted', varName: '--st-completed' },
-  InProgress: { label: 'In Progress', varName: '--st-ontrack' },
-  NotStarted: { label: 'Not Started', varName: '--st-risk' },
-};
-function memberStatusMeta(status) {
-  return MEMBER_STATUS_META[status] ?? MEMBER_STATUS_META.NotStarted;
-}
-
-function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack }) {
+function ManagerTeamSection({ mgr, cycle, dark, superUserRole, onBack, onOpenMember, onReviewed }) {
   const [team, setTeam] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [memberPopover, setMemberPopover] = useState(null);
-  const [drillMember, setDrillMember] = useState(null);  // selected associate -> detail view
+  const sort = useSort('fullName', 'asc');
 
   useEffect(() => {
-    if (!mgr?.associateId || !cycle?.cycleID) return;
+    if (!mgr?.associateId || !cycle?.cycleID) return undefined;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getManagerTeam(mgr.associateId, cycle.cycleID).then((data) => {
-      if (!cancelled) { setTeam(data); setLoading(false); }
-    }).catch((e) => {
-      if (!cancelled) { setError(e.message || 'Failed to load team.'); setLoading(false); }
-    });
+    getManagerTeam(mgr.associateId, cycle.cycleID)
+      .then((data) => { if (!cancelled) { setTeam(data); setLoading(false); } })
+      .catch((e) => { if (!cancelled) { setError(e.message || 'Failed to load team.'); setLoading(false); } });
     return () => { cancelled = true; };
   }, [mgr?.associateId, cycle?.cycleID]);
 
-  // Close member popover on outside click
-  useEffect(() => {
-    if (!memberPopover) return;
-    function close() { setMemberPopover(null); }
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [memberPopover]);
-
-  if (drillMember) {
-    return (
-      <AssociateDetailSection
-        mgr={mgr}
-        member={drillMember}
-        cycle={cycle}
-        dark={dark}
-        superUserRole={superUserRole}
-        onBack={() => setDrillMember(null)}
-      />
-    );
-  }
+  const members = team?.members ?? [];
+  const accessors = {
+    fullName: (m) => m.fullName, attested: (m) => m.attestedTools,
+    progressPct: (m) => m.progressPct ?? 0, status: (m) => m.attestationStatus,
+  };
+  const sorted = sortRows(members, sort.sortKey, sort.sortDir, accessors);
 
   return (
-    <div>
-      {/* Breadcrumb back to managers */}
-      <button
-        onClick={onBack}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 7,
-          background: 'transparent', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: '7px 13px 7px 10px',
-          color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 500,
-          fontFamily: 'var(--font-sans)', cursor: 'pointer', marginBottom: 18,
-        }}
-      >
-        <Svg size={15}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></Svg>
-        Managers
-      </button>
-
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 5 }}>
-        Direct reports
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em', marginBottom: 20 }}>
-        {mgr.fullName}
-      </div>
+    <div className="stagger">
+      <BackButton label="Managers" onClick={onBack} />
+      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 4 }}>Direct reports</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 560, color: 'var(--text)', marginBottom: 18, lineHeight: 1.1 }}>{mgr.fullName}</div>
 
       {loading ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '32px 0', textAlign: 'center' }}>
-          Loading associates…
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} height={48} />)}
         </div>
       ) : error ? (
-        <div style={{ color: 'var(--st-risk)', fontSize: 13, padding: '12px 0' }}>{error}</div>
-      ) : (!team?.members?.length) ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>
-          No direct reports found for this manager.
-        </div>
+        <EmptyState icon="alert" title="Could not load team" message={error} />
+      ) : members.length === 0 ? (
+        <EmptyState icon="users" title="No direct reports" message="This manager has no direct reports for this cycle." />
       ) : (
-        <>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 12 }}>
-            Associates ({team.members.length})
+        <Card pad={0} style={{ overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--rule)' }}>
+                  <SortHeader label="Associate" active={sort.sortKey === 'fullName'} dir={sort.sortDir} onSort={() => sort.onSort('fullName')} style={{ padding: '0 18px' }} />
+                  <SortHeader label="Status" active={sort.sortKey === 'status'} dir={sort.sortDir} onSort={() => sort.onSort('status')} style={{ padding: '0 18px' }} />
+                  <SortHeader label="Tools" align="right" active={sort.sortKey === 'attested'} dir={sort.sortDir} onSort={() => sort.onSort('attested')} style={{ padding: '0 18px' }} />
+                  <SortHeader label="Progress" align="right" active={sort.sortKey === 'progressPct'} dir={sort.sortDir} onSort={() => sort.onSort('progressPct')} style={{ padding: '0 18px' }} />
+                  <th style={{ width: 40 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((m) => {
+                  const pct = Math.round((m.progressPct ?? 0) * 100);
+                  return (
+                    <HoverRow key={m.associateId} onActivate={() => onOpenMember(m)}>
+                      <td style={{ padding: '11px 18px' }}>
+                        <div style={{ fontWeight: 600, color: 'var(--text)' }}>{m.fullName}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>ID {m.associateId}{m.email ? ` · ${m.email}` : ''}</div>
+                      </td>
+                      <td style={{ padding: '11px 18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <StatusChip status={m.attestationStatus} />
+                          {m.pendingScreenshots > 0 && <Badge variant="pending" size="sm">Awaiting {m.pendingScreenshots}</Badge>}
+                          {m.rejectedScreenshots > 0 && <Badge variant="danger" size="sm">Rejected {m.rejectedScreenshots}</Badge>}
+                        </div>
+                      </td>
+                      <td style={{ padding: '11px 18px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>{m.attestedTools}/{m.totalTools}</td>
+                      <td style={{ padding: '11px 18px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{pct}%</td>
+                      <td style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--text-faint)' }}><Icon name="chevright" size={15} /></td>
+                    </HoverRow>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
-            {team.members.map((m) => (
-              <AssociateCard
-                key={m.associateId}
-                member={m}
-                dark={dark}
-                onInfo={setMemberPopover}
-                onOpen={() => setDrillMember(m)}
-              />
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* Associate info popover */}
-      {memberPopover && (
-        <div
-          onClick={() => setMemberPopover(null)}
-          style={{
-            position: 'fixed', zIndex: 80,
-            left: Math.min(Math.max(12, memberPopover.rect.left), window.innerWidth - 226 - 12),
-            top: memberPopover.rect.bottom + 8,
-            minWidth: 226,
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lift)',
-            padding: '14px 15px',
-          }}
-        >
-          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 8 }}>
-            Associate
-          </div>
-          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>{memberPopover.name}</div>
-          {memberPopover.email && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', marginTop: 7 }}>
-              <Svg size={13} style={{ color: 'var(--text-faint)' }}>
-                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                <polyline points="22,6 12,13 2,6" />
-              </Svg>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{memberPopover.email}</span>
-            </div>
-          )}
-        </div>
+        </Card>
       )}
     </div>
   );
 }
 
-// Associate card in the manager drilldown grid
-function AssociateCard({ member, dark, onInfo, onOpen }) {
-  const [hover, setHover] = useState(false);
-  const pct = Math.round((member.progressPct ?? 0) * 100);
-  const st = memberStatusMeta(member.attestationStatus);
-
-  return (
-    <div
-      onClick={onOpen}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        background: 'var(--surface-elev)', border: `1px solid ${hover ? 'color-mix(in oklab, var(--accent), var(--border) 55%)' : 'var(--border)'}`,
-        borderRadius: 'var(--radius-card)', boxShadow: '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
-        padding: '20px 22px', minHeight: 160,
-        display: 'flex', flexDirection: 'column', gap: 10, position: 'relative', overflow: 'hidden',
-        transition: 'border-color .18s ease', cursor: 'pointer',
-      }}
-    >
-      {/* Name row + info button */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', marginBottom: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.fullName}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>ID · {member.associateId}</div>
-        </div>
-        {/* Info icon */}
-        <span
-          onClick={(e) => {
-            e.stopPropagation();
-            onInfo({ name: member.fullName, email: member.email, rect: e.currentTarget.getBoundingClientRect() });
-          }}
-          style={{
-            width: 22, height: 22, borderRadius: '50%', border: '1px solid var(--border)',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--text-faint)', cursor: 'pointer', flexShrink: 0,
-          }}
-        >
-          <Svg size={12} stroke={2.2}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="16" x2="12" y2="12" />
-            <line x1="12" y1="8" x2="12.01" y2="8" />
-          </Svg>
-        </span>
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <AdminDonut pct={pct} size={80} strokeWidth={9} dark={dark} />
-      </div>
-
-      {/* Status badge + count */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
-          borderRadius: 999, fontSize: 11.5, fontWeight: 600,
-          background: `var(${st.varName}-bg)`, color: `var(${st.varName})`,
-        }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: `var(${st.varName})` }} />
-          {st.label}
-        </span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-          {member.attestedTools}/{member.totalTools}
-        </span>
-        {member.pendingScreenshots > 0 && (
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
-            borderRadius: 999, fontSize: 11.5, fontWeight: 600,
-            background: 'var(--badge-pending-bg)', color: 'var(--badge-pending-fg)',
-          }}>
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--badge-pending-dot)' }} />
-            Awaiting approval ({member.pendingScreenshots})
-          </span>
-        )}
-        {member.rejectedScreenshots > 0 && (
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px',
-            borderRadius: 999, fontSize: 11.5, fontWeight: 600,
-            background: 'var(--danger-bg)', color: 'var(--danger-fg)',
-          }}>
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--danger-fg)' }} />
-            Rejected ({member.rejectedScreenshots})
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// ASSOCIATE DETAIL SUB-VIEW — per-client / per-tool breakdown (third drilldown level)
-// Mirrors ManagerView's "Selected member" panel: completion + status + per-client
-// progress + access disputes, rendered with AdminView's visual vocabulary.
+// MEMBER DETAIL OVERLAY (unchanged data flow; reopen via confirm Modal)
 // ─────────────────────────────────────────────────────────────────────────────
-function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBack }) {
+function AssociateDetailOverlay({ mgr, member, cycle, dark, superUserRole, onClose, onReopened, onReviewed }) {
+  const toasts = useToasts();
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [reopening, setReopening] = useState(false);
+  const [confirmReopen, setConfirmReopen] = useState(false);
 
   const load = React.useCallback(() => {
-    if (!mgr?.associateId || !member?.associateId || !cycle?.cycleID) return;
+    if (!mgr?.associateId || !member?.associateId || !cycle?.cycleID) return undefined;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getManagerMemberDetail(mgr.associateId, member.associateId, cycle.cycleID).then((data) => {
-      if (!cancelled) { setDetail(data); setLoading(false); }
-    }).catch((e) => {
-      if (!cancelled) { setError(e.message || 'Failed to load member details.'); setLoading(false); }
-    });
+    getManagerMemberDetail(mgr.associateId, member.associateId, cycle.cycleID)
+      .then((data) => { if (!cancelled) { setDetail(data); setLoading(false); } })
+      .catch((e) => { if (!cancelled) { setError(e.message || 'Failed to load member details.'); setLoading(false); } });
     return () => { cancelled = true; };
   }, [mgr?.associateId, member?.associateId, cycle?.cycleID]);
 
   useEffect(() => load(), [load]);
 
-  async function handleReopen() {
+  async function doReopen() {
     if (!cycle?.cycleID || !member?.associateId) return;
-    if (!window.confirm(`Reopen ${detail?.fullName ?? member.fullName}'s submitted attestation for ${cycle.cycleName ?? 'this cycle'}?`)) return;
     setReopening(true);
     try {
       await reopenAttestation(cycle.cycleID, member.associateId);
+      setConfirmReopen(false);
+      toasts.success(`${detail?.fullName ?? member.fullName}'s attestation reopened`, { title: 'Reopened' });
       load();
+      onReopened?.();
     } catch (e) {
-      alert('Reopen failed: ' + e.message);
+      toasts.error(`Reopen failed: ${e.message}`);
     } finally {
       setReopening(false);
     }
   }
 
+  function handleReviewed() { load(); onReviewed?.(); }
+
   const pct = Math.round((detail?.progressPct ?? 0) * 100);
-  const st = memberStatusMeta(detail?.attestationStatus);
-  const canReopen = superUserRole === 'Admin' && detail?.attestationStatus === 'Submitted';
+  const SUBMITTED_STATES = ['AwaitingApproval', 'ActionNeeded', 'Complete'];
+  const canReopen = superUserRole === 'Admin' && SUBMITTED_STATES.includes(detail?.attestationStatus);
 
   return (
-    <div>
-      {/* Breadcrumb back to associates */}
-      <button
-        onClick={onBack}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 7,
-          background: 'transparent', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: '7px 13px 7px 10px',
-          color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 500,
-          fontFamily: 'var(--font-sans)', cursor: 'pointer', marginBottom: 18,
-        }}
-      >
-        <Svg size={15}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></Svg>
-        {mgr.fullName}
-      </button>
-
+    <FullScreenOverlay
+      title={detail?.fullName ?? member.fullName}
+      subtitle={`ID · ${member.associateId}${member.email ? ` · ${member.email}` : ''} · ${mgr.fullName}`}
+      onClose={onClose}
+    >
       {loading ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '32px 0', textAlign: 'center' }}>
-          Loading details…
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <Skeleton height={120} radius={10} />
+          <Skeleton height={60} radius={10} />
+          <Skeleton height={60} radius={10} />
         </div>
       ) : error ? (
-        <div style={{ color: 'var(--st-risk)', fontSize: 13, padding: '12px 0' }}>{error}</div>
+        <EmptyState icon="alert" title="Could not load details" message={error} />
       ) : !detail ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>No details available.</div>
+        <EmptyState icon="search" title="No details" message="No details are available for this associate." />
       ) : (
         <>
-          {/* Header card: associate identity + completion donut + status */}
-          <div style={{
-            background: 'var(--surface-elev)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-card)', padding: '24px 28px',
-            marginBottom: 24, boxShadow: '0 1px 0 var(--hairline) inset, var(--shadow-lift)',
-            display: 'flex', alignItems: 'center', gap: 28, position: 'relative', overflow: 'hidden',
-          }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 5 }}>
-                Associate
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-                {detail.fullName}
-              </div>
-              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-                ID · {detail.associateId}{member.email ? ` · ${member.email}` : ''}
-              </div>
+          {/* Header card */}
+          <Card style={{ marginBottom: 22, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 4 }}>Associate</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 560, color: 'var(--text)', lineHeight: 1.1 }}>{detail.fullName}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 5, fontFamily: 'var(--font-mono)' }}>ID {detail.associateId}{member.email ? ` · ${member.email}` : ''}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px',
-                  borderRadius: 999, fontSize: 12, fontWeight: 600,
-                  background: `var(${st.varName}-bg)`, color: `var(${st.varName})`,
-                }}>
-                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: `var(${st.varName})` }} />
-                  {st.label}
-                </span>
-                <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                  {detail.attestedTools}/{detail.totalTools} tools
-                </span>
+                <StatusChip status={detail.attestationStatus} />
+                <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{detail.attestedTools}/{detail.totalTools} tools</span>
                 {canReopen && (
-                  <button
-                    className="btn-lift"
-                    onClick={handleReopen}
-                    disabled={reopening}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      background: 'transparent', border: '1px solid var(--accent)',
-                      color: 'var(--accent)', borderRadius: 6, padding: '6px 12px',
-                      fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
-                      cursor: reopening ? 'not-allowed' : 'pointer', opacity: reopening ? 0.7 : 1,
-                    }}
-                  >
-                    <Svg size={13} stroke={2.2}>
-                      <polyline points="1 4 1 10 7 10" />
-                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                    </Svg>
-                    {reopening ? 'Reopening…' : 'Reopen attestation'}
-                  </button>
+                  <Button size="sm" variant="outline" icon="refresh" loading={reopening} onClick={() => setConfirmReopen(true)}>Reopen attestation</Button>
                 )}
               </div>
             </div>
-            <div style={{ flexShrink: 0 }}>
-              <AdminDonut pct={pct} size={96} strokeWidth={10} dark={dark} />
-            </div>
-            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'var(--border)' }} />
-          </div>
+            <div style={{ flex: 'none' }}><AdminDonut pct={pct} size={96} strokeWidth={10} dark={dark} /></div>
+          </Card>
 
           {/* Per-client progress */}
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 12 }}>
-            Per-client progress
-          </div>
-          {(!detail.byClient?.length) ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '12px 0', marginBottom: 24 }}>
-              No client access is active for this associate.
-            </div>
+          <SectionHeader rule style={{ marginBottom: 12 }}>Per-client progress</SectionHeader>
+          {!detail.byClient?.length ? (
+            <EmptyState icon="key" title="No active access" message="No client access is active for this associate." style={{ padding: '28px 24px' }} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
               {detail.byClient.map((client) => {
                 const cPct = client.totalTools > 0 ? Math.round((client.attestedTools / client.totalTools) * 100) : 0;
                 const cSt = statusOf(cPct);
                 return (
-                  <div
-                    key={client.clientID}
-                    style={{
-                      background: 'var(--surface)', border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius)', padding: '14px 18px',
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
-                    }}
-                  >
+                  <Card key={client.clientID} pad={0} style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {client.clientName} ({client.clientID})
-                      </div>
-                      <div style={{ marginTop: 8, height: 6, borderRadius: 4, background: 'var(--surface-2)', overflow: 'hidden' }}>
-                        <div style={{ width: `${cPct}%`, height: '100%', background: `var(${cSt.varName})`, transition: 'width 0.8s cubic-bezier(.4,0,.2,1)' }} />
+                      <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.clientName} ({client.clientID})</div>
+                      <div style={{ marginTop: 8, height: 5, borderRadius: 999, background: 'var(--surface-2)', overflow: 'hidden' }}>
+                        <div style={{ width: `${cPct}%`, height: '100%', background: `var(${cSt.varName})`, transition: 'width .6s ease-out' }} />
                       </div>
                     </div>
-                    <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
-                      {client.attestedTools}/{client.totalTools}
-                    </span>
-                  </div>
+                    <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{client.attestedTools}/{client.totalTools}</span>
+                  </Card>
                 );
               })}
             </div>
@@ -2394,13 +1606,9 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
           {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient?.some((c) => c.tools?.length)) && (
             <div style={{ marginBottom: 24 }}>
               <ScreenshotGallery
-                cycleId={cycle.cycleID}
-                associateId={detail.associateId}
-                memberName={detail.fullName}
-                byClient={detail.byClient}
-                pendingScreenshots={detail.pendingScreenshots}
-                rejectedScreenshots={detail.rejectedScreenshots}
-                onReviewed={load}
+                cycleId={cycle.cycleID} associateId={detail.associateId} memberName={detail.fullName}
+                byClient={detail.byClient} pendingScreenshots={detail.pendingScreenshots}
+                rejectedScreenshots={detail.rejectedScreenshots} onReviewed={handleReviewed}
               />
             </div>
           )}
@@ -2408,14 +1616,24 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
           {/* Access disputes */}
           {detail.mismatches?.length > 0 && (
             <>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--danger-fg)', marginBottom: 12 }}>
-                Access disputes ({detail.mismatches.length})
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <SectionHeader rule style={{ marginBottom: 12 }}>
+                <span style={{ color: 'var(--danger)' }}>Access disputes ({detail.mismatches.length})</span>
+              </SectionHeader>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {detail.mismatches.map((m, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, fontSize: 13, color: 'var(--text)' }}>
-                    <span style={{ minWidth: 0 }}><strong>{m.toolName}</strong><span style={{ color: 'var(--text-muted)' }}> — {m.clientName}</span></span>
-                    {m.remarks && <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.remarks}</span>}
+                  <div key={`${m.clientID}-${m.toolName}-${i}`} style={{
+                    display: 'flex', flexDirection: 'column', gap: 4, padding: '11px 14px',
+                    background: 'var(--danger-bg)', border: '1px solid var(--danger-border)',
+                    borderRadius: 'var(--radius)', fontSize: 13, color: 'var(--text)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                      <span style={{ minWidth: 0 }}>
+                        <strong>{m.toolName}</strong>
+                        <span style={{ color: 'var(--text-muted)' }}> — {m.clientName} ({m.clientID})</span>
+                      </span>
+                      <span style={{ fontSize: 11.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{fmtDate(m.submittedAt)}</span>
+                    </div>
+                    {m.remarks && <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: 12.5, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.remarks}</div>}
                   </div>
                 ))}
               </div>
@@ -2423,6 +1641,20 @@ function AssociateDetailSection({ mgr, member, cycle, dark, superUserRole, onBac
           )}
         </>
       )}
-    </div>
+
+      {/* Reopen confirm — Modal, never window.confirm */}
+      <Modal open={confirmReopen} onClose={() => !reopening && setConfirmReopen(false)} title="Reopen attestation" width={420}
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => setConfirmReopen(false)} disabled={reopening}>Cancel</Button>
+            <Button variant="danger" loading={reopening} onClick={doReopen}>Reopen</Button>
+          </>
+        )}>
+        <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text)', lineHeight: 1.55 }}>
+          Reopen <strong>{detail?.fullName ?? member.fullName}</strong>&apos;s submitted attestation for{' '}
+          <strong>{cycle?.cycleName ?? 'this cycle'}</strong>? They will be able to edit and resubmit, and any approvals will need to be reviewed again.
+        </p>
+      </Modal>
+    </FullScreenOverlay>
   );
 }

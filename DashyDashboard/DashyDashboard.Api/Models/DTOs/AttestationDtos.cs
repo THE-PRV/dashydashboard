@@ -33,11 +33,5 @@ public record ToggleHadAccessRequest(bool? HadAccess);
 
 // ── Screenshots (Feature 2) ───────────────────────────────────────────────
 
-/// <summary>Per-file outcome of a batch screenshot upload.</summary>
-/// <param name="Status">saved | unmatched | invalidImage | notAllowed</param>
-public record BatchScreenshotItemResult(string FileName, string Status, string? Detail);
-
-public record BatchScreenshotResult(List<BatchScreenshotItemResult> Results);
-
 /// <summary>One offending attestation row that blocks submission (missing/rejected screenshot).</summary>
 public record ScreenshotGateRow(string ClientID, int ToolID);

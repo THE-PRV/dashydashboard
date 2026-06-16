@@ -6,9 +6,12 @@ public record TeamDto(
     int TotalMembers,
     int TotalTools,
     int TotalAttested,
-    int Submitted,
-    int InProgress,
+    // ── Five-state status counts (WI-6) — one bucket per ScreenshotCompletion member status ──
     int NotStarted,
+    int InProgress,
+    int AwaitingApproval,
+    int ActionNeeded,
+    int Complete,
     int MismatchCount,
     List<TeamMemberDto> Members
 );
@@ -43,7 +46,14 @@ public record MemberDetailDto(
     int RejectedScreenshots
 );
 
-public record MismatchDto(string ClientName, string ToolName, string? Remarks);
+// WI-4: a single access dispute (HadAccess == false) shown in the manager overlay / exports.
+// SubmittedAt is the best-available "date answered" for the dispute row.
+public record MismatchDto(
+    string ClientID,
+    string ClientName,
+    string ToolName,
+    string? Remarks,
+    DateTime? SubmittedAt);
 
 public record ClientProgressDto(
     string ClientID,
@@ -115,6 +125,20 @@ public record AccessExportRowDto(
 // ── Screenshot review (Feature 2) ─────────────────────────────────────────
 
 public record ReviewScreenshotRequest(bool Approve, [MaxLength(500)] string? Reason = null);
+
+// WI-9: one screenshot row for the in-app cycle gallery listing. Scoped exactly like the
+// screenshots.zip endpoint (ResolveScreenshotScopeOwnerIdsAsync); only rows whose ScreenshotPath
+// resolves to a readable file are included. Sorted by AssociateName, ClientName, ToolName.
+public record CycleScreenshotItemDto(
+    string AssociateId,
+    string AssociateName,
+    string ClientId,
+    string ClientName,
+    int ToolId,
+    string ToolName,
+    string? ScreenshotStatus,
+    DateTime? ScreenshotUploadedAt,
+    string? ScreenshotRejectReason);
 
 public record UserListItem(
     string AssociateId,

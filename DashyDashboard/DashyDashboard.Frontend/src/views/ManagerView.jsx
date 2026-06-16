@@ -1,99 +1,249 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Avatar, Badge, Button, Icon, Progress, TopBar } from '../components/ui.jsx';
-import { getMemberDetail, getTeam, exportDisputes, downloadScreenshotsZip } from '../api/manager.js';
+import {
+  Avatar, Button, Card, Icon, Progress, SectionHeader, StatusChip, Stamp, Drawer,
+  Modal, Skeleton, EmptyState, SortHeader, SearchBar, useToasts, statusMeta,
+} from '../components/ui.jsx';
+import { useBreadcrumbs } from '../components/AppShell.jsx';
+import {
+  getMemberDetail, getTeam, exportDisputes, downloadScreenshotsZip, getCycleScreenshots,
+  reviewScreenshot,
+} from '../api/manager.js';
 import { reopenAttestation } from '../api/attestations.js';
 import { asAssociateId } from '../lib/contracts.js';
 import ScreenshotGallery from '../components/ScreenshotGallery.jsx';
+import CycleGallery from '../components/CycleGallery.jsx';
+import Lightbox from '../components/Lightbox.jsx';
 
-const STATUS_META = {
-  Submitted: { label: 'Submitted', variant: 'used' },
-  InProgress: { label: 'In progress', variant: 'pending' },
-  NotStarted: { label: 'Not started', variant: 'notused' },
+// The five WI-6 member states, in display order, with the human labels from STATUS_META.
+const STATE_ORDER = ['NotStarted', 'InProgress', 'AwaitingApproval', 'ActionNeeded', 'Complete'];
+
+// Ledger-palette colour per state (matches the StatusChip tones) for the distribution graph.
+const STATE_COLOR = {
+  NotStarted: 'var(--text-faint)',
+  InProgress: 'var(--accent)',
+  AwaitingApproval: 'var(--warning)',
+  ActionNeeded: 'var(--danger)',
+  Complete: 'var(--success)',
 };
 
-function statusMeta(status) {
-  return STATUS_META[status] ?? STATUS_META.NotStarted;
+// A member is "submitted" (reopen-able) once they are in one of these states.
+const SUBMITTED_STATES = new Set(['AwaitingApproval', 'ActionNeeded', 'Complete']);
+
+// Render a nullable ISO date string as a short local date, or an em-dash when missing.
+function formatDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function Panel({ title, subtitle, children, action }) {
+// "3 days ago" style relative age for the oldest pending item in the action queue.
+function relativeAge(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
+}
+
+// Team status distribution — a single stacked bar + legend over the five states.
+function TeamStatusBar({ states, total, active, onSelect }) {
+  if (!total) return null;
   return (
-    <section
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 14,
-        boxShadow: 'var(--shadow-sm)',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{
-          padding: '14px 16px',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-        }}
+    <Card pad={16} style={{ height: '100%' }}>
+      <SectionHeader
+        rule
+        right={<span style={{
+          fontFamily: 'var(--font-display)', fontSize: 24, color: 'var(--text)',
+          fontVariantNumeric: 'tabular-nums',
+        }}>{total}</span>}
       >
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{title}</div>
-          {subtitle && (
-            <div style={{ marginTop: 2, fontSize: 11.5, color: 'var(--text-muted)' }}>{subtitle}</div>
-          )}
-        </div>
-        {action}
+        Team status
+      </SectionHeader>
+      <div role="img" aria-label="Distribution of team members across the five attestation states"
+        style={{ display: 'flex', height: 16, borderRadius: 999, overflow: 'hidden', marginTop: 16, background: 'var(--surface-2)' }}>
+        {states.filter((s) => s.value > 0).map((s) => (
+          <div key={s.key} title={`${statusMeta(s.key).label}: ${s.value}`}
+            style={{ width: `${(s.value / total) * 100}%`, background: STATE_COLOR[s.key] ?? 'var(--text-faint)' }} />
+        ))}
       </div>
-      <div>{children}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 16 }}>
+        {states.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => onSelect?.(active === s.key ? 'all' : s.key)}
+            aria-pressed={active === s.key}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7, minWidth: 0,
+              padding: '7px 8px', borderRadius: 'var(--radius)',
+              border: `1px solid ${active === s.key ? 'var(--accent)' : 'var(--border-subtle)'}`,
+              background: active === s.key ? 'var(--accent-glow)' : 'transparent',
+              color: 'var(--text-muted)', fontSize: 12, fontFamily: 'inherit',
+              cursor: 'pointer', textAlign: 'left',
+            }}
+          >
+            <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 2, background: STATE_COLOR[s.key] ?? 'var(--text-faint)', flex: 'none' }} />
+            <span style={{ minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {statusMeta(s.key).label}
+            </span>
+            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{s.value}</span>
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+// (Per-client rows are now consolidated into the CompletionByClient chart below.)
+
+// Ledger-palette colour for a per-client completion bar: faint at 0%, ink-blue
+// while in progress, success-green only when fully complete.
+function completionColor(pct, hasTools) {
+  if (!hasTools) return 'var(--text-faint)';
+  if (pct >= 1) return 'var(--success)';
+  if (pct <= 0) return 'var(--text-faint)';
+  return 'var(--accent)';
+}
+
+// Horizontal "Completion by client" chart for the member drawer — one labelled
+// bar per client, mono n/m · % on the right, bar coloured by completion. Compact
+// and scannable for members carrying many clients.
+function CompletionByClient({ clients }) {
+  const rows = useMemo(() => (
+    [...clients]
+      .map((c) => {
+        const total = c.totalTools || 0;
+        const pct = total > 0 ? Math.max(0, Math.min(1, c.attestedTools / total)) : 0;
+        return { ...c, total, pct };
+      })
+      // Surface the least-complete clients first so attention lands where work remains.
+      .sort((a, b) => a.pct - b.pct || (a.clientName || '').localeCompare(b.clientName || ''))
+  ), [clients]);
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <SectionHeader rule>Completion by client</SectionHeader>
+      <ul
+        aria-label="Completion by client — tools attested out of total for each client"
+        style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 9 }}
+      >
+        {rows.map((c) => {
+          const barColor = completionColor(c.pct, c.total > 0);
+          const done = c.total > 0 && c.pct >= 1;
+          return (
+            <li key={c.clientID} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {/* Label: client name + faint mono id, fixed-share column, ellipsised. */}
+              <div style={{ flex: '0 0 38%', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span style={{ minWidth: 0, fontSize: 12.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {c.clientName}
+                </span>
+                <span style={{ flex: 'none', fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+                  {c.clientID}
+                </span>
+              </div>
+              {/* Track + value fill. */}
+              <div
+                role="img"
+                aria-label={`${c.clientName}: ${c.attestedTools} of ${c.total} tools, ${Math.round(c.pct * 100)} percent`}
+                style={{ flex: 1, height: 8, borderRadius: 999, background: 'var(--surface-2)', overflow: 'hidden' }}
+              >
+                <div style={{ width: `${c.pct * 100}%`, height: '100%', borderRadius: 999, background: barColor, transition: 'width .4s ease-out' }} />
+              </div>
+              {/* Right rail: n/m and a tabular percent (or a check when complete). */}
+              <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 7, width: 96, fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                  {c.attestedTools}/{c.total}
+                </span>
+                {done ? (
+                  <Icon name="check" size={13} stroke={2.4} style={{ color: 'var(--success)', flex: 'none' }} />
+                ) : (
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', minWidth: 30, textAlign: 'right' }}>
+                    {Math.round(c.pct * 100)}%
+                  </span>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
 
-function EmptyState({ icon, title, body }) {
+// One row in the action queue card: icon + label + count + action.
+function QueueRow({ icon, tone, title, detail, count, actionLabel, onAction, disabled }) {
+  const toneColor = {
+    warning: 'var(--warning)', danger: 'var(--danger)', info: 'var(--accent)', neutral: 'var(--text-muted)',
+  }[tone] ?? 'var(--text-muted)';
+  const toneBg = {
+    warning: 'var(--warning-bg)', danger: 'var(--danger-bg)', info: 'var(--accent-glow)', neutral: 'var(--surface-2)',
+  }[tone] ?? 'var(--surface-2)';
   return (
-    <div
-      style={{
-        padding: '28px 24px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        color: 'var(--text-muted)',
-        textAlign: 'center',
-      }}
-    >
-      <Icon name={icon} size={20} />
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{title}</div>
-      <div style={{ fontSize: 12.5, maxWidth: 320 }}>{body}</div>
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0',
+      borderBottom: '1px solid var(--border-subtle)',
+    }}>
+      <div style={{
+        width: 34, height: 34, borderRadius: 'var(--radius)', flex: 'none',
+        background: toneBg, color: toneColor,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Icon name={icon} size={17} stroke={2} />
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)' }}>{title}</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: toneColor, fontVariantNumeric: 'tabular-nums' }}>
+            {count}
+          </span>
+        </div>
+        {detail && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{detail}</div>}
+      </div>
+      {actionLabel && (
+        <Button
+          variant={tone === 'neutral' ? 'outline' : 'primary'}
+          size="sm"
+          icon={icon === 'camera' || icon === 'clock' ? 'image' : (icon === 'download' ? 'download' : 'arrow_up_right')}
+          disabled={disabled}
+          onClick={onAction}
+          style={{ flex: 'none' }}
+        >
+          {actionLabel}
+        </Button>
+      )}
     </div>
   );
 }
 
-export default function ManagerView({
-  user,
-  cycle,
-  cycles,
-  onCycle,
-  onLogout,
-  isManager,
-  role,
-  onRole,
-  dark,
-  onDark,
-}) {
+export default function ManagerView({ user, cycle, cycles, onCycle }) {
+  const toasts = useToasts();
+  useBreadcrumbs(['Manager view']);
+
   const [team, setTeam] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  const [sortKey, setSortKey] = useState('name');
+  const [sortDir, setSortDir] = useState('asc');
   const [loadingTeam, setLoadingTeam] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [teamError, setTeamError] = useState('');
   const [detailError, setDetailError] = useState('');
   const [exportingDisputes, setExportingDisputes] = useState(false);
   const [reopening, setReopening] = useState(false);
+  const [confirmReopen, setConfirmReopen] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+
+  // Action-queue review: the cycle's pending screenshots, oldest-first, opened in the Lightbox.
+  const [queueItems, setQueueItems] = useState(null);   // CycleScreenshotItemDto[] | null
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [reviewLightbox, setReviewLightbox] = useState(null);
 
   const loadTeam = async () => {
     if (!cycle) {
@@ -102,7 +252,6 @@ export default function ManagerView({
       setLoadingTeam(false);
       return;
     }
-
     setLoadingTeam(true);
     setTeamError('');
     try {
@@ -113,10 +262,8 @@ export default function ManagerView({
       }));
       setTeam({ ...data, members });
       setSelectedId((current) => {
-        if (current && members.some((member) => member.associateId === current)) {
-          return current;
-        }
-        return members[0]?.associateId ?? null;
+        if (current && members.some((member) => member.associateId === current)) return current;
+        return null;
       });
     } catch (error) {
       setTeam(null);
@@ -127,17 +274,60 @@ export default function ManagerView({
     }
   };
 
+  useEffect(() => { loadTeam(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cycle]);
+
+  // Pull the cycle screenshot listing once per cycle so the action queue can show
+  // pending/rejected counts and feed the focused review flow (oldest-first).
+  const loadQueue = async () => {
+    if (!cycle?.cycleID) { setQueueItems(null); return; }
+    setQueueLoading(true);
+    try {
+      const data = await getCycleScreenshots(cycle.cycleID);
+      setQueueItems(Array.isArray(data) ? data : []);
+    } catch {
+      setQueueItems([]); // queue degrades to team-derived counts on failure
+    } finally {
+      setQueueLoading(false);
+    }
+  };
+
+  useEffect(() => { loadQueue(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cycle]);
+
+  // Load the selected member's detail for the drawer.
   useEffect(() => {
+    if (!cycle || !selectedId) {
+      setDetail(null); setDetailError(''); setLoadingDetail(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoadingDetail(true); setDetailError(''); setDetail(null);
+    getMemberDetail(selectedId, cycle.cycleID)
+      .then((response) => { if (!cancelled) setDetail({ ...response, associateId: asAssociateId(response.associateId) }); })
+      .catch((error) => { if (!cancelled) setDetailError(error.message || 'Could not load member details.'); })
+      .finally(() => { if (!cancelled) setLoadingDetail(false); });
+    return () => { cancelled = true; };
+  }, [cycle, selectedId]);
+
+  // Refresh detail + team + queue after a screenshot review action.
+  function refreshAll() {
+    if (!cycle?.cycleID) return;
     loadTeam();
-  }, [cycle]);
+    loadQueue();
+    if (selectedId) {
+      getMemberDetail(selectedId, cycle.cycleID)
+        .then((response) => setDetail({ ...response, associateId: asAssociateId(response.associateId) }))
+        .catch(() => {});
+    }
+  }
 
   async function handleExportDisputes() {
     if (!cycle?.cycleID) return;
     setExportingDisputes(true);
     try {
       await exportDisputes(cycle.cycleID);
+      toasts.success('Disputes exported');
     } catch (e) {
-      alert('Export failed: ' + e.message);
+      toasts.error('Export failed: ' + (e.message || 'unknown error'));
     } finally {
       setExportingDisputes(false);
     }
@@ -148,8 +338,9 @@ export default function ManagerView({
     setDownloadingZip(true);
     try {
       await downloadScreenshotsZip(cycle.cycleID);
+      toasts.success('Screenshot archive downloaded');
     } catch (e) {
-      alert('Download failed: ' + e.message);
+      toasts.error('Download failed: ' + (e.message || 'unknown error'));
     } finally {
       setDownloadingZip(false);
     }
@@ -157,465 +348,490 @@ export default function ManagerView({
 
   async function handleReopen() {
     if (!cycle?.cycleID || !selectedId) return;
-    if (!window.confirm(`Reopen ${detail?.fullName ?? selectedId}'s submitted attestation for ${cycle.cycleName ?? 'this cycle'}?`)) return;
+    setConfirmReopen(false);
     setReopening(true);
     try {
       await reopenAttestation(cycle.cycleID, selectedId);
-      // Refresh both the member detail and the team list
-      getMemberDetail(selectedId, cycle.cycleID)
-        .then((response) => setDetail({ ...response, associateId: response.associateId }))
-        .catch(() => {});
-      loadTeam();
+      toasts.success(`Reopened ${detail?.fullName ?? selectedId}'s attestation`);
+      refreshAll();
     } catch (e) {
-      alert('Reopen failed: ' + e.message);
+      toasts.error('Reopen failed: ' + (e.message || 'unknown error'));
     } finally {
       setReopening(false);
     }
   }
 
-  // Refresh the selected member's detail (and the team list's pending/rejected
-  // counts) after a screenshot approve/reject/approve-all.
-  function refreshDetail() {
-    if (!cycle?.cycleID || !selectedId) return;
-    getMemberDetail(selectedId, cycle.cycleID)
-      .then((response) => setDetail({ ...response, associateId: asAssociateId(response.associateId) }))
-      .catch(() => {});
-    loadTeam();
-  }
+  // ── Action-queue derived data ──────────────────────────────────────────────
+  const queue = useMemo(() => {
+    const items = queueItems ?? [];
+    const pending = items
+      .filter((i) => i.screenshotStatus === 'Pending')
+      .sort((a, b) => new Date(a.screenshotUploadedAt ?? 0) - new Date(b.screenshotUploadedAt ?? 0));
+    const rejected = items.filter((i) => i.screenshotStatus === 'Rejected');
+    const oldestPending = pending[0]?.screenshotUploadedAt ?? null;
+    return { pending, rejected, oldestPending };
+  }, [queueItems]);
 
-  useEffect(() => {
-    if (!cycle || !selectedId) {
-      setDetail(null);
-      setDetailError('');
-      setLoadingDetail(false);
-      return;
-    }
+  // Lightbox item shape for the focused review flow (pending, oldest-first).
+  const queueLightboxItems = useMemo(() => queue.pending.map((i) => ({
+    cycleId: cycle?.cycleID,
+    associateId: i.associateId,
+    clientId: i.clientId,
+    clientName: i.clientName,
+    memberName: i.associateName,
+    toolId: i.toolId,
+    toolName: i.toolName,
+    screenshotStatus: i.screenshotStatus,
+    screenshotRejectReason: i.screenshotRejectReason,
+    screenshotUploadedAt: i.screenshotUploadedAt,
+  })), [queue.pending, cycle]);
 
-    let cancelled = false;
-    setLoadingDetail(true);
-    setDetailError('');
-    setDetail(null);
+  const startFocusedReview = () => {
+    if (!queueLightboxItems.length) return;
+    setReviewLightbox({ items: queueLightboxItems, startIndex: 0, approved: 0, rejected: 0 });
+  };
 
-    getMemberDetail(selectedId, cycle.cycleID)
-      .then((response) => {
-        if (!cancelled) setDetail({ ...response, associateId: asAssociateId(response.associateId) });
-      })
-      .catch((error) => {
-        if (!cancelled) setDetailError(error.message || 'Could not load member details.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingDetail(false);
-      });
+  const handleQueueDecide = async (lbItem, approve, reason) => {
+    await reviewScreenshot(cycle.cycleID, lbItem.associateId, lbItem.clientId, lbItem.toolId, approve, reason);
+    setReviewLightbox((cur) => (cur
+      ? { ...cur, approved: cur.approved + (approve ? 1 : 0), rejected: cur.rejected + (approve ? 0 : 1) }
+      : cur));
+  };
 
-    return () => {
-      cancelled = true;
-    };
-  }, [cycle, selectedId]);
+  const handleQueueClose = () => {
+    setReviewLightbox((cur) => {
+      if (cur && (cur.approved > 0 || cur.rejected > 0)) {
+        toasts.success(`${cur.approved} approved, ${cur.rejected} rejected`);
+      }
+      return null;
+    });
+    refreshAll();
+  };
 
+  const totalAttention = queue.pending.length + queue.rejected.length + (team?.mismatchCount ?? 0);
+
+  // ── Team table view-model ──────────────────────────────────────────────────
   const visibleMembers = useMemo(() => {
     const members = team?.members ?? [];
     const query = search.trim().toLowerCase();
-
-    return members
-      .filter((member) => {
-        if (filter === 'done') return member.attestationStatus === 'Submitted';
-        if (filter === 'pending') return member.attestationStatus === 'InProgress';
-        if (filter === 'not-started') return member.attestationStatus === 'NotStarted';
-        return true;
-      })
+    const filtered = members
+      .filter((member) => (filter === 'all' ? true : member.attestationStatus === filter))
       .filter((member) => {
         if (!query) return true;
-        return (
-          member.fullName.toLowerCase().includes(query) ||
-          String(member.associateId).includes(query)
-        );
+        return member.fullName.toLowerCase().includes(query) || String(member.associateId).includes(query);
       });
-  }, [filter, search, team]);
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const statusRank = (s) => STATE_ORDER.indexOf(s);
+    return filtered.slice().sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === 'name') cmp = (a.fullName || '').localeCompare(b.fullName || '');
+      else if (sortKey === 'progress') cmp = (a.progressPct ?? 0) - (b.progressPct ?? 0);
+      else if (sortKey === 'status') cmp = statusRank(a.attestationStatus) - statusRank(b.attestationStatus);
+      if (cmp === 0) cmp = (a.fullName || '').localeCompare(b.fullName || '');
+      return cmp * dir;
+    });
+  }, [filter, search, team, sortKey, sortDir]);
 
+  const onSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc'); }
+  };
+
+  // KPI / filter band — Direct reports + the five WI-6 state counts off TeamDto.
   const summary = useMemo(() => {
-    if (!team) {
-      return [
-        { label: 'Direct reports', value: 0 },
-        { label: 'Submitted', value: 0 },
-        { label: 'In progress', value: 0 },
-        { label: 'Not started', value: 0 },
-      ];
-    }
-
+    const t = team ?? {};
     return [
-      { label: 'Direct reports', value: team.totalMembers },
-      { label: 'Submitted', value: team.submitted },
-      { label: 'In progress', value: team.inProgress },
-      { label: 'Not started', value: team.notStarted },
+      { key: 'all', label: 'Direct reports', value: t.totalMembers ?? 0 },
+      { key: 'NotStarted', label: statusMeta('NotStarted').label, value: t.notStarted ?? 0 },
+      { key: 'InProgress', label: statusMeta('InProgress').label, value: t.inProgress ?? 0 },
+      { key: 'AwaitingApproval', label: statusMeta('AwaitingApproval').label, value: t.awaitingApproval ?? 0 },
+      { key: 'ActionNeeded', label: statusMeta('ActionNeeded').label, value: t.actionNeeded ?? 0 },
+      { key: 'Complete', label: statusMeta('Complete').label, value: t.complete ?? 0 },
     ];
   }, [team]);
 
+  const canReopen = detail && SUBMITTED_STATES.has(detail.attestationStatus);
+  const disputeCount = detail?.mismatches?.length ?? 0;
+
+  const openMember = (id) => { setSelectedId(id); setDrawerOpen(true); };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
-      <TopBar
-        user={user}
-        cycle={cycle}
-        cycles={cycles}
-        onCycle={onCycle}
-        onLogout={onLogout}
-        search={search}
-        onSearch={setSearch}
-        isManager={isManager}
-        role={role}
-        onRole={onRole}
-        dark={dark}
-        onDark={onDark}
-        isSuperAdmin={!!user?.superUserRole}
-      />
+    <div style={{ height: '100%', overflowY: 'auto' }}>
+      <div className="stagger" style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '20px 24px 28px', maxWidth: 1320, margin: '0 auto' }}>
 
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '10px 24px',
-          background: 'color-mix(in oklab, var(--accent), transparent 92%)',
-          borderBottom: '1px solid var(--border)',
-          fontSize: 12,
-          color: 'var(--text)',
-        }}
-      >
-        <Icon name="users" size={14} style={{ color: 'var(--accent)' }} />
-        <span style={{ fontWeight: 600 }}>Manager view</span>
-        <span style={{ color: 'var(--text-muted)' }}>
-          Review direct-report completion for {cycle?.cycleName ?? 'the selected cycle'}
-        </span>
-        {cycle?.cycleID && (
-          <Button
-            variant="outline" size="sm" icon="download"
-            disabled={downloadingZip}
-            onClick={handleDownloadZip}
-            style={{ marginLeft: 'auto', opacity: downloadingZip ? 0.6 : 1, cursor: downloadingZip ? 'wait' : 'pointer' }}
-          >
-            {downloadingZip ? 'Preparing…' : `Download all screenshots (cycle ${cycle.cycleID})`}
-          </Button>
-        )}
-      </div>
-
-      {team?.mismatchCount > 0 && (
-        <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, padding: '10px 16px', margin: '16px 24px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, fontSize: '0.875rem', color: 'var(--danger-fg)' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Icon name="bell" size={16} />
-            <strong>{team.mismatchCount} team member{team.mismatchCount !== 1 ? 's' : ''}</strong> reported access disputes this cycle
-          </span>
-          <button
-            className="btn-lift"
-            onClick={handleExportDisputes}
-            disabled={exportingDisputes}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              background: 'var(--danger-fg)', color: '#fff',
-              border: 'none', borderRadius: 6, padding: '6px 11px',
-              fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-sans)',
-              cursor: exportingDisputes ? 'not-allowed' : 'pointer', opacity: exportingDisputes ? 0.7 : 1,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            {exportingDisputes ? 'Exporting…' : 'Export disputes'}
-          </button>
-        </div>
-      )}
-
-      <div style={{ padding: '20px 24px 0', display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
-        {summary.map((item) => (
-          <div
-            key={item.label}
-            style={{
-              padding: '14px 16px',
-              borderRadius: 12,
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-              boxShadow: 'var(--shadow-sm)',
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-              {item.label}
+        {/* View toolbar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 560, lineHeight: 1.1, color: 'var(--text)' }}>
+              Manager review
             </div>
-            <div style={{ marginTop: 6, fontSize: 28, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-              {item.value}
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+              Direct-report completion for {cycle?.cycleName ?? 'the selected cycle'}
             </div>
           </div>
-        ))}
-      </div>
-
-      <div style={{ padding: '16px 24px 24px', flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 0.9fr)', gap: 16 }}>
-        <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Panel
-            title="Team completion"
-            subtitle={team ? `${team.totalAttested} of ${team.totalTools} tools attested` : 'No team data loaded'}
-            action={
-              <div style={{ display: 'inline-flex', gap: 6 }}>
-                {[
-                  ['all', 'Everyone'],
-                  ['not-started', 'Not started'],
-                  ['pending', 'In progress'],
-                  ['done', 'Submitted'],
-                ].map(([key, label]) => {
-                  const active = filter === key;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => setFilter(key)}
-                      style={{
-                        height: 28,
-                        padding: '0 10px',
-                        borderRadius: 999,
-                        border: `1px solid ${active ? 'var(--text)' : 'var(--border)'}`,
-                        background: active ? 'var(--text)' : 'var(--surface)',
-                        color: active ? 'var(--bg)' : 'var(--text-muted)',
-                        fontSize: 12,
-                        fontWeight: active ? 600 : 500,
-                        fontFamily: 'inherit',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            }
-          >
-            {loadingTeam ? (
-              <div style={{ padding: '18px 16px', color: 'var(--text-muted)', fontSize: 13 }}>Loading team data...</div>
-            ) : teamError ? (
-              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ fontSize: 13, color: 'var(--danger-fg)' }}>{teamError}</div>
-                <div>
-                  <Button variant="outline" size="sm" onClick={loadTeam}>Retry</Button>
-                </div>
-              </div>
-            ) : visibleMembers.length === 0 ? (
-              <EmptyState
-                icon="search"
-                title={search ? 'No matching team members' : 'No direct reports'}
-                body={search ? 'Clear or change the search to see more team members.' : 'This manager does not currently have direct reports in the selected cycle.'}
-              />
-            ) : (
-              <div style={{ maxHeight: '100%', overflow: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ background: 'var(--surface-2)', position: 'sticky', top: 0, zIndex: 1 }}>
-                      {['Team member', 'Progress', 'Status', ''].map((heading) => (
-                        <th
-                          key={heading}
-                          style={{
-                            textAlign: 'left',
-                            padding: '10px 14px',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            letterSpacing: '0.04em',
-                            textTransform: 'uppercase',
-                            color: 'var(--text-muted)',
-                            borderBottom: '1px solid var(--border)',
-                          }}
-                        >
-                          {heading}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleMembers.map((member) => {
-                      const active = member.associateId === selectedId;
-                      const meta = statusMeta(member.attestationStatus);
-                      return (
-                        <tr
-                          key={member.associateId}
-                          onClick={() => setSelectedId(member.associateId)}
-                          style={{
-                            cursor: 'pointer',
-                            background: active ? 'color-mix(in oklab, var(--accent), transparent 94%)' : 'transparent',
-                            borderBottom: '1px solid var(--border-subtle)',
-                          }}
-                        >
-                          <td style={{ padding: '12px 14px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <Avatar initials={(member.fullName || 'U').slice(0, 2).toUpperCase()} size={32} />
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  {member.fullName}
-                                </div>
-                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>ID · {member.associateId}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td style={{ padding: '12px 14px', width: 260 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <div style={{ flex: 1, minWidth: 120 }}>
-                                <Progress value={member.attestedTools} max={member.totalTools || 1} height={5} />
-                              </div>
-                              <span style={{ fontSize: 12, color: 'var(--text)', minWidth: 58, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                                {member.attestedTools}/{member.totalTools}
-                              </span>
-                            </div>
-                          </td>
-                          <td style={{ padding: '12px 14px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <Badge variant={meta.variant}>{meta.label}</Badge>
-                              {member.pendingScreenshots > 0 && (
-                                <Badge variant="pending" size="sm">Awaiting approval ({member.pendingScreenshots})</Badge>
-                              )}
-                              {member.rejectedScreenshots > 0 && (
-                                <Badge variant="danger" size="sm">Rejected ({member.rejectedScreenshots})</Badge>
-                              )}
-                            </div>
-                          </td>
-                          <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                            <Icon name="chevright" size={14} style={{ color: 'var(--text-muted)' }} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Panel>
+          <SearchBar value={search} onChange={setSearch} placeholder="Search team…" width={240} />
+          {cycle?.cycleID && (
+            <>
+              <Button variant="outline" icon="image" onClick={() => setGalleryOpen(true)}>
+                View screenshots
+              </Button>
+              <Button variant="outline" icon="download" disabled={downloadingZip} onClick={handleDownloadZip}
+                title="Download every screenshot for this cycle as a .zip file">
+                {downloadingZip ? 'Preparing…' : 'Export .zip'}
+              </Button>
+            </>
+          )}
         </div>
 
-        <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <Panel title="Selected member" subtitle={detail ? `${detail.attestedTools} of ${detail.totalTools} tools attested` : 'Choose a team member to inspect'}>
-            {loadingDetail ? (
-              <div style={{ padding: '18px 16px', color: 'var(--text-muted)', fontSize: 13 }}>Loading member details...</div>
-            ) : detailError ? (
-              <div style={{ padding: 16, fontSize: 13, color: 'var(--danger-fg)' }}>{detailError}</div>
-            ) : !detail ? (
-              <EmptyState
-                icon="users"
-                title="No member selected"
-                body="Select a team member from the list to review their per-client progress."
-              />
+        {/* ── Action queue — the centerpiece (DESIGN §10 Manager) ── */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'minmax(0, 1.45fr) minmax(320px, .8fr)',
+          gap: 14, alignItems: 'stretch',
+        }}>
+          <Card pad={0}>
+          <div style={{ padding: '14px 16px 0' }}>
+            <SectionHeader
+              rule
+              right={(
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  {queueLoading && <Skeleton width={56} height={14} />}
+                  {!queueLoading && (totalAttention > 0
+                    ? <Stamp tone="warning" label={`${totalAttention} TO ACT`} />
+                    : <Stamp tone="success" label="ALL CLEAR" />)}
+                </span>
+              )}
+            >
+              Action queue
+            </SectionHeader>
+          </div>
+          <div style={{ padding: '4px 16px 14px' }}>
+            {queueLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 0' }}>
+                <Skeleton width="100%" height={40} />
+                <Skeleton width="100%" height={40} />
+              </div>
+            ) : totalAttention === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 0', color: 'var(--text-muted)' }}>
+                <Icon name="check" size={16} style={{ color: 'var(--success)' }} />
+                <span style={{ fontSize: 13 }}>Nothing needs your attention right now — every screenshot is reviewed and no disputes are open.</span>
+              </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <Avatar initials={(detail.fullName || 'U').slice(0, 2).toUpperCase()} size={44} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>{detail.fullName}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Associate ID · {detail.associateId}</div>
-                    </div>
-                  </div>
+              <div>
+                {queue.pending.length > 0 && (
+                  <QueueRow
+                    icon="clock" tone="warning"
+                    title="Screenshots awaiting approval"
+                    detail={queue.oldestPending ? `Oldest uploaded ${relativeAge(queue.oldestPending)}` : 'Review one at a time'}
+                    count={queue.pending.length}
+                    actionLabel="Start review"
+                    onAction={startFocusedReview}
+                  />
+                )}
+                {queue.rejected.length > 0 && (
+                  <QueueRow
+                    icon="alert" tone="danger"
+                    title="Rejected — awaiting re-upload"
+                    detail="Associates must re-submit these screenshots"
+                    count={queue.rejected.length}
+                    actionLabel="View all"
+                    onAction={() => setGalleryOpen(true)}
+                  />
+                )}
+                {(team?.mismatchCount ?? 0) > 0 && (
+                  <QueueRow
+                    icon="bell" tone="warning"
+                    title="Access disputes"
+                    detail={`${team.mismatchCount} team member${team.mismatchCount === 1 ? '' : 's'} reported a dispute`}
+                    count={team.mismatchCount}
+                    actionLabel={exportingDisputes ? 'Exporting…' : 'Export'}
+                    onAction={handleExportDisputes}
+                    disabled={exportingDisputes}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        </Card>
 
-                  <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                    <div style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                        Completion
-                      </div>
-                      <div style={{ marginTop: 6, fontSize: 24, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-                        {Math.round(detail.progressPct * 100)}%
-                      </div>
-                    </div>
-                    <div style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                        Status
-                      </div>
-                      <div style={{ marginTop: 9 }}>
-                        <Badge variant={statusMeta(detail.attestationStatus).variant}>{statusMeta(detail.attestationStatus).label}</Badge>
-                      </div>
-                    </div>
-                  </div>
-                  {detail.attestationStatus === 'Submitted' && (
-                    <div style={{ marginTop: 10 }}>
+          <TeamStatusBar
+            states={summary.slice(1)}
+            total={team?.totalMembers ?? 0}
+            active={filter}
+            onSelect={setFilter}
+          />
+        </div>
+
+        {/* ── Team table ── */}
+        <Card pad={0}>
+          <div style={{ padding: '14px 16px 0' }}>
+            <SectionHeader
+              rule
+              right={(
+                <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {[['all', 'All'], ...STATE_ORDER.map((s) => [s, statusMeta(s).label])].map(([key, label]) => {
+                    const active = filter === key;
+                    return (
                       <button
-                        className="btn-lift"
-                        onClick={handleReopen}
-                        disabled={reopening}
+                        key={key} type="button" onClick={() => setFilter(key)} aria-pressed={active}
                         style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          background: 'transparent', border: '1px solid var(--accent)',
-                          color: 'var(--accent)', borderRadius: 6, padding: '6px 12px',
-                          fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font-sans)',
-                          cursor: reopening ? 'not-allowed' : 'pointer', opacity: reopening ? 0.7 : 1,
+                          height: 26, padding: '0 10px', borderRadius: 999,
+                          border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                          background: active ? 'var(--accent-glow)' : 'var(--surface)',
+                          color: active ? 'var(--accent)' : 'var(--text-muted)',
+                          fontSize: 11.5, fontWeight: active ? 600 : 500, fontFamily: 'inherit',
+                          cursor: 'pointer', whiteSpace: 'nowrap',
                         }}
                       >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="1 4 1 10 7 10" />
-                          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                        </svg>
-                        {reopening ? 'Reopening…' : 'Reopen attestation'}
+                        {label}
                       </button>
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
+              )}
+            >
+              Team
+              {team && (
+                <span style={{ marginLeft: 8, textTransform: 'none', fontWeight: 400, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+                  {team.totalAttested}/{team.totalTools} tools
+                </span>
+              )}
+            </SectionHeader>
+          </div>
 
-                <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflow: 'auto' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                    Per-client progress
-                  </div>
-                  {detail.byClient.length === 0 ? (
-                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No client access is active for this user.</div>
-                  ) : (
-                    detail.byClient.map((client) => (
-                      <div
-                        key={client.clientID}
+          {loadingTeam ? (
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} width="100%" height={44} />)}
+            </div>
+          ) : teamError ? (
+            <div style={{ padding: 16 }}>
+              <EmptyState icon="alert" title="Couldn't load your team" message={teamError}
+                action={<Button variant="outline" size="sm" icon="refresh" onClick={loadTeam}>Retry</Button>} />
+            </div>
+          ) : visibleMembers.length === 0 ? (
+            <EmptyState
+              icon="users"
+              title={search || filter !== 'all' ? 'No matching team members' : 'No direct reports'}
+              message={search || filter !== 'all'
+                ? 'Clear or change the search and filter to see more team members.'
+                : 'This manager has no direct reports in the selected cycle.'}
+            />
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: '0 16px', width: 36, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }} aria-hidden="true" />
+                    <SortHeader band label="Team member" active={sortKey === 'name'} dir={sortDir} onSort={() => onSort('name')} style={{ padding: '0 16px' }} />
+                    <SortHeader band label="Progress" active={sortKey === 'progress'} dir={sortDir} onSort={() => onSort('progress')} style={{ padding: '0 16px', width: 240 }} />
+                    <SortHeader band label="Status" active={sortKey === 'status'} dir={sortDir} onSort={() => onSort('status')} style={{ padding: '0 16px' }} />
+                    <th style={{ padding: '0 16px', width: 40, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }} aria-hidden="true" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleMembers.map((member) => {
+                    const active = member.associateId === selectedId;
+                    return (
+                      <tr
+                        key={member.associateId}
+                        onClick={() => openMember(member.associateId)}
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMember(member.associateId); } }}
                         style={{
-                          padding: '12px 14px',
-                          borderRadius: 10,
-                          border: '1px solid var(--border-subtle)',
-                          background: 'var(--surface)',
+                          cursor: 'pointer',
+                          background: active ? 'var(--accent-glow)' : 'transparent',
+                          borderBottom: '1px solid var(--border-subtle)',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                        <td style={{ padding: '10px 16px', width: 36 }}>
+                          <Avatar initials={(member.fullName || 'U').slice(0, 2).toUpperCase()} size={30} />
+                        </td>
+                        <td style={{ padding: '10px 16px' }}>
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {client.clientName}
+                            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {member.fullName}
+                            </div>
+                            <div style={{ fontSize: 10.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.03em' }}>
+                              ID {member.associateId}
                             </div>
                           </div>
-                          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                            {client.attestedTools}/{client.totalTools}
+                        </td>
+                        <td style={{ padding: '10px 16px', width: 240 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ flex: 1, minWidth: 100 }}>
+                              <Progress value={member.attestedTools} max={member.totalTools || 1} height={5}
+                                tone={member.attestedTools >= member.totalTools && member.totalTools > 0 ? 'success' : 'accent'} />
+                            </div>
+                            <span style={{ fontSize: 12, color: 'var(--text)', minWidth: 52, textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+                              {member.attestedTools}/{member.totalTools}
+                            </span>
                           </div>
-                        </div>
-                        <div style={{ marginTop: 8 }}>
-                          <Progress value={client.attestedTools} max={client.totalTools || 1} height={4} />
+                        </td>
+                        <td style={{ padding: '10px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <StatusChip status={member.attestationStatus} />
+                            {member.pendingScreenshots > 0 && <Stamp tone="warning" label={`${member.pendingScreenshots} PENDING`} />}
+                            {member.rejectedScreenshots > 0 && <Stamp tone="danger" label={`${member.rejectedScreenshots} REJECTED`} />}
+                          </div>
+                        </td>
+                        <td style={{ padding: '10px 16px', textAlign: 'right', width: 40 }}>
+                          <Icon name="chevright" size={14} style={{ color: 'var(--text-faint)' }} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* ── Member detail Drawer ── */}
+      <Drawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        title={detail ? detail.fullName : 'Member detail'}
+        width={560}
+        footer={canReopen ? (
+          <Button variant="outline" icon="refresh" disabled={reopening} onClick={() => setConfirmReopen(true)}>
+            {reopening ? 'Reopening…' : 'Reopen attestation'}
+          </Button>
+        ) : undefined}
+      >
+        {loadingDetail ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Skeleton width="60%" height={20} />
+            <Skeleton width="100%" height={48} />
+            <Skeleton width="100%" height={120} />
+          </div>
+        ) : detailError ? (
+          <EmptyState icon="alert" title="Couldn't load member" message={detailError} />
+        ) : !detail ? (
+          <EmptyState icon="users" title="No member selected" message="Select a team member to review their progress." />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {/* Identity + status */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Avatar initials={(detail.fullName || 'U').slice(0, 2).toUpperCase()} size={44} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail.fullName}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.03em' }}>ASSOCIATE ID {detail.associateId}</div>
+              </div>
+              <StatusChip status={detail.attestationStatus} />
+            </div>
+
+            {/* Overall completion */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+                <SectionHeader>Completion</SectionHeader>
+                <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+                  {detail.attestedTools}/{detail.totalTools} · {Math.round((detail.progressPct ?? 0) * 100)}%
+                </span>
+              </div>
+              <Progress value={detail.attestedTools} max={detail.totalTools || 1} height={6}
+                tone={detail.attestedTools >= detail.totalTools && detail.totalTools > 0 ? 'success' : 'accent'} />
+            </div>
+
+            {/* Completion by client — horizontal bar chart (primary per-client visual) */}
+            {detail.byClient.length === 0 ? (
+              <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <SectionHeader rule>Completion by client</SectionHeader>
+                <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No client access is active for this user.</div>
+              </section>
+            ) : (
+              <CompletionByClient clients={detail.byClient} />
+            )}
+
+            {/* Screenshot review */}
+            {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient.some((c) => c.tools?.length)) && (
+              <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <ScreenshotGallery
+                  cycleId={cycle.cycleID}
+                  associateId={detail.associateId}
+                  memberName={detail.fullName}
+                  byClient={detail.byClient}
+                  pendingScreenshots={detail.pendingScreenshots}
+                  rejectedScreenshots={detail.rejectedScreenshots}
+                  onReviewed={refreshAll}
+                />
+              </section>
+            )}
+
+            {/* Access disputes */}
+            <section style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <SectionHeader rule right={disputeCount > 0 ? <Stamp tone="danger" label={String(disputeCount)} icon={false} /> : undefined}>
+                Access disputes
+              </SectionHeader>
+              {disputeCount === 0 ? (
+                <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No access disputes reported this cycle.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {detail.mismatches.map((m, i) => (
+                    <div key={`${m.clientID}-${m.toolName}-${i}`} style={{
+                      padding: '12px 14px', borderRadius: 'var(--radius-card)',
+                      background: 'var(--danger-bg)', border: '1px solid var(--danger-border)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)' }}>{m.toolName}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                          Answered {formatDate(m.submittedAt)}
                         </div>
                       </div>
-                    ))
-                  )}
-
-                  {(detail.pendingScreenshots > 0 || detail.rejectedScreenshots > 0 || detail.byClient.some((c) => c.tools?.length)) && (
-                    <div style={{ marginTop: 6 }}>
-                      <ScreenshotGallery
-                        cycleId={cycle.cycleID}
-                        associateId={detail.associateId}
-                        memberName={detail.fullName}
-                        byClient={detail.byClient}
-                        pendingScreenshots={detail.pendingScreenshots}
-                        rejectedScreenshots={detail.rejectedScreenshots}
-                        onReviewed={refreshDetail}
-                      />
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                        {m.clientName} ({m.clientID})
+                      </div>
+                      {m.remarks ? (
+                        <div style={{ fontSize: 12.5, color: 'var(--text)', marginTop: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.remarks}</div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, fontStyle: 'italic' }}>No remark provided.</div>
+                      )}
                     </div>
-                  )}
-
-                  {detail?.mismatches?.length > 0 && (
-                    <div style={{ marginTop: 16 }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8, color: 'var(--danger-fg)' }}>Access disputes ({detail.mismatches.length})</div>
-                      {detail.mismatches.map((m, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, marginBottom: 4, fontSize: '0.85rem', color: 'var(--text)' }}>
-                          <span><strong>{m.toolName}</strong><span style={{ color: 'var(--text-muted)' }}> — {m.clientName}</span></span>
-                          {m.remarks && <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: 12 }}>{m.remarks}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  ))}
                 </div>
-              </div>
-            )}
-          </Panel>
+              )}
+            </section>
+          </div>
+        )}
+      </Drawer>
+
+      {/* Reopen confirm Modal (no window.confirm) */}
+      <Modal
+        open={confirmReopen}
+        onClose={() => setConfirmReopen(false)}
+        title="Reopen attestation"
+        width={420}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => setConfirmReopen(false)}>Cancel</Button>
+            <Button variant="danger" icon="refresh" onClick={handleReopen}>Reopen</Button>
+          </>
+        )}
+      >
+        <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>
+          Reopen <strong>{detail?.fullName ?? selectedId}</strong>'s submitted attestation for{' '}
+          <strong>{cycle?.cycleName ?? 'this cycle'}</strong>? They will be able to edit and re-submit, and their status returns to in-progress.
         </div>
-      </div>
+      </Modal>
+
+      {/* Cycle screenshot gallery (WI-9) */}
+      {galleryOpen && cycle?.cycleID && (
+        <CycleGallery
+          cycleId={cycle.cycleID}
+          cycleName={cycle.cycleName}
+          onClose={() => setGalleryOpen(false)}
+          onReviewed={refreshAll}
+        />
+      )}
+
+      {/* Focused review flow from the action queue (pending, oldest-first) */}
+      {reviewLightbox && (
+        <Lightbox
+          items={reviewLightbox.items}
+          startIndex={reviewLightbox.startIndex}
+          review={{ onDecide: handleQueueDecide }}
+          onClose={handleQueueClose}
+        />
+      )}
     </div>
   );
 }

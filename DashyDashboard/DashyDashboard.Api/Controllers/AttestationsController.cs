@@ -107,30 +107,6 @@ public class AttestationsController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
     }
 
-    [HttpPost("{cycleId}/screenshots/batch")]
-    [RequestSizeLimit(50L * 1024 * 1024)] // many small files in one request
-    public async Task<IActionResult> UploadScreenshotsBatch(int cycleId)
-    {
-        if (CurrentUser is null) return Unauthorized();
-        if (!Request.HasFormContentType) return BadRequest(new { status = 400, title = "Expected multipart form data." });
-
-        var form = await Request.ReadFormAsync();
-        var files = new List<(string, byte[])>();
-        foreach (var f in form.Files)
-        {
-            if (f.Length == 0) continue;
-            if (f.Length > MaxScreenshotBytes) continue; // skip oversize files silently; backstop only
-            files.Add((f.FileName, await ReadAllBytesAsync(f)));
-        }
-
-        try
-        {
-            var result = await _svc.UploadBatchAsync(CurrentUser.AssociateId, cycleId, files);
-            return Ok(result);
-        }
-        catch (KeyNotFoundException ex) { return NotFound(new { status = 404, title = ex.Message }); }
-    }
-
     // ── Screenshot serving (§5) ───────────────────────────────────────────────
 
     [HttpGet("{cycleId}/{associateId}/{clientId}/{toolId}/screenshot")]
@@ -187,7 +163,7 @@ public class AttestationsController : ControllerBase
             await _svc.ReopenAsync(CurrentUser.AssociateId, isAdmin, associateId, cycleId);
             return Ok(new { reopened = true });
         }
-        catch (UnauthorizedAccessException) { return Forbid(); }
+        catch (UnauthorizedAccessException) { return StatusCode(StatusCodes.Status403Forbidden); }
         catch (InvalidOperationException ex) { return BadRequest(new { status = 400, title = ex.Message }); }
     }
 }

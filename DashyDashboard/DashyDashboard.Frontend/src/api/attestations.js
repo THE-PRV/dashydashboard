@@ -8,7 +8,7 @@ export const toggleUsed = (cycleId, clientId, toolId, used) =>
   put(`/api/attestations/${routePart(cycleId)}/${routePart(clientId)}/${routePart(toolId)}/used`, { used });
 
 export const toggleHadAccess = (cycleId, clientId, toolId, hadAccess) =>
-  put(`/api/attestations/${routePart(cycleId)}/${routePart(clientId)}/${toolId}/had-access`, { hadAccess });
+  put(`/api/attestations/${routePart(cycleId)}/${routePart(clientId)}/${routePart(toolId)}/had-access`, { hadAccess });
 
 export const submitAll = (cycleId, remarks = null) =>
   post(`/api/attestations/${routePart(cycleId)}/submit-all`, { remarks });
@@ -29,14 +29,6 @@ export const uploadScreenshot = (cycleId, clientId, toolId, file) => {
   const form = new FormData();
   form.append('file', file, file.name || 'screenshot.webp');
   return postForm(`/api/attestations/${routePart(cycleId)}/${routePart(clientId)}/${routePart(toolId)}/screenshot`, form);
-};
-
-// Batch-upload many screenshots at once. `files` is an array of File objects named
-// {clientId}_{toolId}.ext. Returns { results: [{ fileName, status, detail }] }.
-export const uploadScreenshotsBatch = (cycleId, files) => {
-  const form = new FormData();
-  files.forEach((file) => form.append('files', file, file.name));
-  return postForm(`/api/attestations/${routePart(cycleId)}/screenshots/batch`, form);
 };
 
 // Fetch the full-size screenshot for one row as an object URL (caller must
