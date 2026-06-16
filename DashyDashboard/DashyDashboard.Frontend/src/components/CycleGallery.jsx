@@ -191,6 +191,7 @@ export default function CycleGallery({ cycleId, cycleName, onClose, onReviewed }
     screenshotStatus: i.screenshotStatus,
     screenshotRejectReason: i.screenshotRejectReason,
     screenshotUploadedAt: i.screenshotUploadedAt,
+    requiresReview: i.requiresReview,
   })), [filteredItems, cycleId]);
 
   const handleOpen = (item) => {

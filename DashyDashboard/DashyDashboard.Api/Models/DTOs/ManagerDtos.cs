@@ -138,7 +138,8 @@ public record CycleScreenshotItemDto(
     string ToolName,
     string? ScreenshotStatus,
     DateTime? ScreenshotUploadedAt,
-    string? ScreenshotRejectReason);
+    string? ScreenshotRejectReason,
+    bool RequiresReview);
 
 public record UserListItem(
     string AssociateId,

@@ -74,12 +74,16 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
   const override = key ? statusOverride[key] : null;
   const effectiveStatus = override?.status ?? item?.screenshotStatus;
   const effectiveReason = override?.rejectReason ?? item?.screenshotRejectReason;
+  // Optional screenshots on exempt rows (requiresReview === false) are viewable but never
+  // actionable. Items that omit the flag (older callers) default to actionable.
+  const itemRequiresReview = item ? item.requiresReview !== false : false;
   const isPending = reviewMode && effectiveStatus === 'Pending';
   const multi = items.length > 1;
   const imageReady = !!url && !imgLoading && !imgError;
-  const canDecide = isPending && imageReady;
+  const canDecide = isPending && imageReady && itemRequiresReview;
 
   const pendingRemaining = items.reduce((count, candidate) => {
+    if (candidate.requiresReview === false) return count;
     const status = statusOverride[itemKey(candidate)]?.status ?? candidate.screenshotStatus;
     return count + (status === 'Pending' ? 1 : 0);
   }, 0);

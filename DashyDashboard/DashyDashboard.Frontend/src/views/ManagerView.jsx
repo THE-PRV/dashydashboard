@@ -363,7 +363,9 @@ export default function ManagerView({ user, cycle, cycles, onCycle }) {
 
   // ── Action-queue derived data ──────────────────────────────────────────────
   const queue = useMemo(() => {
-    const items = queueItems ?? [];
+    // Only rows that REQUIRE a screenshot are actionable. Optional shots on exempt rows
+    // (no-access / not-used) stay viewable in the gallery but never enter the action queue.
+    const items = (queueItems ?? []).filter((i) => i.requiresReview);
     const pending = items
       .filter((i) => i.screenshotStatus === 'Pending')
       .sort((a, b) => new Date(a.screenshotUploadedAt ?? 0) - new Date(b.screenshotUploadedAt ?? 0));
@@ -384,6 +386,7 @@ export default function ManagerView({ user, cycle, cycles, onCycle }) {
     screenshotStatus: i.screenshotStatus,
     screenshotRejectReason: i.screenshotRejectReason,
     screenshotUploadedAt: i.screenshotUploadedAt,
+    requiresReview: i.requiresReview,
   })), [queue.pending, cycle]);
 
   const startFocusedReview = () => {

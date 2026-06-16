@@ -240,6 +240,9 @@ export default function ScreenshotGallery({
         screenshotStatus: tool.screenshotStatus,
         screenshotRejectReason: tool.screenshotRejectReason,
         screenshotUploadedAt: tool.screenshotUploadedAt,
+        // A row requires review only when the tool was used (had access AND used this cycle).
+        // Optional shots on exempt rows stay viewable but are not approvable/rejectable.
+        requiresReview: tool.hadAccess && tool.usedThisCycle === true,
       })),
   ).sort((a, b) =>
     (STATUS_RANK[a.screenshotStatus] ?? 9) - (STATUS_RANK[b.screenshotStatus] ?? 9)),
@@ -259,10 +262,14 @@ export default function ScreenshotGallery({
     { id: 'Approved', label: `Approved (${counts.Approved})` },
   ]), [counts]);
 
+  // Only actionable (review-required) pending shots feed the focused review flow and the
+  // "Approve all" count, matching the backend which skips optional shots on exempt rows.
   const pendingItems = useMemo(
-    () => allItems.filter((item) => item.screenshotStatus === 'Pending'),
+    () => allItems.filter((item) => item.screenshotStatus === 'Pending' && item.requiresReview),
     [allItems],
   );
+  // Count used for the Review/Approve-all controls — only actionable pending shots.
+  const actionablePending = pendingItems.length;
 
   const visibleGroups = useMemo(() => groups.map((client) => ({
     ...client,
@@ -289,7 +296,7 @@ export default function ScreenshotGallery({
     setApprovingAll(true);
     try {
       await approveAllScreenshots(cycleId, associateId);
-      toasts.success(`Approved ${counts.Pending} screenshot${counts.Pending === 1 ? '' : 's'}`);
+      toasts.success(`Approved ${actionablePending} screenshot${actionablePending === 1 ? '' : 's'}`);
       onReviewed?.();
     } catch (err) {
       toasts.error(err.message || 'Approve all failed.');
@@ -350,7 +357,7 @@ export default function ScreenshotGallery({
           value={filter}
           onChange={setFilter}
         />
-        {counts.Pending > 0 && (
+        {actionablePending > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Button
               variant="primary"
@@ -358,7 +365,7 @@ export default function ScreenshotGallery({
               icon="eye"
               onClick={() => openLightbox(pendingItems, 0)}
             >
-              Review pending ({counts.Pending})
+              Review pending ({actionablePending})
             </Button>
             <Button
               variant="ghost"
@@ -428,7 +435,7 @@ export default function ScreenshotGallery({
           <>
             <Button variant="outline" onClick={() => setConfirmAll(false)}>Cancel</Button>
             <Button variant="primary" icon="check" onClick={handleApproveAll}>
-              Approve {counts.Pending}
+              Approve {actionablePending}
             </Button>
           </>
         )}

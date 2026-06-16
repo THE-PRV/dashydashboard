@@ -747,6 +747,11 @@ public class ManagerService
         if (att?.ScreenshotPath is null)
             throw new KeyNotFoundException("No screenshot found for this attestation.");
 
+        // Optional screenshots on exempt rows (no-access / not-used) are viewable but never
+        // actionable — they block nothing, so a stray review call must not approve/reject one.
+        if (!ScreenshotCompletion.RequiresScreenshot(att.HadAccess, att.UsedThisCycle))
+            throw new InvalidOperationException("This screenshot is optional and does not require review.");
+
         var wasComplete = ScreenshotCompletion.ComputeMemberStatus(
             activeRows.ActiveToolCount,
             activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
@@ -797,7 +802,10 @@ public class ManagerService
             activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
             == ScreenshotCompletion.MemberComplete;
 
-        var pending = rows.Where(a => a.ScreenshotStatus == "Pending").ToList();
+        // Only approve Pending shots on rows that actually require review; optional shots on
+        // exempt rows (no-access / not-used) are viewable but not actionable.
+        var pending = rows.Where(a => a.ScreenshotStatus == "Pending"
+                                   && ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)).ToList();
 
         foreach (var att in pending)
             StampReview(att, callerId, approve: true, reason: null);
@@ -974,7 +982,9 @@ public class ManagerService
                 a.ScreenshotPath,
                 a.ScreenshotStatus,
                 a.ScreenshotUploadedAt,
-                a.ScreenshotRejectReason
+                a.ScreenshotRejectReason,
+                a.HadAccess,
+                a.UsedThisCycle
             })
             .ToListAsync();
 
@@ -1015,7 +1025,10 @@ public class ManagerService
             tools.TryGetValue((r.ClientID, r.ToolID), out var toolName) ? toolName : r.ToolID.ToString(),
             r.ScreenshotStatus,
             r.ScreenshotUploadedAt,
-            r.ScreenshotRejectReason))
+            r.ScreenshotRejectReason,
+            // "viewable, not actionable": optional shots on exempt rows (no-access / not-used)
+            // stay in the gallery + zip but are flagged so the action queue can exclude them.
+            ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)))
             .OrderBy(i => i.AssociateName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(i => i.ClientName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(i => i.ToolName, StringComparer.OrdinalIgnoreCase)
