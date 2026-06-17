@@ -65,6 +65,14 @@ public class ManagerService
             .Where(r => activeAccessKeySet.Contains((r.AssociateId, r.ClientID, r.ToolID)))
             .ToList();
 
+        // Per-tool "screenshot required" flag (toolId is the global PK of ClientTools). Missing => optional.
+        var requiredToolIds = activeAttestRows.Select(r => r.ToolID).Distinct().ToList();
+        var screenshotRequiredByToolId = await _db.ClientTools.AsNoTracking()
+            .Where(ct => requiredToolIds.Contains(ct.ToolID))
+            .Select(ct => new { ct.ToolID, ct.ScreenshotRequired })
+            .ToDictionaryAsync(x => x.ToolID, x => x.ScreenshotRequired);
+        bool ReqShot(int toolId) => screenshotRequiredByToolId.GetValueOrDefault(toolId, false);
+
         var attestCounts = activeAttestRows
             .Where(r => ScreenshotCompletion.IsAnswered(r.HadAccess, r.UsedThisCycle))
             .GroupBy(r => r.AssociateId)
@@ -76,17 +84,17 @@ public class ManagerService
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key, g => ScreenshotCompletion.ComputeMemberStatus(
                 toolCounts.FirstOrDefault(t => t.AssociateId == g.Key)?.Count ?? 0,
-                g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus))));
+                g.Select(r => (r.HadAccess, r.UsedThisCycle, ReqShot(r.ToolID), r.ScreenshotStatus, r.AttestationStatus))));
 
         var pendingCounts = activeAttestRows
-            .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
+            .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle, ReqShot(r.ToolID))
                      && r.ScreenshotStatus != ScreenshotCompletion.StatusApproved
                      && r.ScreenshotStatus != ScreenshotCompletion.StatusRejected)
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key, g => g.Count());
 
         var rejectedCounts = activeAttestRows
-            .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)
+            .Where(r => ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle, ReqShot(r.ToolID))
                      && r.ScreenshotStatus == ScreenshotCompletion.StatusRejected)
             .GroupBy(r => r.AssociateId)
             .ToDictionary(g => g.Key, g => g.Count());
@@ -138,8 +146,14 @@ public class ManagerService
                        && uta.GivenDate <= today
                        && (uta.ToDate == null || uta.ToDate >= today))
             .Include(uta => uta.ClientTool)
-            .Select(uta => new { ClientID = uta.ClientID!, uta.ToolID, ToolName = uta.ClientTool!.ToolName })
+            .Select(uta => new { ClientID = uta.ClientID!, uta.ToolID, ToolName = uta.ClientTool!.ToolName, ScreenshotRequired = uta.ClientTool!.ScreenshotRequired })
             .ToListAsync();
+
+        // Per-tool "screenshot required" flag (toolId is the global PK). Missing => optional.
+        var screenshotRequiredByToolId = accessKeys
+            .GroupBy(a => a.ToolID)
+            .ToDictionary(g => g.Key, g => g.First().ScreenshotRequired);
+        bool ReqShot(int toolId) => screenshotRequiredByToolId.GetValueOrDefault(toolId, false);
 
         var clientNames = await _db.Clients.AsNoTracking()
             .Where(c => accessKeys.Select(a => a.ClientID).Distinct().Contains(c.ClientID))
@@ -171,12 +185,12 @@ public class ManagerService
         // §B1: surface raw pending/rejected screenshot counts for the member's status chip.
         // The overall five-state status is computed from current active accesses below.
         var pendingScreenshots = activeAttestations.Count(a =>
-            ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
+            ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle, ReqShot(a.ToolID))
             && a.ScreenshotStatus != ScreenshotCompletion.StatusApproved
             && a.ScreenshotStatus != ScreenshotCompletion.StatusRejected);
 
         var rejectedScreenshots = activeAttestations.Count(a =>
-            ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)
+            ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle, ReqShot(a.ToolID))
             && a.ScreenshotStatus == ScreenshotCompletion.StatusRejected);
 
         var byClient = accessKeys
@@ -197,7 +211,8 @@ public class ManagerService
                         att?.HadAccess ?? true,
                         att?.ScreenshotStatus,
                         att?.ScreenshotRejectReason,
-                        att?.ScreenshotUploadedAt
+                        att?.ScreenshotUploadedAt,
+                        ak.ScreenshotRequired
                     );
                 })
                 .OrderBy(t => t.ToolName)
@@ -241,7 +256,7 @@ public class ManagerService
         // WI-6: same shared five-state computation as the team list.
         var status = ScreenshotCompletion.ComputeMemberStatus(
             totalTools,
-            activeAttestations.Select(a => (a.HadAccess, a.UsedThisCycle, a.ScreenshotStatus, a.AttestationStatus)));
+            activeAttestations.Select(a => (a.HadAccess, a.UsedThisCycle, ReqShot(a.ToolID), a.ScreenshotStatus, a.AttestationStatus)));
 
         return new MemberDetailDto(member.AssociateId, $"{member.FirstName} {member.LastName}",
                                    status, totalTools, totalAttested, Math.Round(pct, 4), byClient, mismatchDtos,
@@ -578,7 +593,7 @@ public class ManagerService
         return clients.Select(c => new ClientAttestationDto(
             c.ClientID, c.ClientName ?? c.ClientID,
             c.Tools.Count, 0, 0,
-            c.Tools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null, null, null, null)).ToList()
+            c.Tools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null, null, null, null, false)).ToList()
         )).ToList();
     }
 
@@ -604,7 +619,7 @@ public class ManagerService
                 return new ClientAttestationDto(
                     c.ClientID, c.ClientName ?? c.ClientID,
                     matchingTools.Count, 0, 0,
-                    matchingTools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null, null, null, null)).ToList()
+                    matchingTools.Select(t => new ToolAttestationDto(t.ToolID, t.ToolName ?? "", null, true, "N/A", null, null, null, null, false)).ToList()
                 );
             })
             .Where(c => c.TotalTools > 0)
@@ -747,14 +762,16 @@ public class ManagerService
         if (att?.ScreenshotPath is null)
             throw new KeyNotFoundException("No screenshot found for this attestation.");
 
-        // Optional screenshots on exempt rows (no-access / not-used) are viewable but never
-        // actionable — they block nothing, so a stray review call must not approve/reject one.
-        if (!ScreenshotCompletion.RequiresScreenshot(att.HadAccess, att.UsedThisCycle))
+        // Optional screenshots are viewable but never actionable — they block nothing, so a stray
+        // review call must not approve/reject one. A row is optional when it is an exempt row
+        // (no-access / not-used) OR its tool is not flagged ScreenshotRequired.
+        if (!ScreenshotCompletion.RequiresScreenshot(att.HadAccess, att.UsedThisCycle,
+                activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(att.ToolID, false)))
             throw new InvalidOperationException("This screenshot is optional and does not require review.");
 
         var wasComplete = ScreenshotCompletion.ComputeMemberStatus(
             activeRows.ActiveToolCount,
-            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
+            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(r.ToolID, false), r.ScreenshotStatus, r.AttestationStatus)))
             == ScreenshotCompletion.MemberComplete;
 
         StampReview(att, callerId, approve, reason);
@@ -772,7 +789,7 @@ public class ManagerService
 
         var isComplete = ScreenshotCompletion.ComputeMemberStatus(
             activeRows.ActiveToolCount,
-            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
+            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(r.ToolID, false), r.ScreenshotStatus, r.AttestationStatus)))
             == ScreenshotCompletion.MemberComplete;
 
         if (!wasComplete && isComplete)
@@ -799,13 +816,15 @@ public class ManagerService
         var activeRows = await GetActiveAttestationRowsAsync(ownerId, rows);
         var wasComplete = ScreenshotCompletion.ComputeMemberStatus(
             activeRows.ActiveToolCount,
-            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
+            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(r.ToolID, false), r.ScreenshotStatus, r.AttestationStatus)))
             == ScreenshotCompletion.MemberComplete;
 
         // Only approve Pending shots on rows that actually require review; optional shots on
-        // exempt rows (no-access / not-used) are viewable but not actionable.
+        // exempt rows (no-access / not-used) OR on optional tools (not ScreenshotRequired) are
+        // viewable but not actionable.
         var pending = rows.Where(a => a.ScreenshotStatus == "Pending"
-                                   && ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle)).ToList();
+                                   && ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle,
+                                          activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(a.ToolID, false))).ToList();
 
         foreach (var att in pending)
             StampReview(att, callerId, approve: true, reason: null);
@@ -818,7 +837,7 @@ public class ManagerService
 
         var isComplete = ScreenshotCompletion.ComputeMemberStatus(
             activeRows.ActiveToolCount,
-            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus)))
+            activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(r.ToolID, false), r.ScreenshotStatus, r.AttestationStatus)))
             == ScreenshotCompletion.MemberComplete;
 
         if (!wasComplete && isComplete)
@@ -827,7 +846,7 @@ public class ManagerService
         return pending.Count;
     }
 
-    private async Task<(int ActiveToolCount, List<ToolCycleAttestation> Rows)> GetActiveAttestationRowsAsync(
+    private async Task<(int ActiveToolCount, List<ToolCycleAttestation> Rows, Dictionary<int, bool> ScreenshotRequiredByToolId)> GetActiveAttestationRowsAsync(
         string associateId,
         List<ToolCycleAttestation> rows)
     {
@@ -844,9 +863,17 @@ public class ManagerService
             .Select(key => (key.ClientID, key.ToolID))
             .ToHashSet();
 
+        // Per-tool "screenshot required" flag (toolId is the global PK). Missing => optional.
+        var activeToolIds = activeKeys.Select(k => k.ToolID).Distinct().ToList();
+        var screenshotRequiredByToolId = await _db.ClientTools.AsNoTracking()
+            .Where(ct => activeToolIds.Contains(ct.ToolID))
+            .Select(ct => new { ct.ToolID, ct.ScreenshotRequired })
+            .ToDictionaryAsync(x => x.ToolID, x => x.ScreenshotRequired);
+
         return (
             activeKeys.Count,
-            rows.Where(row => activeKeySet.Contains((row.ClientID, row.ToolID))).ToList());
+            rows.Where(row => activeKeySet.Contains((row.ClientID, row.ToolID))).ToList(),
+            screenshotRequiredByToolId);
     }
 
     /// <summary>
@@ -1012,9 +1039,15 @@ public class ManagerService
             .Where(c => clientIds.Contains(c.ClientID))
             .ToDictionaryAsync(c => c.ClientID, c => c.ClientName ?? c.ClientID);
 
-        var tools = await _db.ClientTools.AsNoTracking()
+        var toolRows = await _db.ClientTools.AsNoTracking()
             .Where(t => toolIds.Contains(t.ToolID) && t.ClientID != null && clientIds.Contains(t.ClientID))
-            .ToDictionaryAsync(t => (t.ClientID!, t.ToolID), t => t.ToolName ?? t.ToolID.ToString());
+            .Select(t => new { t.ClientID, t.ToolID, t.ToolName, t.ScreenshotRequired })
+            .ToListAsync();
+        var tools = toolRows.ToDictionary(t => (t.ClientID!, t.ToolID), t => t.ToolName ?? t.ToolID.ToString());
+        // Per-tool "screenshot required" flag (toolId is the global PK). Missing => optional.
+        var screenshotRequiredByToolId = toolRows
+            .GroupBy(t => t.ToolID)
+            .ToDictionary(g => g.Key, g => g.First().ScreenshotRequired);
 
         var items = rows.Select(r => new CycleScreenshotItemDto(
             r.AssociateId,
@@ -1026,9 +1059,11 @@ public class ManagerService
             r.ScreenshotStatus,
             r.ScreenshotUploadedAt,
             r.ScreenshotRejectReason,
-            // "viewable, not actionable": optional shots on exempt rows (no-access / not-used)
-            // stay in the gallery + zip but are flagged so the action queue can exclude them.
-            ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle)))
+            // "viewable, not actionable": optional shots on exempt rows (no-access / not-used) OR
+            // on optional tools (not ScreenshotRequired) stay in the gallery + zip but are flagged
+            // so the action queue can exclude them.
+            ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle,
+                screenshotRequiredByToolId.GetValueOrDefault(r.ToolID, false))))
             .OrderBy(i => i.AssociateName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(i => i.ClientName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(i => i.ToolName, StringComparer.OrdinalIgnoreCase)

@@ -45,11 +45,13 @@ function isPastDue(cycle) {
   return todayKey > String(cycle.dueDate).slice(0, 10);
 }
 
-// Only rows the associate marked as USED need a Pending/Approved screenshot to be
-// submittable — mirrors the server's screenshot gate. No-access and not-used rows exempt.
+// Only USED rows on a tool flagged screenshotRequired need a Pending/Approved screenshot to be
+// submittable — mirrors the server's screenshot gate. No-access rows, not-used rows, AND used
+// rows on OPTIONAL tools (screenshotRequired false) are exempt: proof there is viewable-only.
 function needsScreenshot(tool) {
   return tool.hadAccess !== false
     && tool.usedThisCycle === true
+    && tool.screenshotRequired === true
     && !SUBMITTABLE_SCREENSHOT_STATUSES.includes(tool.screenshotStatus);
 }
 
@@ -844,6 +846,9 @@ function ProofReasonCell({
   focused, onFocus, onUploaded, onError, registerPasteTarget,
 }) {
   const isProofRow = !noAccess && !notUsed; // used / undecided-with-access
+  // A screenshot is only REQUIRED on a used row whose tool is flagged screenshotRequired.
+  // Optional tools (and exempt rows) still get an upload control, presented as optional.
+  const requiresProof = isProofRow && tool.usedThisCycle === true && tool.screenshotRequired === true;
   const needsInlineReason = (noAccess || notUsed) && needsReason && !isSubmitted;
 
   // ── PROOF slot (fixed width) ────────────────────────────────────────────────
@@ -861,7 +866,7 @@ function ProofReasonCell({
       screenshotRejectReason={tool.screenshotRejectReason}
       screenshotUploadedAt={tool.screenshotUploadedAt}
       readOnly={isSubmitted || pastDue}
-      optional={!isProofRow}
+      optional={!requiresProof}
       isFocused={focused}
       verdictAnim={verdictAnim}
       onFocus={onFocus}

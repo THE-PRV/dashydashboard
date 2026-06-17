@@ -34,6 +34,13 @@ public class AdminService
 
         var allUserIds = depts.SelectMany(d => d.UserIds).Distinct().ToList();
 
+        // ToolIDs whose tool requires a screenshot. A USED row is "done" only when its screenshot
+        // is Approved IF the tool is required; used rows on OPTIONAL tools are done on submit.
+        var requiredToolIds = await _db.ClientTools.AsNoTracking()
+            .Where(ct => ct.ScreenshotRequired)
+            .Select(ct => ct.ToolID)
+            .ToListAsync();
+
         var toolCounts = await _db.UserToolAccess.AsNoTracking()
             .Where(uta => allUserIds.Contains(uta.AssociateId)
                        && uta.Access
@@ -43,14 +50,16 @@ public class AdminService
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
             .ToListAsync();
 
-        // §7 completion (WI-1): a tool counts as done when exempt (no access OR not used) OR it was
-        // used AND its screenshot is Approved. Pending/Rejected/missing screenshots are NOT done.
+        // §7 completion (WI-1 + per-tool flag): a tool counts as done when exempt (no access OR not
+        // used) OR it was used AND (its screenshot is Approved OR the tool is optional). Pending/
+        // Rejected/missing screenshots on REQUIRED tools are NOT done.
         var attestCounts = await _db.ToolCycleAttestations.AsNoTracking()
             .Where(tca => allUserIds.Contains(tca.AssociateId)
                        && tca.CycleID == cycleId
                        && (tca.HadAccess == false
                            || tca.UsedThisCycle == false
-                           || (tca.UsedThisCycle == true && tca.ScreenshotStatus == "Approved")))
+                           || (tca.UsedThisCycle == true
+                               && (tca.ScreenshotStatus == "Approved" || !requiredToolIds.Contains(tca.ToolID)))))
             .GroupBy(tca => tca.AssociateId)
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
             .ToListAsync();
@@ -79,7 +88,8 @@ public class AdminService
                        && tca.CycleID == cycleId
                        && (tca.HadAccess == false
                            || tca.UsedThisCycle == false
-                           || (tca.UsedThisCycle == true && tca.ScreenshotStatus == "Approved")))
+                           || (tca.UsedThisCycle == true
+                               && (tca.ScreenshotStatus == "Approved" || !requiredToolIds.Contains(tca.ToolID)))))
             .Select(tca => new { tca.AssociateId, tca.ClientID })
             .ToListAsync();
 
@@ -139,6 +149,13 @@ public class AdminService
 
         var deptUserIds = allInDept.Select(u => u.AssociateId).ToList();
 
+        // ToolIDs whose tool requires a screenshot. Used rows on OPTIONAL tools are done on submit;
+        // used rows on REQUIRED tools are done only when the screenshot is Approved.
+        var requiredToolIds = await _db.ClientTools.AsNoTracking()
+            .Where(ct => ct.ScreenshotRequired)
+            .Select(ct => ct.ToolID)
+            .ToListAsync();
+
         var clientsInDept = await _db.UserToolAccess.AsNoTracking()
             .Where(uta => deptUserIds.Contains(uta.AssociateId)
                        && uta.Access
@@ -195,7 +212,8 @@ public class AdminService
                        && tca.CycleID == cycleId
                        && (tca.HadAccess == false
                            || tca.UsedThisCycle == false
-                           || (tca.UsedThisCycle == true && tca.ScreenshotStatus == "Approved"))
+                           || (tca.UsedThisCycle == true
+                               && (tca.ScreenshotStatus == "Approved" || !requiredToolIds.Contains(tca.ToolID))))
                        && (clientId == null || tca.ClientID == clientId))
             .GroupBy(tca => tca.AssociateId)
             .Select(g => new { AssociateId = g.Key, Count = g.Count() })
@@ -233,7 +251,8 @@ public class AdminService
                            && tca.CycleID == cycleId
                            && (tca.HadAccess == false
                                || tca.UsedThisCycle == false
-                           || (tca.UsedThisCycle == true && tca.ScreenshotStatus == "Approved"))
+                           || (tca.UsedThisCycle == true
+                               && (tca.ScreenshotStatus == "Approved" || !requiredToolIds.Contains(tca.ToolID))))
                            && (clientId == null || tca.ClientID == clientId));
 
         var gfhRow = await _db.SuperUsers.AsNoTracking()
@@ -260,7 +279,7 @@ public class AdminService
         return new DeptManagersDto(deptName, gfhName, deptUsersWithTools, deptToolTotal, deptSubmitted, managerSummaries, availableClients, incompleteCount, disputeCount);
     }
 
-    public async Task<AddToolResponse> AddToolAsync(string clientId, string toolName, int departmentId, string actorId)
+    public async Task<AddToolResponse> AddToolAsync(string clientId, string toolName, int departmentId, bool screenshotRequired, string actorId)
     {
         var client = await _db.Clients.AsNoTracking().FirstOrDefaultAsync(c => c.ClientID == clientId);
         if (client is null)
@@ -271,11 +290,12 @@ public class AdminService
             ClientID = clientId,
             ToolName = toolName,
             DepartmentID = departmentId,
+            ScreenshotRequired = screenshotRequired,
         };
         _db.ClientTools.Add(tool);
         await _db.SaveChangesAsync();
 
-        return new AddToolResponse(clientId, tool.ToolID, toolName);
+        return new AddToolResponse(clientId, tool.ToolID, toolName, tool.ScreenshotRequired);
     }
 
     public async Task<AddClientResponse> AddClientAsync(string clientId, string clientName, string actorId)
@@ -425,6 +445,13 @@ public class AdminService
             .Where(r => activeAccessKeySet.Contains((r.AssociateId, r.ClientID, r.ToolID)))
             .ToList();
 
+        // Per-tool "screenshot required" flag (toolId is the global PK). Missing => optional.
+        var requiredToolIds = activeAttestRows.Select(r => r.ToolID).Distinct().ToList();
+        var screenshotRequiredByToolId = await _db.ClientTools.AsNoTracking()
+            .Where(ct => requiredToolIds.Contains(ct.ToolID))
+            .Select(ct => new { ct.ToolID, ct.ScreenshotRequired })
+            .ToDictionaryAsync(x => x.ToolID, x => x.ScreenshotRequired);
+
         // "Answered" = decided usage or declared no access (the existing completion proxy).
         var answeredCountMap = activeAttestRows
             .Where(r => ScreenshotCompletion.IsAnswered(r.HadAccess, r.UsedThisCycle))
@@ -437,7 +464,7 @@ public class AdminService
             .ToDictionary(g => g.Key,
                 g => ScreenshotCompletion.ComputeMemberStatus(
                     toolCounts.FirstOrDefault(t => t.AssociateId == g.Key)?.Count ?? 0,
-                    g.Select(r => (r.HadAccess, r.UsedThisCycle, r.ScreenshotStatus, r.AttestationStatus))));
+                    g.Select(r => (r.HadAccess, r.UsedThisCycle, screenshotRequiredByToolId.GetValueOrDefault(r.ToolID, false), r.ScreenshotStatus, r.AttestationStatus))));
 
         var toolCountMap = toolCounts.ToDictionary(x => x.AssociateId, x => x.Count);
 

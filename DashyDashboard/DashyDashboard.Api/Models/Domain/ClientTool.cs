@@ -19,6 +19,8 @@ public class ClientTool
     [MaxLength(255)]
     public string? ToolName { get; set; }
 
+    public bool ScreenshotRequired { get; set; }
+
     public int? DepartmentID { get; set; }
 
     [ForeignKey(nameof(DepartmentID))]

@@ -76,7 +76,8 @@ public record MemberToolDto(
     bool HadAccess,
     string? ScreenshotStatus,
     string? ScreenshotRejectReason,
-    DateTime? ScreenshotUploadedAt
+    DateTime? ScreenshotUploadedAt,
+    bool ScreenshotRequired
 );
 
 public record GrantAccessRequest(

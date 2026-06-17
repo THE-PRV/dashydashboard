@@ -109,7 +109,7 @@ public class AdminController : ControllerBase
         var user = CurrentUser;
         if (user is null) return Unauthorized();
 
-        var result = await _admin.AddToolAsync(req.ClientId, req.ToolName, req.DepartmentId, user.AssociateId);
+        var result = await _admin.AddToolAsync(req.ClientId, req.ToolName, req.DepartmentId, req.ScreenshotRequired, user.AssociateId);
         return CreatedAtAction(nameof(AddTool), result);
     }
 

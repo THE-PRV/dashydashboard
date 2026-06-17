@@ -42,13 +42,15 @@ public record DeptManagersDto(
 public record AddToolRequest(
     [Required][MaxLength(50)] string ClientId,
     [Required][MaxLength(100)] string ToolName,
-    int DepartmentId
+    int DepartmentId,
+    bool ScreenshotRequired = false
 );
 
 public record AddToolResponse(
     string ClientId,
     int ToolId,
-    string ToolName
+    string ToolName,
+    bool ScreenshotRequired = false
 );
 
 public record AddClientRequest(

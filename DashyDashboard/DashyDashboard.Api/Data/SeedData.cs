@@ -150,6 +150,26 @@ public static class SeedData
             return;
         }
 
+        // Per-tool "screenshot required" flag: most tools are OPTIONAL (the DB default), but the
+        // demo's screenshot-bearing tools are flagged REQUIRED so the demo exercises BOTH the
+        // gating/review path (required) and the viewable-only path (optional). The demo's
+        // ExpectedStates were authored under "used tool needs an approved screenshot", which only
+        // holds when these tools are required.
+        var requiredToolIds = new[]
+        {
+            Tool(usTools, "Trade Capture"),
+            Tool(usTools, "Settlement Gateway"),
+            Tool(usTools, "Reconciliation Hub"),
+            Tool(usTools, "Reporting Suite"),
+            Tool(ukTools, "Compliance Portal"),
+        };
+        var toolsToFlag = await db.ClientTools
+            .Where(ct => requiredToolIds.Contains(ct.ToolID))
+            .ToListAsync();
+        foreach (var ct in toolsToFlag)
+            ct.ScreenshotRequired = true;
+        await db.SaveChangesAsync();
+
         var fixturesPath = config["DeveloperMode:SeedFixturesPath"];
         if (string.IsNullOrWhiteSpace(fixturesPath))
             fixturesPath = DefaultFixturesPath;
@@ -1089,6 +1109,11 @@ public static class SeedData
                 && ExpectedStates.Keys.Contains(row.AssociateId))
             .ToListAsync();
 
+        // Per-tool "screenshot required" flag (toolId is the global PK). Missing => optional.
+        var screenshotRequiredByToolId = await db.ClientTools.AsNoTracking()
+            .Select(ct => new { ct.ToolID, ct.ScreenshotRequired })
+            .ToDictionaryAsync(x => x.ToolID, x => x.ScreenshotRequired);
+
         var actualStates = ExpectedStates.Keys.ToDictionary(
             associateId => associateId,
             associateId => ScreenshotCompletion.ComputeMemberStatus(
@@ -1096,6 +1121,7 @@ public static class SeedData
                     .Select(row => (
                         row.HadAccess,
                         row.UsedThisCycle,
+                        screenshotRequiredByToolId.GetValueOrDefault(row.ToolID, false),
                         row.ScreenshotStatus,
                         row.AttestationStatus))),
             StringComparer.OrdinalIgnoreCase);

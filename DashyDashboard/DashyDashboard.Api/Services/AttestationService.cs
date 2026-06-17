@@ -110,7 +110,8 @@ public class AttestationService
                         att?.Remarks,
                         att?.ScreenshotStatus,
                         att?.ScreenshotRejectReason,
-                        att?.ScreenshotUploadedAt
+                        att?.ScreenshotUploadedAt,
+                        a.ClientTool?.ScreenshotRequired ?? false
                     );
                 }).ToList();
 
@@ -278,11 +279,20 @@ public class AttestationService
             throw new InvalidOperationException("Add a remark for each tool you marked as 'Not used' before submitting.");
 
         // Screenshot gate (§7, WI-1): only USED rows (HadAccess == true && UsedThisCycle == true)
-        // require a screenshot in Pending or Approved state. Rejected or NULL blocks submission.
-        // No-access rows (HadAccess == false) AND not-used rows (UsedThisCycle == false) are exempt.
+        // on a tool flagged ScreenshotRequired require a screenshot in Pending or Approved state.
+        // Rejected or NULL blocks submission. No-access rows (HadAccess == false), not-used rows
+        // (UsedThisCycle == false), AND used rows on OPTIONAL tools (ScreenshotRequired == false)
+        // are exempt — optional tools never block submit.
+        var activeToolIds = activeRows.Select(tca => tca.ToolID).Distinct().ToList();
+        var screenshotRequiredByToolId = await _db.ClientTools.AsNoTracking()
+            .Where(ct => activeToolIds.Contains(ct.ToolID))
+            .Select(ct => new { ct.ToolID, ct.ScreenshotRequired })
+            .ToDictionaryAsync(x => x.ToolID, x => x.ScreenshotRequired);
+
         var screenshotBlocking = activeRows
             .Where(tca => tca.HadAccess
                        && tca.UsedThisCycle == true
+                       && screenshotRequiredByToolId.GetValueOrDefault(tca.ToolID, false)
                        && (tca.ScreenshotStatus == null
                            || !SubmittableScreenshotStatuses.Contains(tca.ScreenshotStatus)))
             .Select(tca => new ScreenshotGateRow(tca.ClientID, tca.ToolID))

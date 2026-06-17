@@ -16,8 +16,8 @@ export const getManagerMemberDetail = (managerId, memberId, cycleId) =>
 export const updateUser = (associateId, body) =>
   put(`/api/admin/users/${routePart(associateId)}`, body);
 
-export const addTool = (clientId, toolName, departmentId) =>
-  post('/api/admin/tools', { clientId, toolName, departmentId });
+export const addTool = (clientId, toolName, departmentId, screenshotRequired = false) =>
+  post('/api/admin/tools', { clientId, toolName, departmentId, screenshotRequired });
 
 export const addClient = (clientId, clientName) =>
   post('/api/admin/clients', { clientId, clientName });

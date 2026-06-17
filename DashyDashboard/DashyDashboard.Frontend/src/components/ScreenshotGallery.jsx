@@ -240,9 +240,10 @@ export default function ScreenshotGallery({
         screenshotStatus: tool.screenshotStatus,
         screenshotRejectReason: tool.screenshotRejectReason,
         screenshotUploadedAt: tool.screenshotUploadedAt,
-        // A row requires review only when the tool was used (had access AND used this cycle).
-        // Optional shots on exempt rows stay viewable but are not approvable/rejectable.
-        requiresReview: tool.hadAccess && tool.usedThisCycle === true,
+        // A row requires review only when the tool was used (had access AND used this cycle) AND
+        // the tool itself is flagged screenshotRequired. Optional shots on exempt rows OR on
+        // optional tools stay viewable but are not approvable/rejectable.
+        requiresReview: tool.hadAccess && tool.usedThisCycle === true && tool.screenshotRequired === true,
       })),
   ).sort((a, b) =>
     (STATUS_RANK[a.screenshotStatus] ?? 9) - (STATUS_RANK[b.screenshotStatus] ?? 9)),

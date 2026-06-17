@@ -199,6 +199,7 @@ export default function AdminView({
   const [addToolClientId, setAddToolClientId] = useState('');
   const [addToolDeptId, setAddToolDeptId] = useState(0);
   const [addToolName, setAddToolName] = useState('');
+  const [addToolScreenshotRequired, setAddToolScreenshotRequired] = useState(false);
   const [addToolError, setAddToolError] = useState(null);
   const [addToolSaving, setAddToolSaving] = useState(false);
 
@@ -287,6 +288,7 @@ export default function AdminView({
   // ── Add Tool helpers ────────────────────────────────────────────────────────
   function openAddTool() {
     setAddToolName('');
+    setAddToolScreenshotRequired(false);
     setAddToolDeptId(depts.length > 0 ? depts[0].departmentID : 0);
     setAddToolError(null);
     setAddToolSaving(false);
@@ -300,9 +302,10 @@ export default function AdminView({
     setAddToolSaving(true);
     setAddToolError(null);
     try {
-      const result = await addTool(addToolClientId, addToolName.trim(), addToolDeptId);
+      const result = await addTool(addToolClientId, addToolName.trim(), addToolDeptId, addToolScreenshotRequired);
       toasts.success(`Tool "${result.toolName}" (${result.toolId}) added to ${addToolClientId}`, { title: 'Tool added' });
       setAddToolName('');
+      setAddToolScreenshotRequired(false);
       if (!keepOpen) setShowAddTool(false);
     } catch (e) {
       setAddToolError(e.message || 'Failed to add tool. Please try again.');
@@ -432,6 +435,7 @@ export default function AdminView({
         clientId={addToolClientId} setClientId={setAddToolClientId}
         deptId={addToolDeptId} setDeptId={setAddToolDeptId}
         name={addToolName} setName={setAddToolName}
+        screenshotRequired={addToolScreenshotRequired} setScreenshotRequired={setAddToolScreenshotRequired}
         error={addToolError} saving={addToolSaving}
         onSubmit={submitAddTool}
       />
@@ -1007,7 +1011,7 @@ function FieldError({ children }) {
   );
 }
 
-function AddToolModal({ open, onClose, clients, depts, clientId, setClientId, deptId, setDeptId, name, setName, error, saving, onSubmit }) {
+function AddToolModal({ open, onClose, clients, depts, clientId, setClientId, deptId, setDeptId, name, setName, screenshotRequired, setScreenshotRequired, error, saving, onSubmit }) {
   return (
     <Modal open={open} onClose={onClose} title="Add tool" width={420}
       footer={(
@@ -1036,11 +1040,23 @@ function AddToolModal({ open, onClose, clients, depts, clientId, setClientId, de
           {depts.map((d) => <option key={d.departmentID} value={d.departmentID}>{d.departmentName}</option>)}
         </select>
       </label>
-      <label style={{ display: 'block' }}>
+      <label style={{ display: 'block', marginBottom: 14 }}>
         <span style={fieldLabelStyle}>Tool name</span>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && onSubmit()} placeholder="e.g. Trade Analytics Suite"
           disabled={saving} maxLength={100} style={inputStyle} aria-invalid={!!error} />
+      </label>
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: saving ? 'not-allowed' : 'pointer' }}>
+        <input type="checkbox" checked={screenshotRequired}
+          onChange={(e) => setScreenshotRequired(e.target.checked)} disabled={saving}
+          style={{ marginTop: 2, cursor: saving ? 'not-allowed' : 'pointer' }} />
+        <span>
+          <span style={{ ...fieldLabelStyle, marginBottom: 2 }}>Require screenshot for this tool</span>
+          <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+            When on, associates who used this tool must upload a screenshot that a manager approves
+            before their attestation is complete. When off, any uploaded proof is optional and viewable only.
+          </span>
+        </span>
       </label>
       <FieldError>{error}</FieldError>
     </Modal>

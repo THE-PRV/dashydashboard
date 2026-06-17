@@ -42,10 +42,12 @@ public static class ScreenshotCompletion
 
     /// <summary>
     /// A row requires a screenshot when the associate had access AND actually USED the tool this
-    /// cycle. No-access rows and not-used rows are exempt (WI-1).
+    /// cycle AND the tool itself is flagged <c>ScreenshotRequired</c>. No-access rows and not-used
+    /// rows are exempt (WI-1); used rows on OPTIONAL tools (ScreenshotRequired == false) are also
+    /// exempt — proof may be uploaded but is viewable-only, never gating/actionable.
     /// </summary>
-    public static bool RequiresScreenshot(bool hadAccess, bool? usedThisCycle)
-        => hadAccess && usedThisCycle == true;
+    public static bool RequiresScreenshot(bool hadAccess, bool? usedThisCycle, bool screenshotRequired)
+        => hadAccess && usedThisCycle == true && screenshotRequired;
 
     /// <summary>
     /// A tool is answered when usage was selected, or the associate declared that they did not
@@ -60,13 +62,13 @@ public static class ScreenshotCompletion
     /// and whether any required screenshot is Rejected. A member with neither is screenshot-complete.
     /// </summary>
     public static (bool AnyAwaiting, bool AnyRejected) Classify(
-        IEnumerable<(bool HadAccess, bool? UsedThisCycle, string? ScreenshotStatus)> rows)
+        IEnumerable<(bool HadAccess, bool? UsedThisCycle, bool ScreenshotRequired, string? ScreenshotStatus)> rows)
     {
         var anyAwaiting = false;
         var anyRejected = false;
         foreach (var r in rows)
         {
-            if (!RequiresScreenshot(r.HadAccess, r.UsedThisCycle)) continue;
+            if (!RequiresScreenshot(r.HadAccess, r.UsedThisCycle, r.ScreenshotRequired)) continue;
             if (r.ScreenshotStatus == StatusRejected) anyRejected = true;
             else if (r.ScreenshotStatus != StatusApproved) anyAwaiting = true; // Pending or NULL
         }
@@ -75,7 +77,7 @@ public static class ScreenshotCompletion
 
     /// <summary>True if every required screenshot in the set is Approved (no awaiting, none rejected).</summary>
     public static bool AllApproved(
-        IEnumerable<(bool HadAccess, bool? UsedThisCycle, string? ScreenshotStatus)> rows)
+        IEnumerable<(bool HadAccess, bool? UsedThisCycle, bool ScreenshotRequired, string? ScreenshotStatus)> rows)
     {
         var (anyAwaiting, anyRejected) = Classify(rows);
         return !anyAwaiting && !anyRejected;
@@ -89,7 +91,7 @@ public static class ScreenshotCompletion
     /// </summary>
     public static string ComputeMemberStatus(
         int activeToolCount,
-        IEnumerable<(bool HadAccess, bool? UsedThisCycle, string? ScreenshotStatus, string AttestationStatus)> rows)
+        IEnumerable<(bool HadAccess, bool? UsedThisCycle, bool ScreenshotRequired, string? ScreenshotStatus, string AttestationStatus)> rows)
     {
         var anyAnswered = false;
         var rowCount = 0;
@@ -109,7 +111,7 @@ public static class ScreenshotCompletion
                     submittedAnsweredCount++;
             }
 
-            if (RequiresScreenshot(r.HadAccess, r.UsedThisCycle))
+            if (RequiresScreenshot(r.HadAccess, r.UsedThisCycle, r.ScreenshotRequired))
             {
                 if (r.ScreenshotStatus == StatusRejected) anyRejected = true;
                 else if (r.ScreenshotStatus != StatusApproved) anyAwaiting = true; // Pending or NULL
@@ -134,7 +136,7 @@ public static class ScreenshotCompletion
     /// Operational views should pass the current active-tool count explicitly.
     /// </summary>
     public static string ComputeMemberStatus(
-        IEnumerable<(bool HadAccess, bool? UsedThisCycle, string? ScreenshotStatus, string AttestationStatus)> rows)
+        IEnumerable<(bool HadAccess, bool? UsedThisCycle, bool ScreenshotRequired, string? ScreenshotStatus, string AttestationStatus)> rows)
     {
         var materialized = rows.ToList();
         return ComputeMemberStatus(materialized.Count, materialized);

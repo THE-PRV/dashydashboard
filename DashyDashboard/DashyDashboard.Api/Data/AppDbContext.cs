@@ -65,6 +65,7 @@ public class AppDbContext : DbContext
             e.Property(ct => ct.ToolName)
                 .HasColumnName("ToolName")
                 .HasColumnType("varchar(255)");
+            e.Property(ct => ct.ScreenshotRequired).HasDefaultValue(false);
             e.HasOne(ct => ct.Client)
                 .WithMany(c => c.Tools)
                 .HasForeignKey(ct => ct.ClientID)
