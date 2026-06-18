@@ -10,7 +10,7 @@ namespace DashyDashboard.Api.Controllers;
 [Route("api/attestations")]
 public class AttestationsController : ControllerBase
 {
-    // ~10 MB per-file backstop (browser-compressed screenshots are ~100-200 KB).
+    // 10 MB source-file backstop. The server applies the configured resize and encoding settings.
     private const long MaxScreenshotBytes = 10L * 1024 * 1024;
 
     private readonly AttestationService _svc;

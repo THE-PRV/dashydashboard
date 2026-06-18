@@ -727,12 +727,13 @@ public class ManagerService
         return (file, att.ScreenshotHash);
     }
 
-    /// <summary>Derives the {toolId}_thumb.webp relative path from the main {toolId}.webp path.</summary>
+    /// <summary>Derives the thumbnail path while preserving the stored image extension.</summary>
     private static string ThumbPathFor(string mainRelativePath)
     {
         var dir = Path.GetDirectoryName(mainRelativePath) ?? "";
         var stem = Path.GetFileNameWithoutExtension(mainRelativePath);
-        return Path.Combine(dir, $"{stem}_thumb.webp");
+        var extension = Path.GetExtension(mainRelativePath);
+        return Path.Combine(dir, $"{stem}_thumb{extension}");
     }
 
     /// <summary>
@@ -957,7 +958,7 @@ public class ManagerService
     /// <summary>
     /// Streams a ZIP of every screenshot the caller may see in the cycle directly into
     /// <paramref name="output"/> (no buffering, NoCompression). Entries are
-    /// <c>{associateId}\{clientId}_{toolId}.webp</c>. Scope: manager → team, GFH → department,
+    /// <c>{associateId}\{clientId}_{toolId}.{stored extension}</c>. Scope: manager → team, GFH → department,
     /// GFHDelegate/Admin → all.
     /// </summary>
     public async Task WriteScreenshotsZipAsync(
@@ -979,7 +980,8 @@ public class ManagerService
             if (file is null) continue;
             using (file.Content)
             {
-                var entryName = $"{r.AssociateId}/{r.ClientID}_{r.ToolID}.webp";
+                var extension = Path.GetExtension(r.ScreenshotPath) ?? "";
+                var entryName = $"{r.AssociateId}/{r.ClientID}_{r.ToolID}{extension}";
                 var entry = zip.CreateEntry(entryName, CompressionLevel.NoCompression);
                 using var entryStream = entry.Open();
                 await file.Content.CopyToAsync(entryStream);

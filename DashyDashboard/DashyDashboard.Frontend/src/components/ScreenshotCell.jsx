@@ -19,7 +19,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Icon, Skeleton, Tooltip } from './ui.jsx';
 import { uploadScreenshot, getScreenshotThumbUrl } from '../api/attestations.js';
-import { compressImageToFile } from '../utils/imageCompress.js';
 
 // Verdict → corner-badge tone + icon (DESIGN §3: status is icon + color, never
 // color alone). Tones read the status vars; nothing hard-coded.
@@ -102,8 +101,7 @@ export default function ScreenshotCell({
     setUploadFailed(false);
     if (fromPaste) setPasteState('uploading');
     try {
-      const compressed = await compressImageToFile(file, file.name);
-      await uploadScreenshot(cycleId, clientId, toolId, compressed);
+      await uploadScreenshot(cycleId, clientId, toolId, file);
       if (fromPaste) {
         setPasteState('done');
         window.setTimeout(() => setPasteState(null), 1800);

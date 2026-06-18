@@ -169,16 +169,29 @@ safe defaults (storage on \texttt{C:}, e-mail disabled), but production should o
 
 \section{The \texttt{Screenshots} section}
 
-\begin{longtable}{>{\ttfamily}p{4.8cm} >{\raggedright\arraybackslash}p{9.2cm}}
+\begin{longtable}{>{\ttfamily\small}p{5.8cm} >{\raggedright\arraybackslash}p{8.2cm}}
 \toprule
 \normalfont\textbf{Key} & \textbf{Meaning} \\
 \midrule
 \endhead
 Screenshots:RootPath &
   Absolute disk path under which all screenshots are stored, using the layout
-  \texttt{\{root\}\textbackslash\{cycleId\}\textbackslash\{associateId\}\textbackslash\{clientId\}\textbackslash\{toolId\}.webp}
-  (plus a \texttt{\_thumb.webp} thumbnail). \textbf{Must be OUTSIDE the deployed app folder}
+  \texttt{\{root\}\textbackslash\{cycleId\}\textbackslash\{associateId\}\textbackslash}
+  \texttt{\{clientId\}\textbackslash\{toolId\}.jpg}
+  (plus a \texttt{\_thumb.jpg} thumbnail when JPEG is configured). \textbf{Must be OUTSIDE the deployed app folder}
   (Chapter~\ref{ch:storage}). The IIS app-pool identity needs \emph{Modify} permission here. \\
+Screenshots:Format &
+  Server-side storage format. Accepted values are \texttt{jpeg}, \texttt{jpg}, and \texttt{webp}.
+  The production default is \texttt{jpeg}. Existing files remain readable after this value changes. \\
+Screenshots:Quality &
+  Main-image encoding quality from \texttt{1} to \texttt{100}. Production default \texttt{85}. \\
+Screenshots:MaxLongEdge &
+  Maximum width or height of the stored main image in pixels. Larger uploads are scaled down
+  proportionally. Production default \texttt{1600}. Smaller images are not enlarged. \\
+Screenshots:ThumbnailQuality &
+  Thumbnail encoding quality from \texttt{1} to \texttt{100}. Production default \texttt{80}. \\
+Screenshots:ThumbnailWidth &
+  Maximum thumbnail width in pixels. Production default \texttt{200}. \\
 Screenshots:RetainCycles &
   Integer number of recent cycles to keep on disk. Default \texttt{6}. Retention is a policy target
   only --- the automatic sweep is a future job (Chapter~\ref{ch:retention}). \\
@@ -187,7 +200,7 @@ Screenshots:RetainCycles &
 
 \section{The \texttt{Email} section}
 
-\begin{longtable}{>{\ttfamily}p{5.4cm} >{\raggedright\arraybackslash}p{8.6cm}}
+\begin{longtable}{>{\ttfamily\small}p{6.0cm} >{\raggedright\arraybackslash}p{8.0cm}}
 \toprule
 \normalfont\textbf{Key} & \textbf{Meaning} \\
 \midrule
@@ -224,6 +237,11 @@ Add these two sections alongside the existing \texttt{ConnectionStrings} block:
 \ttfamily\small
 "Screenshots": \{\\
 \hspace*{2em}"RootPath": "D:\textbackslash\textbackslash DashyData\textbackslash\textbackslash Screenshots",\\
+\hspace*{2em}"Format": "jpeg",\\
+\hspace*{2em}"Quality": 85,\\
+\hspace*{2em}"MaxLongEdge": 1600,\\
+\hspace*{2em}"ThumbnailQuality": 80,\\
+\hspace*{2em}"ThumbnailWidth": 200,\\
 \hspace*{2em}"RetainCycles": 6\\
 \},\\
 "Email": \{\\
@@ -256,6 +274,11 @@ colon (\texttt{:}) with a double underscore (\texttt{\_\_}):
 \midrule
 \endhead
 Screenshots:RootPath          & Screenshots\_\_RootPath \\
+Screenshots:Format            & Screenshots\_\_Format \\
+Screenshots:Quality           & Screenshots\_\_Quality \\
+Screenshots:MaxLongEdge       & Screenshots\_\_MaxLongEdge \\
+Screenshots:ThumbnailQuality  & Screenshots\_\_ThumbnailQuality \\
+Screenshots:ThumbnailWidth    & Screenshots\_\_ThumbnailWidth \\
 Screenshots:RetainCycles      & Screenshots\_\_RetainCycles \\
 Email:Enabled                 & Email\_\_Enabled \\
 Email:SmtpHost                & Email\_\_SmtpHost \\

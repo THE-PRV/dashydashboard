@@ -1,9 +1,7 @@
-using System.Security.Cryptography;
 using DashyDashboard.Api.Common;
 using DashyDashboard.Api.Models.Domain;
 using DashyDashboard.Api.Services;
 using Microsoft.EntityFrameworkCore;
-using SkiaSharp;
 
 namespace DashyDashboard.Api.Data;
 
@@ -682,17 +680,16 @@ public static class SeedData
             return false;
         }
 
-        byte[] webpBytes;
+        byte[] sourceBytes;
         try
         {
-            var sourceBytes = await File.ReadAllBytesAsync(fixture);
-            webpBytes = EncodeWebp(sourceBytes);
+            sourceBytes = await File.ReadAllBytesAsync(fixture);
         }
         catch (Exception ex)
         {
             logger.LogWarning(
                 ex,
-                "Demo seed: fixture '{Fixture}' could not be read or converted; screenshot for {AssociateId}/{ClientId}/{ToolId} was cleared.",
+                "Demo seed: fixture '{Fixture}' could not be read; screenshot for {AssociateId}/{ClientId}/{ToolId} was cleared.",
                 fixture,
                 associateId,
                 clientId,
@@ -701,47 +698,22 @@ public static class SeedData
             return false;
         }
 
-        var expectedHash = Sha256Hex(webpBytes);
-        var expectedPath = Path.Combine(
-            cycleId.ToString(),
-            associateId,
-            clientId,
-            $"{toolId}.webp");
-        var expectedThumbPath = Path.Combine(
-            cycleId.ToString(),
-            associateId,
-            clientId,
-            $"{toolId}_thumb.webp");
-
-        if (!StoredScreenshotMatches(
-                screenshots,
-                row,
-                expectedPath,
-                expectedThumbPath,
-                expectedHash))
+        try
         {
-            try
-            {
-                var saved = screenshots.Save(webpBytes, cycleId, associateId, clientId, toolId);
-                row.ScreenshotPath = saved.RelativePath;
-                row.ScreenshotHash = saved.Sha256Hash;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(
-                    ex,
-                    "Demo seed: screenshot storage failed for {AssociateId}/{ClientId}/{ToolId}; stale screenshot state was cleared.",
-                    associateId,
-                    clientId,
-                    toolId);
-                ClearStoredScreenshot(screenshots, row);
-                return false;
-            }
+            var saved = screenshots.Save(sourceBytes, cycleId, associateId, clientId, toolId);
+            row.ScreenshotPath = saved.RelativePath;
+            row.ScreenshotHash = saved.Sha256Hash;
         }
-        else
+        catch (Exception ex)
         {
-            row.ScreenshotPath = expectedPath;
-            row.ScreenshotHash = expectedHash;
+            logger.LogWarning(
+                ex,
+                "Demo seed: screenshot storage failed for {AssociateId}/{ClientId}/{ToolId}; stale screenshot state was cleared.",
+                associateId,
+                clientId,
+                toolId);
+            ClearStoredScreenshot(screenshots, row);
+            return false;
         }
 
         row.ScreenshotUploadedAt = uploadedAt;
@@ -768,48 +740,6 @@ public static class SeedData
         return true;
     }
 
-    private static byte[] EncodeWebp(byte[] sourceBytes)
-    {
-        using var bitmap = SKBitmap.Decode(sourceBytes)
-            ?? throw new InvalidOperationException("Fixture is not a decodable image.");
-        using var image = SKImage.FromBitmap(bitmap);
-        using var encoded = image.Encode(SKEncodedImageFormat.Webp, quality: 90)
-            ?? throw new InvalidOperationException("Fixture could not be encoded as WebP.");
-        return encoded.ToArray();
-    }
-
-    private static bool StoredScreenshotMatches(
-        ScreenshotStorageService screenshots,
-        ToolCycleAttestation row,
-        string expectedPath,
-        string expectedThumbPath,
-        string expectedHash)
-    {
-        if (!string.Equals(row.ScreenshotPath, expectedPath, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(row.ScreenshotHash, expectedHash, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var mainFile = screenshots.Read(expectedPath);
-        var thumbFile = screenshots.Read(expectedThumbPath);
-        if (mainFile is null || thumbFile is null)
-        {
-            mainFile?.Content.Dispose();
-            thumbFile?.Content.Dispose();
-            return false;
-        }
-
-        using (mainFile.Content)
-        using (thumbFile.Content)
-        {
-            return string.Equals(
-                Sha256Hex(mainFile.Content),
-                expectedHash,
-                StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
     private static void ClearStoredScreenshot(
         ScreenshotStorageService screenshots,
         ToolCycleAttestation row)
@@ -817,12 +747,6 @@ public static class SeedData
         screenshots.Delete(row.CycleID, row.AssociateId, row.ClientID, row.ToolID);
         ClearScreenshot(row);
     }
-
-    private static string Sha256Hex(byte[] bytes)
-        => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-
-    private static string Sha256Hex(Stream stream)
-        => Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
 
     private static async Task UpsertSubmitLogAsync(
         AppDbContext db,

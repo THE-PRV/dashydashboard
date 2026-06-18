@@ -23,11 +23,11 @@ export const reopenAttestation = (cycleId, associateId) =>
 
 // ── Screenshots (Feature 2 §A) ─────────────────────────────────────────────
 
-// Upload (or re-upload) the screenshot for a single attestation row. `file` should already
-// be compressed (see src/utils/imageCompress.js). Returns { status: 'Pending' }.
+// Upload (or re-upload) the source screenshot for a single attestation row. The server applies
+// the production format, quality, resize, and thumbnail settings. Returns { status: 'Pending' }.
 export const uploadScreenshot = (cycleId, clientId, toolId, file) => {
   const form = new FormData();
-  form.append('file', file, file.name || 'screenshot.webp');
+  form.append('file', file, file.name || 'screenshot');
   return postForm(`/api/attestations/${routePart(cycleId)}/${routePart(clientId)}/${routePart(toolId)}/screenshot`, form);
 };
 
