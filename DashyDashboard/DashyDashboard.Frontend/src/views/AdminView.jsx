@@ -530,7 +530,7 @@ function OverviewSection({
           message={hasQuery ? 'No departments match your search for this cycle.' : 'No departments are in scope for this cycle yet.'}
         />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 14, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 420px))', gap: 14, alignItems: 'start', justifyContent: 'start' }}>
           {depts.map((dept) => <DeptCard key={dept.departmentName} dept={dept} dark={dark} onDrill={onDrill} />)}
         </div>
       )}
