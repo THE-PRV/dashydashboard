@@ -41,13 +41,32 @@ public static class ScreenshotCompletion
     };
 
     /// <summary>
-    /// A row requires a screenshot when the associate had access AND actually USED the tool this
-    /// cycle AND the tool itself is flagged <c>ScreenshotRequired</c>. No-access rows and not-used
-    /// rows are exempt (WI-1); used rows on OPTIONAL tools (ScreenshotRequired == false) are also
-    /// exempt — proof may be uploaded but is viewable-only, never gating/actionable.
+    /// A row is ELIGIBLE FOR REVIEW when it is a real USED row — the associate had access AND
+    /// actually used the tool this cycle — so a reviewer may Approve/Reject any screenshot uploaded
+    /// on it, independent of whether the tool itself requires a screenshot. Exempt rows (no-access
+    /// or not-used) are never actionable. This is reviewability/actionability, NOT mandatoriness:
+    /// optional shots on used rows are still approvable, but they never block submission/completion.
+    /// </summary>
+    public static bool EligibleForReview(bool hadAccess, bool? usedThisCycle)
+        => hadAccess && usedThisCycle == true;
+
+    /// <summary>
+    /// A screenshot is REVIEWABLE whenever one has actually been uploaded, regardless of the row's
+    /// access/used status or the tool's ScreenshotRequired flag. This governs manager approve/reject
+    /// actionability ONLY — it never affects submission gating or completion (see RequiresScreenshot).
+    /// </summary>
+    public static bool ReviewableUpload(string? screenshotStatus)
+        => !string.IsNullOrEmpty(screenshotStatus);
+
+    /// <summary>
+    /// A row requires a screenshot when it is eligible for review (a real used row) AND the tool
+    /// itself is flagged <c>ScreenshotRequired</c>. No-access rows and not-used rows are exempt
+    /// (WI-1); used rows on OPTIONAL tools (ScreenshotRequired == false) are also exempt from the
+    /// MANDATE — proof may be uploaded (and is now reviewable, see <see cref="EligibleForReview"/>)
+    /// but is never gating for submission/completion. This governs submit-gating + completion only.
     /// </summary>
     public static bool RequiresScreenshot(bool hadAccess, bool? usedThisCycle, bool screenshotRequired)
-        => hadAccess && usedThisCycle == true && screenshotRequired;
+        => EligibleForReview(hadAccess, usedThisCycle) && screenshotRequired;
 
     /// <summary>
     /// A tool is answered when usage was selected, or the associate declared that they did not

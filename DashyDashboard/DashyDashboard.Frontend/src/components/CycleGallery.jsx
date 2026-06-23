@@ -34,7 +34,7 @@ function GalleryTile({ cycleId, item, onOpen }) {
 
     setThumbUrl(null);
     setThumbLoading(true);
-    getScreenshotThumbUrl(cycleId, item.associateId, item.clientId, item.toolId)
+    getScreenshotThumbUrl(cycleId, item.associateId, item.clientId, item.toolId, item.screenshotUploadedAt)
       .then((url) => {
         if (cancelled) {
           if (url) URL.revokeObjectURL(url);

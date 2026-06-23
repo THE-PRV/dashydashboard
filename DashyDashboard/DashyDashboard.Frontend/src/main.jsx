@@ -9,7 +9,7 @@ import './index.css';
 try {
   let t = localStorage.getItem('dashy.theme');
   if (t !== 'dark' && t !== 'light') {
-    t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    t = 'light';
   }
   document.documentElement.dataset.theme = t;
 } catch (e) { /* no-op */ }

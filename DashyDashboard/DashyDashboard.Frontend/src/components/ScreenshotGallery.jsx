@@ -42,7 +42,7 @@ function GalleryTile({ cycleId, associateId, clientId, tool, onOpen }) {
     setThumbError(null);
     setThumbLoading(true);
 
-    getScreenshotThumbUrl(cycleId, associateId, clientId, tool.toolID)
+    getScreenshotThumbUrl(cycleId, associateId, clientId, tool.toolID, tool.screenshotUploadedAt)
       .then((url) => {
         if (cancelled) {
           if (url) URL.revokeObjectURL(url);
@@ -240,10 +240,11 @@ export default function ScreenshotGallery({
         screenshotStatus: tool.screenshotStatus,
         screenshotRejectReason: tool.screenshotRejectReason,
         screenshotUploadedAt: tool.screenshotUploadedAt,
-        // A row requires review only when the tool was used (had access AND used this cycle) AND
-        // the tool itself is flagged screenshotRequired. Optional shots on exempt rows OR on
-        // optional tools stay viewable but are not approvable/rejectable.
-        requiresReview: tool.hadAccess && tool.usedThisCycle === true && tool.screenshotRequired === true,
+        // A screenshot is reviewable (approvable/rejectable) whenever one has actually been
+        // uploaded, regardless of the row's access/used status or the tool's screenshotRequired
+        // flag. Reviewability is keyed on a shot EXISTING; mandatoriness/completion is a separate
+        // concept handled server-side (RequiresScreenshot) and never blocked by optional shots.
+        requiresReview: !!tool.screenshotStatus,
       })),
   ).sort((a, b) =>
     (STATUS_RANK[a.screenshotStatus] ?? 9) - (STATUS_RANK[b.screenshotStatus] ?? 9)),

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Icon, Avatar, Button, SearchBar, Card, Badge, Stamp, Skeleton, EmptyState,
-  SortHeader, SegmentedControl, Tooltip, SectionHeader, Modal, Drawer, useToasts,
+  SortHeader, SegmentedControl, Tooltip, SectionHeader, Modal, Drawer, Combobox, useToasts,
 } from '../components/ui.jsx';
 import { useBreadcrumbs } from '../components/AppShell.jsx';
 import {
@@ -588,17 +588,16 @@ function GrantAccessDrawer({ open, onClose, memberId, memberName, toasts, onGran
             {loadingClients ? (
               <Skeleton height={32} />
             ) : (
-              <select
+              <Combobox
+                ariaLabel="Client"
                 value={form.clientId}
-                onChange={(e) => setForm((c) => ({ ...c, clientId: e.target.value, toolId: '' }))}
-                style={{ ...inputStyle, cursor: 'pointer' }}
-                aria-label="Client"
-              >
-                <option value="">Select client…</option>
-                {clients.map((client) => (
-                  <option key={client.clientID} value={client.clientID}>{client.clientName} ({client.clientID})</option>
-                ))}
-              </select>
+                onChange={(v) => setForm((c) => ({ ...c, clientId: v, toolId: '' }))}
+                placeholder="Select client…"
+                emptyOption={{ value: '', label: 'Select client…' }}
+                options={clients.map((client) => ({
+                  value: client.clientID, label: client.clientName, hint: client.clientID,
+                }))}
+              />
             )}
             {!loadingClients && clients.length === 0 && (
               <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>No grantable clients are available.</p>
@@ -609,17 +608,17 @@ function GrantAccessDrawer({ open, onClose, memberId, memberName, toasts, onGran
         {step === 1 && (
           <div>
             <FieldLabel>Tool · {selectedClient?.clientName}</FieldLabel>
-            <select
+            <Combobox
+              ariaLabel="Tool"
               value={form.toolId}
-              onChange={(e) => setForm((c) => ({ ...c, toolId: e.target.value }))}
-              style={{ ...inputStyle, cursor: 'pointer' }}
-              aria-label="Tool"
-            >
-              <option value="">Select tool…</option>
-              {selectedClient?.tools?.map((tool) => (
-                <option key={tool.toolID} value={String(tool.toolID)}>{tool.toolName}</option>
-              ))}
-            </select>
+              disabled={!selectedClient}
+              onChange={(v) => setForm((c) => ({ ...c, toolId: v }))}
+              placeholder="Select tool…"
+              emptyOption={{ value: '', label: 'Select tool…' }}
+              options={(selectedClient?.tools ?? []).map((tool) => ({
+                value: String(tool.toolID), label: tool.toolName, hint: String(tool.toolID),
+              }))}
+            />
             {selectedClient && (selectedClient.tools?.length ?? 0) === 0 && (
               <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>No grantable tools for this client.</p>
             )}

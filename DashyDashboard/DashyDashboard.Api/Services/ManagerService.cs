@@ -763,12 +763,13 @@ public class ManagerService
         if (att?.ScreenshotPath is null)
             throw new KeyNotFoundException("No screenshot found for this attestation.");
 
-        // Optional screenshots are viewable but never actionable — they block nothing, so a stray
-        // review call must not approve/reject one. A row is optional when it is an exempt row
-        // (no-access / not-used) OR its tool is not flagged ScreenshotRequired.
-        if (!ScreenshotCompletion.RequiresScreenshot(att.HadAccess, att.UsedThisCycle,
-                activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(att.ToolID, false)))
-            throw new InvalidOperationException("This screenshot is optional and does not require review.");
+        // Reviewability is keyed solely on a screenshot EXISTING — any uploaded shot is
+        // approvable/rejectable regardless of the row's access/used status or the tool's
+        // ScreenshotRequired flag (that flag governs gating/completion, not review). Existence is
+        // already validated just above (KeyNotFound when ScreenshotPath is null), so this guard is
+        // a defensive restatement of that fact.
+        if (!ScreenshotCompletion.ReviewableUpload(att.ScreenshotStatus))
+            throw new InvalidOperationException("This screenshot is not eligible for review.");
 
         var wasComplete = ScreenshotCompletion.ComputeMemberStatus(
             activeRows.ActiveToolCount,
@@ -820,12 +821,10 @@ public class ManagerService
             activeRows.Rows.Select(r => (r.HadAccess, r.UsedThisCycle, activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(r.ToolID, false), r.ScreenshotStatus, r.AttestationStatus)))
             == ScreenshotCompletion.MemberComplete;
 
-        // Only approve Pending shots on rows that actually require review; optional shots on
-        // exempt rows (no-access / not-used) OR on optional tools (not ScreenshotRequired) are
-        // viewable but not actionable.
-        var pending = rows.Where(a => a.ScreenshotStatus == "Pending"
-                                   && ScreenshotCompletion.RequiresScreenshot(a.HadAccess, a.UsedThisCycle,
-                                          activeRows.ScreenshotRequiredByToolId.GetValueOrDefault(a.ToolID, false))).ToList();
+        // Approve every Pending shot. Reviewability is keyed on a screenshot existing (a Pending
+        // status implies one was uploaded), so optional shots on no-access / not-used rows are
+        // approvable too — the tool's ScreenshotRequired flag governs gating/completion, not review.
+        var pending = rows.Where(a => a.ScreenshotStatus == "Pending").ToList();
 
         foreach (var att in pending)
             StampReview(att, callerId, approve: true, reason: null);
@@ -1046,10 +1045,6 @@ public class ManagerService
             .Select(t => new { t.ClientID, t.ToolID, t.ToolName, t.ScreenshotRequired })
             .ToListAsync();
         var tools = toolRows.ToDictionary(t => (t.ClientID!, t.ToolID), t => t.ToolName ?? t.ToolID.ToString());
-        // Per-tool "screenshot required" flag (toolId is the global PK). Missing => optional.
-        var screenshotRequiredByToolId = toolRows
-            .GroupBy(t => t.ToolID)
-            .ToDictionary(g => g.Key, g => g.First().ScreenshotRequired);
 
         var items = rows.Select(r => new CycleScreenshotItemDto(
             r.AssociateId,
@@ -1061,11 +1056,10 @@ public class ManagerService
             r.ScreenshotStatus,
             r.ScreenshotUploadedAt,
             r.ScreenshotRejectReason,
-            // "viewable, not actionable": optional shots on exempt rows (no-access / not-used) OR
-            // on optional tools (not ScreenshotRequired) stay in the gallery + zip but are flagged
-            // so the action queue can exclude them.
-            ScreenshotCompletion.RequiresScreenshot(r.HadAccess, r.UsedThisCycle,
-                screenshotRequiredByToolId.GetValueOrDefault(r.ToolID, false))))
+            // Reviewable whenever a screenshot exists — any uploaded shot is approvable/rejectable
+            // regardless of the row's access/used status or the tool's ScreenshotRequired flag
+            // (that flag governs gating/completion, not review).
+            ScreenshotCompletion.ReviewableUpload(r.ScreenshotStatus)))
             .OrderBy(i => i.AssociateName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(i => i.ClientName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(i => i.ToolName, StringComparer.OrdinalIgnoreCase)

@@ -24,9 +24,7 @@ function initialDark() {
     if (saved === 'dark') return true;
     if (saved === 'light') return false;
   } catch { /* no-op */ }
-  return typeof window !== 'undefined' && window.matchMedia
-    ? window.matchMedia('(prefers-color-scheme: dark)').matches
-    : false;
+  return false;
 }
 
 // Roles may arrive in any casing from the DB ("admin", "ADMIN", ...). Canonicalize
@@ -147,7 +145,7 @@ export default function App() {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   }, [dark]);
 
-  // Theme persists to localStorage 'dashy.theme'; first run follows the OS.
+  // Theme persists to localStorage 'dashy.theme'; first run defaults to light.
   const setDark = useCallback((next) => {
     setDarkState(next);
     try { localStorage.setItem(THEME_KEY, next ? 'dark' : 'light'); } catch { /* no-op */ }

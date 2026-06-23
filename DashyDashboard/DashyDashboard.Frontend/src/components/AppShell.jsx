@@ -83,9 +83,11 @@ function buildNav({ role, isManager, isSuperAdmin, canOpenUserDirectory, hasRole
   }
   return [
     ...(isSuperAdmin ? [{ id: 'superadmin', label: 'Admin Dashboard', icon: 'grid' }] : []),
-    { id: 'agent',   label: 'Associate view', icon: 'list' },
-    { id: 'manager', label: 'Manager view',   icon: 'users' },
-    { id: 'access',  label: 'Access',         icon: 'key' },
+    { id: 'agent', label: 'Associate view', icon: 'list' },
+    ...(isManager ? [
+      { id: 'manager', label: 'Manager view', icon: 'users' },
+      { id: 'access',  label: 'Access',       icon: 'key' },
+    ] : []),
     ...(canOpenUserDirectory ? [{ id: 'admin', label: 'Users', icon: 'user' }] : []),
   ];
 }
@@ -249,7 +251,7 @@ export default function AppShell({
   useEffect(() => { setMobileOpen(false); }, [role, isMobile]);
 
   const canOpenUserDirectory = user?.superUserRole === 'Admin';
-  const hasRoleSwitch = !!(isManager && typeof onRole === 'function');
+  const hasRoleSwitch = !!((isManager || isSuperAdmin) && typeof onRole === 'function');
   const nav = useMemo(
     () => buildNav({ role, isManager, isSuperAdmin, canOpenUserDirectory, hasRoleSwitch }),
     [role, isManager, isSuperAdmin, canOpenUserDirectory, hasRoleSwitch],

@@ -419,6 +419,317 @@ export function SearchBar({ value, onChange, placeholder = 'Search tools…', wi
   );
 }
 
+// ── Combobox — searchable / typeahead select (DESIGN §8) ────────────────────
+// Drop-in replacement for a native <select> when the option list is long enough
+// that scrolling is painful (managers ~1000, clients, tools). Looks like the
+// app's inputStyle trigger; clicking opens a portal'd popover with an
+// auto-focused filter input + a scrollable, keyboard-navigable listbox.
+//
+// Props:
+//   value       — currently-selected option value (string|number); '' / null = empty
+//   onChange(v) — called with the picked option's `value` (the empty option's
+//                 value when the empty row is chosen)
+//   options     — [{ value, label, hint? }]  hint = muted secondary text (e.g. an ID)
+//   placeholder — shown on the trigger when nothing is selected
+//   disabled    — render non-interactive
+//   emptyOption — { value, label } first row representing the null/empty choice
+//                 (e.g. { value: '', label: '— No manager —' }). Omit for none.
+//   emptyMessage— text for the "no matches" row (default 'No matches')
+//   ariaLabel   — accessible name for the trigger
+//   style       — extra style merged onto the trigger
+//
+// In-modal safety: the popover is portal'd to <body> and absolutely positioned
+// under the trigger from a measured rect, so the Modal's `overflow:auto` body
+// never clips it and its z-index (1300) layers above the dialog (1100). The
+// rect is re-measured on scroll/resize while open.
+const COMBOBOX_INPUT = {
+  width: '100%', boxSizing: 'border-box', height: 34, padding: '0 12px',
+  background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+  color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-sans)', outline: 'none',
+};
+
+export function Combobox({
+  value, onChange, options = [], placeholder = 'Select…', disabled = false,
+  emptyOption, emptyMessage = 'No matches', ariaLabel, style,
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const [rect, setRect] = useState(null);
+  const triggerRef = useRef(null);
+  const popRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+  const baseId = useId();
+
+  // The full option set, with the empty/clear row (if any) prepended.
+  const allOptions = useMemo(() => (
+    emptyOption ? [{ ...emptyOption, _empty: true }, ...options] : options
+  ), [emptyOption, options]);
+
+  const selected = useMemo(
+    () => allOptions.find((o) => String(o.value) === String(value ?? '')),
+    [allOptions, value],
+  );
+
+  // Case-insensitive substring match over label AND hint.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allOptions;
+    return allOptions.filter((o) => {
+      const label = String(o.label ?? '').toLowerCase();
+      const hint = String(o.hint ?? '').toLowerCase();
+      return label.includes(q) || hint.includes(q);
+    });
+  }, [allOptions, query]);
+
+  const measure = useCallback(() => {
+    const el = triggerRef.current;
+    if (el) setRect(el.getBoundingClientRect());
+  }, []);
+
+  const close = useCallback(() => { setOpen(false); setQuery(''); }, []);
+
+  // Close on outside click (trigger AND portal'd popover both count as inside).
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDown(e) {
+      if (triggerRef.current?.contains(e.target)) return;
+      if (popRef.current?.contains(e.target)) return;
+      close();
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open, close]);
+
+  // Escape must close ONLY the popover, never the enclosing Modal. Both the
+  // popover's filter input and the Modal's focus-trap listen for Escape; the
+  // Modal traps it on `document` (capture). Listening on `window` (capture)
+  // fires first in the capture descent, so we swallow Escape before it reaches
+  // the Modal whenever the popover is open.
+  useEffect(() => {
+    if (!open) return undefined;
+    function onKeyCapture(e) {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      e.preventDefault();
+      close();
+      triggerRef.current?.focus();
+    }
+    window.addEventListener('keydown', onKeyCapture, true);
+    return () => window.removeEventListener('keydown', onKeyCapture, true);
+  }, [open, close]);
+
+  // Keep the popover glued under the trigger on scroll/resize.
+  useEffect(() => {
+    if (!open) return undefined;
+    measure();
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, [open, measure]);
+
+  // The popover is not mounted until the trigger has been measured. Wait for
+  // both states before focusing so typing works immediately on the first open.
+  const popoverReady = open && rect != null;
+  useEffect(() => {
+    if (!popoverReady) return;
+    inputRef.current?.focus();
+    const idx = filtered.findIndex((o) => String(o.value) === String(value ?? ''));
+    setActive(idx >= 0 ? idx : 0);
+  }, [popoverReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A new search starts at its first match; arrow keys can move from there.
+  useEffect(() => {
+    if (query) setActive(0);
+  }, [query]);
+
+  // Clamp + keep the highlighted row in view as the result count changes.
+  useEffect(() => {
+    setActive((a) => Math.min(Math.max(a, 0), Math.max(filtered.length - 1, 0)));
+  }, [filtered.length]);
+
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const node = listRef.current.querySelector(`[data-idx="${active}"]`);
+    node?.scrollIntoView({ block: 'nearest' });
+  }, [active, open]);
+
+  function choose(opt) {
+    onChange?.(opt.value);
+    close();
+    triggerRef.current?.focus();
+  }
+
+  function openMenu(initialQuery = '') {
+    if (disabled) return;
+    setQuery(initialQuery);
+    setOpen(true);
+  }
+
+  function onTriggerKey(e) {
+    if (disabled) return;
+    if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openMenu();
+    } else if (e.key.length === 1 && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      openMenu(e.key);
+    }
+  }
+
+  function onInputKey(e) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActive((a) => Math.min(a + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive((a) => Math.max(a - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const opt = filtered[active];
+      if (opt) choose(opt);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      triggerRef.current?.focus();
+    } else if (e.key === 'Tab') {
+      close();
+    }
+  }
+
+  const listboxId = `${baseId}-listbox`;
+  const triggerLabel = selected ? selected.label : placeholder;
+  const showPlaceholder = !selected || selected._empty;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => (open ? close() : openMenu())}
+        onKeyDown={onTriggerKey}
+        style={{
+          ...COMBOBOX_INPUT,
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          textAlign: 'left', cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.6 : 1,
+          borderColor: open ? 'var(--accent)' : 'var(--border)',
+          boxShadow: open ? '0 0 0 3px var(--accent-glow)' : 'none',
+          transition: 'border-color .15s ease-out, box-shadow .15s ease-out',
+          ...style,
+        }}
+      >
+        <span style={{
+          flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          color: showPlaceholder ? 'var(--text-faint)' : 'var(--text)',
+        }}>
+          {triggerLabel}
+        </span>
+        <Icon name="chevdown" size={14} stroke={2}
+          style={{ color: 'var(--text-muted)', flex: 'none', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s ease-out' }} />
+      </button>
+
+      {open && rect && createPortal(
+        <div
+          ref={popRef}
+          className="pop-in"
+          style={{
+            position: 'fixed', zIndex: 1300,
+            top: rect.bottom + 4, left: rect.left, width: rect.width,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-pop)',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column',
+          }}
+        >
+          <div style={{ padding: 6, borderBottom: '1px solid var(--border-subtle)', flex: 'none' }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 7, height: 30, padding: '0 9px',
+              borderRadius: 'var(--radius)', background: 'var(--surface-2)',
+              color: 'var(--text-muted)',
+            }}>
+              <Icon name="search" size={13} />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={onInputKey}
+                placeholder="Type to filter…"
+                aria-label="Filter options"
+                aria-autocomplete="list"
+                aria-controls={listboxId}
+                aria-activedescendant={filtered[active] ? `${baseId}-opt-${active}` : undefined}
+                style={{
+                  flex: 1, minWidth: 0, height: '100%', border: 0, background: 'transparent',
+                  outline: 'none', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-sans)',
+                }}
+              />
+            </div>
+          </div>
+          <ul
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            aria-label={ariaLabel}
+            style={{ listStyle: 'none', margin: 0, padding: 4, maxHeight: 260, overflowY: 'auto' }}
+          >
+            {filtered.length === 0 && (
+              <li role="presentation" style={{
+                padding: '10px 10px', fontSize: 12.5, color: 'var(--text-faint)', textAlign: 'center',
+              }}>{emptyMessage}</li>
+            )}
+            {filtered.map((opt, i) => {
+              const isSel = String(opt.value) === String(value ?? '');
+              const isActive = i === active;
+              return (
+                <li
+                  key={`${opt.value}-${i}`}
+                  id={`${baseId}-opt-${i}`}
+                  data-idx={i}
+                  role="option"
+                  aria-selected={isSel}
+                  onMouseEnter={() => setActive(i)}
+                  onMouseDown={(e) => { e.preventDefault(); choose(opt); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '7px 9px', borderRadius: 'var(--radius)', cursor: 'pointer',
+                    background: isActive ? 'var(--surface-2)' : 'transparent',
+                  }}
+                >
+                  <span style={{
+                    flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    fontSize: 13, fontWeight: isSel ? 600 : 500,
+                    color: opt._empty ? 'var(--text-muted)' : 'var(--text)',
+                    fontStyle: opt._empty ? 'italic' : 'normal',
+                  }}>{opt.label}</span>
+                  {opt.hint != null && opt.hint !== '' && (
+                    <span style={{
+                      flex: 'none', fontFamily: 'var(--font-mono)', fontSize: 11,
+                      color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                    }}>{opt.hint}</span>
+                  )}
+                  {isSel && <Icon name="check" size={14} stroke={2.4} style={{ color: 'var(--accent)', flex: 'none' }} />}
+                </li>
+              );
+            })}
+          </ul>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // ── SegmentedControl — exclusive option picker (DESIGN §8) ──────────────────
 // options: [{ id, label, icon? }] · value: active id · onChange(id)
 export function SegmentedControl({ options = [], value, onChange, size = 'md', ariaLabel, style }) {

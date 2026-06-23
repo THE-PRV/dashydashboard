@@ -129,8 +129,8 @@ steps). Progress bars animate width 400ms ease-out. Respect
   start→due with a marker at today; label `CYCLE 2026-Q2 · DUE JUN 30 · 17 DAYS LEFT`
   in mono 11px. Track color shifts: accent (>50% time left) → warning (≤50%) → danger
   (overdue). Present in every role view.
-- Theme: persists to localStorage `dashy.theme`; default follows
-  `prefers-color-scheme`.
+- Theme: persists to localStorage `dashy.theme`; defaults to light, and
+  respects a saved preference.
 
 ## 8. Core primitives (ui.jsx — keep existing export names working)
 

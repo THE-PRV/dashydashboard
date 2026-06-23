@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Icon, Avatar, Button, SearchBar, Card, Skeleton, EmptyState,
-  SortHeader, SectionHeader, Modal, useToasts,
+  SortHeader, SectionHeader, Modal, Combobox, useToasts,
 } from '../components/ui.jsx';
 import { useBreadcrumbs } from '../components/AppShell.jsx';
 import { getAllUsers } from '../api/manager.js';
@@ -300,26 +300,31 @@ export default function UserManagementView({ user }) {
 
             <div>
               <FieldLabel>Department</FieldLabel>
-              <select value={editForm.department} disabled={editSaving}
-                onChange={(e) => setEditForm((f) => ({ ...f, department: e.target.value }))}
-                style={{ ...inputStyle, cursor: editSaving ? 'not-allowed' : 'pointer' }}>
-                <option value="">Select department…</option>
-                {departments
+              <Combobox
+                ariaLabel="Department"
+                value={editForm.department}
+                disabled={editSaving}
+                onChange={(v) => setEditForm((f) => ({ ...f, department: v }))}
+                emptyOption={{ value: '', label: 'Select department…' }}
+                options={departments
                   .concat(editForm.department && !departments.includes(editForm.department) ? [editForm.department] : [])
-                  .map((dept) => <option key={dept} value={dept}>{dept}</option>)}
-              </select>
+                  .map((dept) => ({ value: dept, label: dept }))}
+              />
             </div>
 
             <div>
               <FieldLabel>Manager</FieldLabel>
-              <select value={editForm.managerId} disabled={editSaving}
-                onChange={(e) => setEditForm((f) => ({ ...f, managerId: e.target.value }))}
-                style={{ ...inputStyle, cursor: editSaving ? 'not-allowed' : 'pointer' }}>
-                <option value="">— No manager —</option>
-                {users
+              <Combobox
+                ariaLabel="Manager"
+                value={editForm.managerId}
+                disabled={editSaving}
+                onChange={(v) => setEditForm((f) => ({ ...f, managerId: v }))}
+                placeholder="— No manager —"
+                emptyOption={{ value: '', label: '— No manager —' }}
+                options={users
                   .filter((u) => u.associateId !== editRecord.associateId)
-                  .map((u) => <option key={u.associateId} value={u.associateId}>{u.fullName} ({u.associateId})</option>)}
-              </select>
+                  .map((u) => ({ value: u.associateId, label: u.fullName, hint: u.associateId }))}
+              />
             </div>
 
             <div>

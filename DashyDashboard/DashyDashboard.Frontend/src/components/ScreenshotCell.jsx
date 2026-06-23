@@ -77,7 +77,7 @@ export default function ScreenshotCell({
 
     setThumbLoading(true);
     setThumbError(false);
-    getScreenshotThumbUrl(cycleId, associateId, clientId, toolId)
+    getScreenshotThumbUrl(cycleId, associateId, clientId, toolId, screenshotUploadedAt)
       .then((url) => {
         if (cancelled) { if (url) URL.revokeObjectURL(url); return; }
         if (!url) { setThumbError(true); return; }
@@ -126,7 +126,7 @@ export default function ScreenshotCell({
     // Re-trigger the thumbnail effect by toggling load state; simplest is a forced refetch.
     setThumbError(false);
     setThumbLoading(true);
-    getScreenshotThumbUrl(cycleId, associateId, clientId, toolId)
+    getScreenshotThumbUrl(cycleId, associateId, clientId, toolId, screenshotUploadedAt)
       .then((url) => { if (url) setThumbUrl(url); else setThumbError(true); })
       .catch(() => setThumbError(true))
       .finally(() => setThumbLoading(false));

@@ -41,7 +41,9 @@ function stampFor(status) {
 }
 
 function itemKey(item) {
-  return `${item.cycleId}/${item.associateId}/${item.clientId}/${item.toolId}`;
+  // Include the upload timestamp so the fetch effect re-runs (and the cache-busted URL changes)
+  // after a re-upload, rather than reusing the cached old image.
+  return `${item.cycleId}/${item.associateId}/${item.clientId}/${item.toolId}/${item.screenshotUploadedAt ?? ''}`;
 }
 
 export default function Lightbox({ items = [], startIndex = 0, onClose, review }) {
@@ -110,7 +112,7 @@ export default function Lightbox({ items = [], startIndex = 0, onClose, review }
     setImgLoading(true);
     setZoomed(false);
 
-    getScreenshotUrl(item.cycleId, item.associateId, item.clientId, item.toolId)
+    getScreenshotUrl(item.cycleId, item.associateId, item.clientId, item.toolId, item.screenshotUploadedAt)
       .then((nextUrl) => {
         if (cancelled) {
           if (nextUrl) URL.revokeObjectURL(nextUrl);

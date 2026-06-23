@@ -12,7 +12,7 @@ import CycleGallery from '../components/CycleGallery.jsx';
 import {
   StatusChip, SectionHeader, Card, Button, SearchBar, Modal,
   EmptyState, Skeleton, Stamp, Badge, Icon, SortHeader, useToasts,
-  useClickOutside,
+  useClickOutside, Combobox,
 } from '../components/ui.jsx';
 import { useBreadcrumbs, useHeaderActions } from '../components/AppShell.jsx';
 
@@ -1026,19 +1026,25 @@ function AddToolModal({ open, onClose, clients, depts, clientId, setClientId, de
       </p>
       <label style={{ display: 'block', marginBottom: 14 }}>
         <span style={fieldLabelStyle}>Client</span>
-        <select value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={saving}
-          style={{ ...inputStyle, cursor: saving ? 'not-allowed' : 'pointer' }}>
-          {clients.length === 0 && <option value="">Loading clients…</option>}
-          {clients.map((c) => <option key={c.clientID} value={c.clientID}>{c.clientName} ({c.clientID})</option>)}
-        </select>
+        <Combobox
+          ariaLabel="Client"
+          value={clientId}
+          disabled={saving || clients.length === 0}
+          onChange={(v) => setClientId(v)}
+          placeholder={clients.length === 0 ? 'Loading clients…' : 'Select client…'}
+          options={clients.map((c) => ({ value: c.clientID, label: c.clientName, hint: c.clientID }))}
+        />
       </label>
       <label style={{ display: 'block', marginBottom: 14 }}>
         <span style={fieldLabelStyle}>Department</span>
-        <select value={deptId} onChange={(e) => setDeptId(Number(e.target.value))} disabled={saving}
-          style={{ ...inputStyle, cursor: saving ? 'not-allowed' : 'pointer' }}>
-          {depts.length === 0 && <option value={0}>Loading departments…</option>}
-          {depts.map((d) => <option key={d.departmentID} value={d.departmentID}>{d.departmentName}</option>)}
-        </select>
+        <Combobox
+          ariaLabel="Department"
+          value={deptId}
+          disabled={saving || depts.length === 0}
+          onChange={(v) => setDeptId(Number(v))}
+          placeholder={depts.length === 0 ? 'Loading departments…' : 'Select department…'}
+          options={depts.map((d) => ({ value: d.departmentID, label: d.departmentName }))}
+        />
       </label>
       <label style={{ display: 'block', marginBottom: 14 }}>
         <span style={fieldLabelStyle}>Tool name</span>

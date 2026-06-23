@@ -207,6 +207,24 @@ export default function AgentView({ user, cycle, onLogout }) {
     clients.length > 0 && clients.every((c) => c.tools.every((t) => t.attestationStatus === 'Submitted')),
   [clients]);
 
+  // Rows a reviewer rejected — surfaced loudly so a submitted associate sees their
+  // attestation is REOPENED for those rows (re-upload sends them back for approval).
+  const rejectedRows = useMemo(() => {
+    const out = [];
+    clients.forEach((client) => client.tools.forEach((tool) => {
+      if (tool.screenshotStatus === 'Rejected') {
+        out.push({
+          key: rowKey(client.clientID, tool.toolID),
+          clientId: client.clientID, clientName: client.clientName,
+          toolId: tool.toolID, toolName: tool.toolName,
+          reason: tool.screenshotRejectReason,
+        });
+      }
+    }));
+    return out;
+  }, [clients]);
+  const reopened = isSubmitted && rejectedRows.length > 0;
+
   const pastDue = useMemo(() => isPastDue(cycle), [cycle]);
 
   // Rows blocked because a used tool is missing a Pending/Approved screenshot. Client-side
@@ -437,19 +455,23 @@ export default function AgentView({ user, cycle, onLogout }) {
                 margin: '6px 0 0', fontFamily: 'var(--font-display)', fontWeight: 560,
                 fontSize: 28, lineHeight: 1.1, color: 'var(--text)', letterSpacing: '-0.01em',
               }}>
-                {isSubmitted
-                  ? 'All set — your attestation is in.'
-                  : totals.pending > 0
-                    ? `${totals.pending} tool${totals.pending === 1 ? '' : 's'} left to attest, ${firstName}.`
-                    : blockers.length > 0
-                      ? `Almost there, ${firstName}.`
-                      : `Ready to submit, ${firstName}.`}
+                {reopened
+                  ? `Action needed, ${firstName} — ${rejectedRows.length} screenshot${rejectedRows.length === 1 ? ' was' : 's were'} rejected.`
+                  : isSubmitted
+                    ? 'All set — your attestation is in.'
+                    : totals.pending > 0
+                      ? `${totals.pending} tool${totals.pending === 1 ? '' : 's'} left to attest, ${firstName}.`
+                      : blockers.length > 0
+                        ? `Almost there, ${firstName}.`
+                        : `Ready to submit, ${firstName}.`}
               </h1>
               <p style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 13.5, maxWidth: 560, lineHeight: 1.5 }}>
-                {isSubmitted
-                  ? 'Rejected screenshots can still be re-uploaded if your reviewer asks.'
-                  : <>Confirm access, mark what you actually used, and attach proof
-                      {cycle?.dueDate ? <> before <strong style={{ color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{fmtDueDate(cycle.dueDate)}</strong></> : null}.</>}
+                {reopened
+                  ? 'Your reviewer rejected the screenshot(s) below. Re-upload a corrected screenshot to send them back for approval.'
+                  : isSubmitted
+                    ? 'Rejected screenshots can still be re-uploaded if your reviewer asks.'
+                    : <>Confirm access, mark what you actually used, and attach proof
+                        {cycle?.dueDate ? <> before <strong style={{ color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{fmtDueDate(cycle.dueDate)}</strong></> : null}.</>}
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, flex: 'none' }}>
@@ -491,6 +513,51 @@ export default function AgentView({ user, cycle, onLogout }) {
             </Button>
           </Card>
         )}
+
+        {/* ── Reopened panel — rejected screenshots after submit (re-upload) ── */}
+        <div aria-live="polite">
+          {reopened && (
+            <Card pad={0} style={{
+              borderColor: 'var(--danger-border)', marginBottom: 16, overflow: 'hidden',
+              boxShadow: 'inset 3px 0 0 var(--danger)',
+            }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px',
+                background: 'var(--danger-bg)', borderBottom: '1px solid var(--danger-border)',
+              }}>
+                <Icon name="alert" size={16} stroke={2.2} style={{ color: 'var(--danger)', flex: 'none' }} />
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                  {rejectedRows.length} rejected screenshot{rejectedRows.length === 1 ? '' : 's'} — re-upload to resubmit
+                </div>
+              </div>
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                {rejectedRows.map((b, i) => (
+                  <li key={b.key} style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '9px 14px',
+                    borderBottom: i < rejectedRows.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+                  }}>
+                    <Icon name="alert" size={14} stroke={2}
+                      style={{ color: 'var(--danger)', flex: 'none' }} />
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>{b.clientName} ({b.clientId})</span>
+                      <span style={{ fontSize: 12.5, color: 'var(--text)', fontWeight: 500 }}>{b.toolName}</span>
+                      {b.reason ? <span style={{ fontSize: 12, color: 'var(--danger)' }}>— {b.reason}</span> : null}
+                    </div>
+                    <Button variant="ghost" size="sm" icon="arrow_up_right"
+                      onClick={() => jumpToRow(b.clientId, b.toolId)}
+                      aria-label={`Jump to ${b.toolName} for ${b.clientName}`}>
+                      Jump
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+        </div>
 
         {/* ── Blockers panel — the #1 UX fix (DESIGN §10) ─────────────────── */}
         <div aria-live="polite">
@@ -604,14 +671,25 @@ export default function AgentView({ user, cycle, onLogout }) {
                 {open && (
                   <>
                     {isSubmitted && (
-                      <div style={{
-                        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px',
-                        background: 'var(--success-bg)', borderBottom: '1px solid var(--success-border)',
-                        color: 'var(--success)', fontSize: 12, fontWeight: 600,
-                      }}>
-                        <Icon name="check" size={13} stroke={2.4} />
-                        Submitted and locked. Re-upload is only available for rejected screenshots.
-                      </div>
+                      client.tools.some((t) => t.screenshotStatus === 'Rejected') ? (
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px',
+                          background: 'var(--danger-bg)', borderBottom: '1px solid var(--danger-border)',
+                          color: 'var(--danger)', fontSize: 12, fontWeight: 600,
+                        }}>
+                          <Icon name="alert" size={13} stroke={2.4} />
+                          Reopened — re-upload the rejected screenshot(s) below.
+                        </div>
+                      ) : (
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px',
+                          background: 'var(--success-bg)', borderBottom: '1px solid var(--success-border)',
+                          color: 'var(--success)', fontSize: 12, fontWeight: 600,
+                        }}>
+                          <Icon name="check" size={13} stroke={2.4} />
+                          Submitted and locked. Re-upload is only available for rejected screenshots.
+                        </div>
+                      )
                     )}
                     <div style={{ overflowX: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

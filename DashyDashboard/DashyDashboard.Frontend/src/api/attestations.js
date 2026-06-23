@@ -33,10 +33,12 @@ export const uploadScreenshot = (cycleId, clientId, toolId, file) => {
 
 // Fetch the full-size screenshot for one row as an object URL (caller must
 // URL.revokeObjectURL when done). Returns null if none exists (404).
-export const getScreenshotUrl = (cycleId, associateId, clientId, toolId) =>
-  getBlobUrl(`/api/attestations/${routePart(cycleId)}/${routePart(associateId)}/${routePart(clientId)}/${routePart(toolId)}/screenshot`);
+// `version` (e.g. screenshotUploadedAt) busts the browser cache on re-upload —
+// the server stamps it fresh each upload and serves immutable, versioned URLs.
+export const getScreenshotUrl = (cycleId, associateId, clientId, toolId, version) =>
+  getBlobUrl(`/api/attestations/${routePart(cycleId)}/${routePart(associateId)}/${routePart(clientId)}/${routePart(toolId)}/screenshot${version ? `?v=${encodeURIComponent(version)}` : ''}`);
 
 // Fetch the thumbnail for one row as an object URL (caller must URL.revokeObjectURL when
-// done). Returns null if none exists (404).
-export const getScreenshotThumbUrl = (cycleId, associateId, clientId, toolId) =>
-  getBlobUrl(`/api/attestations/${routePart(cycleId)}/${routePart(associateId)}/${routePart(clientId)}/${routePart(toolId)}/thumb`);
+// done). Returns null if none exists (404). `version` busts the cache on re-upload (see above).
+export const getScreenshotThumbUrl = (cycleId, associateId, clientId, toolId, version) =>
+  getBlobUrl(`/api/attestations/${routePart(cycleId)}/${routePart(associateId)}/${routePart(clientId)}/${routePart(toolId)}/thumb${version ? `?v=${encodeURIComponent(version)}` : ''}`);
